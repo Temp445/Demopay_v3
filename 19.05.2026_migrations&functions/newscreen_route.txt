@@ -1,0 +1,24 @@
+
+ Table Name: 'application_screens'
+
+    screen_name - 'Payslip Sender'
+    screen_route - '/dashboard/payslip-sender'
+    screen_group - 'Payroll'  
+
+    screen_name - 'Shift Attendance Notifier'
+    screen_route - '/dashboard/settings/shift-attendance-notifier'
+    screen_group - 'Settings'  
+  
+    screen_name - 'Formula Tester'
+    screen_route - '/dashboard/formula-tester'
+    screen_group - 'Payroll'
+    
+----------------------------------------------------------
+Edge Function - shift-report-cron
+
+Add Secrets :
+
+EMAIL_HUB_URL - https://acenode-gateway.onrender.com/email 
+EMAIL_API_KEY - mHOwB1lCqhQ25UaEWd1qKz2CBYmYuVZiEnYEYmOPOveryR9wFhbnqa8dvRcjvQWIZrgIrV/IFg8gkl2AH1G
+
+------------------------------------------------

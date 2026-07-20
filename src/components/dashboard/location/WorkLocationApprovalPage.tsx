@@ -1,0 +1,1528 @@
+import { useState, useEffect, useMemo } from 'react';
+import { 
+  CheckCircle, XCircle, MapPin, User, Calendar, Clock, X, Loader2, 
+  ExternalLink, Map as MapIcon, History, PlayCircle, PauseCircle, 
+  CheckCircle2, CreditCard as Edit, AlignLeft, AlertTriangle, AlertCircle, 
+  ShieldCheck, Navigation, WifiOff, Wifi 
+} from 'lucide-react';
+import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
+import { useTenant } from '../../../contexts/TenantContext';
+import { supabase } from '../../../lib/supabase';
+import toast from 'react-hot-toast';
+import { format } from 'date-fns';
+import type { WorkLocation } from '../../../types/workLocation';
+import JourneyMapSwitch from './JourneyMapSwitch';
+import type { WorkSitePin, PathSegment } from './JourneyLeafletMap';
+import { useAuth } from '../../../contexts/AuthContext';
+import { getUserEmployeeData } from '../../../lib/roleBasedAccess';
+import { useEmployeesStore } from '../../../stores/employeesStore';
+export interface JourneyGroup {
+  id: string;
+  employeeName: string;
+  employeeEmail: string;
+  date: string;
+  startTime?: string;
+  endTime?: string;
+  works: WorkLocation[];
+}
+
+// --- REVERSE GEOCODING COMPONENT ---
+const geocodeCache: Record<string, string> = {};
+
+function ReverseGeocodeAddress({ lat, lng }: { lat: number; lng: number }) {
+  const [address, setAddress] = useState(`${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const cacheKey = `${lat.toFixed(4)},${lng.toFixed(4)}`; 
+    
+    if (geocodeCache[cacheKey]) {
+      setAddress(geocodeCache[cacheKey]);
+      setIsLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    const fetchAddress = async () => {
+      try {
+        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+        if (!response.ok) throw new Error('Geocoding failed');
+        const data = await response.json();
+        
+        if (isMounted && data.display_name) {
+          const parts = data.display_name.split(', ');
+          const shortAddress = parts.slice(0, 3).join(', ');
+          
+          geocodeCache[cacheKey] = shortAddress;
+          setAddress(shortAddress);
+        }
+      } catch (error) {
+        console.error("Error fetching address:", error);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    };
+
+    const timeoutId = setTimeout(fetchAddress, Math.random() * 1500);
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+    };
+  }, [lat, lng]);
+
+  return (
+    <a 
+      href={`https://maps.google.com/?q=$?q=${lat},${lng}`} 
+      target="_blank" 
+      rel="noreferrer" 
+      className="text-xs text-blue-600 hover:text-blue-800 hover:underline flex items-start gap-1 my-1.5 bg-blue-50/50 p-1.5 rounded"
+      title={`Lat: ${lat}, Lng: ${lng}`}
+    >
+      <MapPin className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" /> 
+      <span className="line-clamp-2 leading-relaxed">
+        {isLoading ? (
+          <span className="flex items-center gap-2 text-gray-500">
+            <Loader2 className="h-3 w-3 animate-spin" /> Fetching location...
+          </span>
+        ) : (
+          address
+        )}
+      </span>
+    </a>
+  );
+}
+
+export default function WorkLocationApprovalPage() {
+  const { currentTenant } = useTenant();
+  const { 
+    workLocations, 
+    loading, 
+    fetchWorkLocations, 
+    approveWork, 
+    denyWorkLocation,
+    updateWorkLocation,
+    activeWorkPauses,
+    fetchWorkPauses,
+    violations,
+    fetchViolations
+  } = useWorkLocationsStore();
+
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [showMapModal, setShowMapModal] = useState(false);
+  const [showTimelineModal, setShowTimelineModal] = useState(false);
+  const [showDenyModal, setShowDenyModal] = useState(false);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showViolationsModal, setShowViolationsModal] = useState(false);
+  
+  const [selectedWork, setSelectedWork] = useState<WorkLocation | null>(null);
+  const [journeyLogs, setJourneyLogs] = useState<any[]>([]);
+  const [workAmount, setWorkAmount] = useState('');
+  const [workUnit, setWorkUnit] = useState('');
+  const [denyReason, setDenyReason] = useState('');
+  const [updateReason, setUpdateReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [activeTab, setActiveTab] = useState<'pending' | 'approved'>('pending');
+  const [pendingPage, setPendingPage] = useState(1);
+  const [approvedPage, setApprovedPage] = useState(1);
+  const ITEMS_PER_PAGE = 5;
+
+  const [allJourneyLogs, setAllJourneyLogs] = useState<any[]>([]);
+
+  const { user } = useAuth();
+  const { items: employees, fetchEmployees } = useEmployeesStore();
+  const [isAdmin, setIsAdmin] = useState(true); // Default to true until checked to avoid layout shifts
+  const [isReportingHead, setIsReportingHead] = useState(false);
+  const [currentEmployeeId, setCurrentEmployeeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchEmployees();
+  }, [fetchEmployees]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const checkRole = async () => {
+      if (user) {
+        const { role, employeeId } = await getUserEmployeeData(user.id);
+        if (isMounted) {
+          setCurrentEmployeeId(employeeId);
+          setIsReportingHead(role?.toLowerCase() === 'reporting head');
+          setIsAdmin(role?.toLowerCase() === 'admin' || role?.toLowerCase() === 'hr team');
+        }
+      }
+    };
+    checkRole();
+    return () => { isMounted = false; };
+  }, [user]);
+
+  const subordinateIds = useMemo(() => {
+    if (!currentEmployeeId) return [];
+    return employees
+      .filter(emp => {
+        if (!emp.reporting_to) return false;
+        const reportingTo = Array.isArray(emp.reporting_to) ? emp.reporting_to : [emp.reporting_to];
+        return reportingTo.includes(currentEmployeeId);
+      })
+      .map(emp => emp.id);
+  }, [employees, currentEmployeeId]);
+
+  const visibleWorkLocations = useMemo(() => {
+    if (isAdmin) {
+      return workLocations;
+    }
+    if (isReportingHead) {
+      return workLocations.filter(wl => subordinateIds.includes(wl.employee_id));
+    }
+    return workLocations.filter(wl => wl.employee_id === currentEmployeeId);
+  }, [workLocations, isAdmin, isReportingHead, subordinateIds, currentEmployeeId]);
+
+  useEffect(() => {
+    if (currentTenant) {
+      fetchWorkLocations(currentTenant.id);
+    }
+  }, [currentTenant, fetchWorkLocations]);
+
+  useEffect(() => {
+    if (!currentTenant?.id || visibleWorkLocations.length === 0) return;
+
+    const fetchAllLogs = async () => {
+      try {
+        const dates = visibleWorkLocations.map(w => new Date(w.assignment_date).getTime());
+        const minD = new Date(Math.min(...dates));
+        minD.setHours(0, 0, 0, 0);
+        const maxD = new Date(Math.max(...dates));
+        maxD.setHours(23, 59, 59, 999);
+
+        const { data, error } = await supabase
+          .from('journey_tracking_logs')
+          .select('*')
+          .gte('timestamp', minD.toISOString())
+          .lte('timestamp', maxD.toISOString())
+          .order('timestamp', { ascending: true });
+
+        if (error) throw error;
+        
+        if (data) {
+          const empIds = new Set(visibleWorkLocations.map(w => w.employee_id));
+          setAllJourneyLogs(data.filter(l => empIds.has(l.employee_id)));
+        }
+      } catch (err) {
+        console.error("Error fetching all logs:", err);
+      }
+    };
+
+    fetchAllLogs();
+  }, [visibleWorkLocations, currentTenant?.id]);
+
+  useEffect(() => {
+    if (!currentTenant?.id) return;
+
+    const channel = supabase
+      .channel('approval-page-work-locations')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'work_locations',
+        filter: `tenant_id=eq.${currentTenant.id}`,
+      }, () => {
+        fetchWorkLocations(currentTenant.id);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentTenant?.id, fetchWorkLocations]);
+
+  // Fetch pauses and journey logs for Timeline, Details, AND MAP modals
+  useEffect(() => {
+    if ((showTimelineModal || showDetailsModal || showMapModal) && selectedWork) {
+      fetchWorkPauses(selectedWork.id);
+      
+      const fetchJourneyLogs = async () => {
+        try {
+          const startOfDay = new Date(selectedWork.assignment_date);
+          startOfDay.setHours(0, 0, 0, 0);
+          const endOfDay = new Date(selectedWork.assignment_date);
+          endOfDay.setHours(23, 59, 59, 999);
+
+          // Fetch ALL employee logs for the full day (multi-location support)
+          const { data, error } = await supabase
+            .from('journey_tracking_logs')
+            .select('*')
+            .eq('employee_id', selectedWork.employee_id)
+            .gte('timestamp', startOfDay.toISOString())
+            .lte('timestamp', endOfDay.toISOString())
+            .order('timestamp', { ascending: true });
+            
+          if (error) throw error;
+
+          const allLogs = data || [];
+          
+          // Partition logs into independent sequences grouped by REACHED_ENDPOINT
+          const blocks: typeof allLogs[] = [];
+          let currentBlock: typeof allLogs = [];
+          
+          for (const log of allLogs) {
+            currentBlock.push(log);
+            if (log.event_type === 'REACHED_ENDPOINT') {
+              blocks.push([...currentBlock]);
+              currentBlock = [];
+            }
+          }
+          if (currentBlock.length > 0) {
+            blocks.push(currentBlock);
+          }
+
+          // Find the specific journey block that contains the selected work location
+          const activeBlock = blocks.find(b => b.some(l => l.work_location_id === selectedWork.id)) || [];
+
+          setJourneyLogs(activeBlock);
+        } catch (error) {
+          console.error('Error fetching journey logs:', error);
+        }
+      };
+      
+      fetchJourneyLogs();
+    }
+  }, [showTimelineModal, showDetailsModal, showMapModal, selectedWork, fetchWorkPauses]);
+
+  useEffect(() => {
+    if (showViolationsModal && selectedWork && currentTenant) {
+      fetchViolations(currentTenant.id, selectedWork.id);
+    }
+  }, [showViolationsModal, selectedWork, currentTenant, fetchViolations]);
+
+  const completedWorks = visibleWorkLocations.filter((wl) => wl.status === 'completed');
+  const approvedWorks = visibleWorkLocations.filter((wl) => wl.status === 'approved');
+
+  const groupWorksByJourney = (works: WorkLocation[], logs: any[]): JourneyGroup[] => {
+    const groupedByEmpDate: Record<string, WorkLocation[]> = {};
+    works.forEach(w => {
+      const key = `${w.employee_id}_${w.assignment_date}`;
+      if (!groupedByEmpDate[key]) groupedByEmpDate[key] = [];
+      groupedByEmpDate[key].push(w);
+    });
+
+    const journeyGroups: JourneyGroup[] = [];
+
+    Object.entries(groupedByEmpDate).forEach(([key, empWorks]) => {
+      const [empId, date] = key.split('_');
+
+      const startD = new Date(date); startD.setHours(0,0,0,0);
+      const endD = new Date(date); endD.setHours(23,59,59,999);
+
+      const dailyLogs = logs.filter(l => 
+        l.employee_id === empId && 
+        new Date(l.timestamp) >= startD && 
+        new Date(l.timestamp) <= endD
+      );
+
+      const blocks: any[][] = [];
+      let currBlock: any[] = [];
+      dailyLogs.forEach(l => {
+        currBlock.push(l);
+        if (l.event_type === 'REACHED_ENDPOINT') {
+          blocks.push([...currBlock]);
+          currBlock = [];
+        }
+      });
+      if (currBlock.length > 0) blocks.push(currBlock);
+
+      let remainingWorks = [...empWorks];
+
+      blocks.forEach((block, bIdx) => {
+        const blockLocIds = new Set(block.map(l => l.work_location_id).filter(Boolean));
+        const worksInBlock = remainingWorks.filter(w => blockLocIds.has(w.id));
+
+        if (worksInBlock.length > 0) {
+          const startLog = block.find(l => l.event_type === 'START_JOURNEY');
+          const endLog = block.find(l => l.event_type === 'REACHED_ENDPOINT');
+
+          worksInBlock.sort((a,b) => {
+            const aLog = block.find(l => l.work_location_id === a.id && l.event_type === 'START_WORK');
+            const bLog = block.find(l => l.work_location_id === b.id && l.event_type === 'START_WORK');
+            if (aLog && bLog) return new Date(aLog.timestamp).getTime() - new Date(bLog.timestamp).getTime();
+            return 0;
+          });
+
+          journeyGroups.push({
+            id: `group_${key}_${bIdx}`,
+            employeeName: worksInBlock[0].employee_name,
+            employeeEmail: worksInBlock[0].employee_email,
+            date: date,
+            startTime: startLog?.timestamp,
+            endTime: endLog?.timestamp,
+            works: worksInBlock
+          });
+          remainingWorks = remainingWorks.filter(w => !blockLocIds.has(w.id));
+        }
+      });
+
+      remainingWorks.forEach(w => {
+        journeyGroups.push({
+          id: `single_${w.id}`,
+          employeeName: w.employee_name,
+          employeeEmail: w.employee_email,
+          date: date,
+          startTime: w.started_at || undefined,
+          endTime: w.completed_at || undefined,
+          works: [w]
+        });
+      });
+    });
+
+    return journeyGroups.sort((a,b) => {
+      const d = new Date(b.date).getTime() - new Date(a.date).getTime();
+      if (d !== 0) return d;
+      const tA = a.startTime ? new Date(a.startTime).getTime() : 0;
+      const tB = b.startTime ? new Date(b.startTime).getTime() : 0;
+      return tB - tA;
+    });
+  };
+
+  const pendingGroups = useMemo(() => groupWorksByJourney(completedWorks, allJourneyLogs), [completedWorks, allJourneyLogs]);
+  const approvedGroups = useMemo(() => groupWorksByJourney(approvedWorks, allJourneyLogs), [approvedWorks, allJourneyLogs]);
+
+  const handleOpenApproval = (work: WorkLocation) => {
+    setSelectedWork(work);
+    setWorkAmount('');
+    setWorkUnit('');
+    setShowApprovalModal(true);
+  };
+
+  const handleOpenDetails = (work: WorkLocation) => {
+    setSelectedWork(work);
+    setWorkAmount(work.work_amount?.toString() || '');
+    setWorkUnit(work.work_amount_unit || '');
+    setShowDetailsModal(true);
+  };
+
+  const handleApprove = async () => {
+    if (!selectedWork) return;
+
+    setSubmitting(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const amount = workAmount ? parseFloat(workAmount) : undefined;
+      await approveWork(selectedWork.id, user.id, amount, workUnit || undefined);
+      toast.success('Work approved successfully');
+
+      setShowApprovalModal(false);
+      setSelectedWork(null);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to approve work');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleUpdateEdit = async () => {
+    if (!selectedWork) return;
+
+    if (!updateReason.trim()) {
+      toast.error('Please provide a reason for updating the amount.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const amount = workAmount ? parseFloat(workAmount) : null;
+      await updateWorkLocation(selectedWork.id, {
+        work_amount: amount,
+        work_amount_update_reason: updateReason, // Stored for admin audit
+      });
+      toast.success('Work details updated successfully');
+      setShowDetailsModal(false);
+      setSelectedWork(null);
+      setUpdateReason('');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update work details');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeny = async () => {
+    if (!selectedWork || !denyReason.trim()) return;
+
+    setSubmitting(true);
+    try {
+      await denyWorkLocation(selectedWork.id, denyReason);
+      toast.success('Work assignment denied');
+      setShowDenyModal(false);
+      setSelectedWork(null);
+      setDenyReason('');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to deny work');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const calculateDuration = (start: string, end: string) => {
+    const startTime = new Date(start).getTime();
+    const endTime = new Date(end).getTime();
+    const diff = endTime - startTime;
+
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+    if (hours > 0) {
+      return `${hours}h ${minutes}m`;
+    }
+    return `${minutes}m`;
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'bg-green-100 text-green-800';
+      case 'approved': return 'bg-purple-100 text-purple-800';
+      case 'denied': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const timelineEvents = useMemo(() => {
+    if (!selectedWork) return [];
+    
+    const logs: Array<{ status: string, timestamp: string, message: string, lat?: number, lng?: number, locationId?: string }> = [];
+
+    if (journeyLogs && journeyLogs.length > 0) {
+      // For timeline, show all events but skip pure LIVE_TRACK noise
+      const filteredLogs = journeyLogs.filter(log =>
+        !['LIVE_TRACK_JOURNEY', 'LIVE_TRACK_WORK'].includes(log.event_type)
+      );
+      filteredLogs.forEach((log) => {
+        let statusStr = log.event_type;
+        let msg = '';
+        
+        // Try to get location name from workLocations store
+        const locName = workLocations.find(wl => wl.id === log.work_location_id)?.location_name;
+        const locSuffix = locName ? ` — ${locName}` : '';
+
+        switch(log.event_type) {
+          case 'START_JOURNEY': statusStr = 'Start Journey'; msg = `Started travel${locSuffix}`; break;
+          case 'REACHED_LOCATION': statusStr = 'Reached Location'; msg = `Arrived at destination${locSuffix}`; break;
+          case 'START_WORK': statusStr = 'Start Work'; msg = `Work session started${locSuffix}`; break;
+          case 'PAUSE_WORK': statusStr = 'Pause Work'; msg = `Work paused${locSuffix}`; break;
+          case 'RESUME_WORK': statusStr = 'Resume Work'; msg = `Work session resumed${locSuffix}`; break;
+          case 'COMPLETE_WORK': statusStr = 'Complete Work'; msg = `Work session completed${locSuffix}`; break;
+          case 'START_RETURN_JOURNEY': statusStr = 'Return Journey'; msg = 'Started return trip'; break;
+          case 'REACHED_ENDPOINT': statusStr = 'End Point'; msg = 'Workflow completed for the day'; break;
+          default: statusStr = log.event_type.replace(/_/g, ' '); msg = 'Status logged';
+        }
+
+        logs.push({
+          status: statusStr,
+          timestamp: log.timestamp,
+          message: msg,
+          lat: log.latitude,
+          lng: log.longitude,
+          locationId: log.work_location_id,
+        });
+      });
+    } else {
+      if (selectedWork.started_at) {
+        logs.push({ status: 'start', timestamp: selectedWork.started_at, message: 'Work session started' });
+      }
+      if (activeWorkPauses && activeWorkPauses.length > 0) {
+        activeWorkPauses.forEach((pauseRecord) => {
+          if (pauseRecord.paused_at) logs.push({ status: 'pause', timestamp: pauseRecord.paused_at, message: `Reason: ${pauseRecord.pause_reason || 'Manual pause'}` });
+          if (pauseRecord.resumed_at) logs.push({ status: 'resume', timestamp: pauseRecord.resumed_at, message: 'Work session resumed' });
+        });
+      }
+      if (selectedWork.completed_at) {
+        logs.push({ status: 'complete', timestamp: selectedWork.completed_at, message: 'Work session completed' });
+      }
+    }
+
+    return logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  }, [selectedWork, activeWorkPauses, journeyLogs, workLocations]);
+
+  // Build multi-location map data from all-day logs
+  const multiMapData = useMemo(() => {
+    if (!selectedWork || journeyLogs.length === 0) return null;
+
+    // Color palette for segments: journey=indigo, work=green, return=orange
+    const SEGMENT_PALETTE: Record<string, string> = {
+      journey: '#6366f1',
+      work: '#059669',
+      return: '#f97316',
+    };
+    const SITE_COLOR_CYCLE = ['red', 'orange', 'gold', 'violet', 'blue'];
+
+    // Collect unique work location IDs in visit order
+    const visitedLocationIds: string[] = [];
+    journeyLogs.forEach(log => {
+      if (log.work_location_id && !visitedLocationIds.includes(log.work_location_id)) {
+        visitedLocationIds.push(log.work_location_id);
+      }
+    });
+
+    // Build work site pins
+    const workSites: WorkSitePin[] = visitedLocationIds.map((locId, si) => {
+      const wl = workLocations.find(w => w.id === locId);
+      return {
+        id: locId,
+        lat: wl ? Number(wl.latitude) : selectedWork.latitude,
+        lng: wl ? Number(wl.longitude) : selectedWork.longitude,
+        name: wl?.location_name || `Location ${si + 1}`,
+        radiusMeters: wl?.allowed_radius_meters,
+        color: SITE_COLOR_CYCLE[si % SITE_COLOR_CYCLE.length],
+      };
+    });
+
+    // Build path segments by grouping consecutive logs
+    const segments: PathSegment[] = [];
+    let currentSegmentPoints: { lat: number; lng: number; type: string; time: string }[] = [];
+    let currentSegmentType: 'journey' | 'work' | 'return' = 'journey';
+
+    const logsWithCoords = journeyLogs.filter(log => log.latitude != null && log.longitude != null);
+
+    const labelMap: Record<string, string> = {
+      START_JOURNEY: 'Start Journey',
+      LIVE_TRACK_JOURNEY: 'Traveling',
+      REACHED_LOCATION: 'Reached',
+      START_WORK: 'Start Work',
+      LIVE_TRACK_WORK: 'Working',
+      PAUSE_WORK: 'Paused',
+      RESUME_WORK: 'Resumed',
+      COMPLETE_WORK: 'Complete',
+      START_RETURN_JOURNEY: 'Return',
+      REACHED_ENDPOINT: 'End Point',
+      GPS_SIGNAL_LOST: 'Offline / Signal Lost',
+      GPS_SIGNAL_RESTORED: 'Online / Signal Restored',
+    };
+
+    logsWithCoords.forEach((log, i) => {
+      let segType: 'journey' | 'work' | 'return' = currentSegmentType;
+
+      if (['START_JOURNEY', 'LIVE_TRACK_JOURNEY', 'REACHED_LOCATION'].includes(log.event_type)) {
+        segType = 'journey';
+      } else if (['START_WORK', 'LIVE_TRACK_WORK', 'RESUME_WORK', 'PAUSE_WORK', 'COMPLETE_WORK'].includes(log.event_type)) {
+        segType = 'work';
+      } else if (['START_RETURN_JOURNEY', 'REACHED_ENDPOINT'].includes(log.event_type)) {
+        segType = 'return';
+      }
+      // For GPS_SIGNAL_LOST and RESTORED, we intentionally do NOT change the segType,
+      // so the map continues drawing the line in the color of whatever they were doing.
+
+      // If segment type changed, flush current and start new
+      if (segType !== currentSegmentType && currentSegmentPoints.length >= 1) {
+        // Add the last point of current segment as first of new (continuity)
+        segments.push({
+          points: [...currentSegmentPoints],
+          color: SEGMENT_PALETTE[currentSegmentType],
+          label: currentSegmentType,
+        });
+        currentSegmentPoints = [currentSegmentPoints[currentSegmentPoints.length - 1]];
+        currentSegmentType = segType;
+      }
+
+      currentSegmentPoints.push({
+        lat: Number(log.latitude),
+        lng: Number(log.longitude),
+        type: labelMap[log.event_type] || log.event_type.replace(/_/g, ' '),
+        time: new Date(log.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
+      });
+    });
+
+    // Flush last segment
+    if (currentSegmentPoints.length >= 1) {
+      segments.push({
+        points: currentSegmentPoints,
+        color: SEGMENT_PALETTE[currentSegmentType],
+        label: currentSegmentType,
+      });
+    }
+
+    // Flatten all points for markers
+    const allPoints = logsWithCoords.map(log => ({
+      lat: Number(log.latitude),
+      lng: Number(log.longitude),
+      type: labelMap[log.event_type] || log.event_type.replace(/_/g, ' '),
+      time: new Date(log.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
+      locationId: log.work_location_id
+    }));
+
+    return { workSites, segments, allPoints };
+  }, [journeyLogs, selectedWork, workLocations]);
+
+  const getTimelineIcon = (status: string) => {
+    const s = status.toLowerCase();
+    if (s.includes('offline') || s.includes('lost')) return <WifiOff className="h-5 w-5 text-red-500" />;
+    if (s.includes('online') || s.includes('restored')) return <Wifi className="h-5 w-5 text-green-500" />;
+    if (s.includes('journey')) return <Navigation className="h-5 w-5 text-indigo-500" />;
+    if (s.includes('reached') || s.includes('end point')) return <MapPin className="h-5 w-5 text-teal-500" />;
+    if (s.includes('start') || s.includes('resume')) return <PlayCircle className="h-5 w-5 text-blue-500" />;
+    if (s.includes('pause')) return <PauseCircle className="h-5 w-5 text-amber-500" />;
+    if (s.includes('complete')) return <CheckCircle className="h-5 w-5 text-green-500" />;
+    return <Clock className="h-5 w-5 text-gray-500" />;
+  };
+
+  if (loading && workLocations.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      </div>
+    );
+  }
+
+  // Paginated slices
+  const pendingTotalPages = Math.max(1, Math.ceil(pendingGroups.length / ITEMS_PER_PAGE));
+  const approvedTotalPages = Math.max(1, Math.ceil(approvedGroups.length / ITEMS_PER_PAGE));
+  const paginatedPendingGroups = pendingGroups.slice((pendingPage - 1) * ITEMS_PER_PAGE, pendingPage * ITEMS_PER_PAGE);
+  const paginatedApprovedGroups = approvedGroups.slice((approvedPage - 1) * ITEMS_PER_PAGE, approvedPage * ITEMS_PER_PAGE);
+
+  const handleTabChange = (tab: 'pending' | 'approved') => {
+    setActiveTab(tab);
+  };
+
+  const renderPagination = (
+    currentPage: number,
+    totalPages: number,
+    onPrev: () => void,
+    onNext: () => void
+  ) => {
+    if (totalPages <= 1) return null;
+    return (
+      <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50 rounded-b-xl">
+        <span className="text-sm text-gray-500">Page {currentPage} of {totalPages}</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onPrev}
+            disabled={currentPage === 1}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ← Previous
+          </button>
+          <div className="flex items-center gap-1">
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+              <button
+                key={p}
+                onClick={() => {
+                  if (activeTab === 'pending') setPendingPage(p);
+                  else setApprovedPage(p);
+                }}
+                className={`w-8 h-8 text-sm font-semibold rounded-lg transition-colors ${
+                  p === currentPage
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={onNext}
+            disabled={currentPage === totalPages}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Next →
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderJourneyGroup = (group: JourneyGroup, isPending: boolean) => (
+    <div key={group.id} className="p-6 hover:bg-gray-50/70 transition-colors border-b border-gray-100 last:border-b-0">
+      <div className="flex flex-col gap-5">
+        {/* Group Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className={`flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center font-bold text-sm ${
+              isPending ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'
+            }`}>
+              {group.employeeName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-gray-900">{group.employeeName}</h3>
+              <p className="text-xs text-gray-500">{group.employeeEmail}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold">
+              <Calendar className="h-3 w-3" />
+              {format(new Date(group.date), 'MMM d, yyyy')}
+            </span>
+            {group.startTime && group.endTime && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold">
+                <Clock className="h-3 w-3" />
+                {calculateDuration(group.startTime, group.endTime)}
+              </span>
+            )}
+            <span className="inline-flex items-center px-2.5 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-medium">
+              {group.works.length} location{group.works.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+        </div>
+
+        {/* Location Cards */}
+        <div className="space-y-3 pl-2">
+          {group.works.map(work => (
+            <div
+              key={work.id}
+              className={`rounded-xl border p-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4 relative overflow-hidden transition-all ${
+                isPending ? 'bg-white border-amber-100 shadow-sm' : 'bg-emerald-50/40 border-emerald-100 shadow-sm'
+              }`}
+            >
+              <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${
+                isPending ? 'bg-amber-400' : 'bg-emerald-400'
+              }`} />
+
+              <div className="flex-1 pl-3">
+                <div className="flex items-start gap-2 mb-2">
+                  <MapPin className={`h-4 w-4 mt-0.5 shrink-0 ${isPending ? 'text-amber-500' : 'text-emerald-500'}`} />
+                  <div>
+                    <div className="font-semibold text-gray-900 text-sm">{work.location_name}</div>
+                    {work.formatted_address && (
+                      <div className="text-xs text-gray-500 mt-0.5 line-clamp-1">{work.formatted_address}</div>
+                    )}
+                  </div>
+                </div>
+                <div className="ml-6 flex flex-wrap items-center gap-3 text-xs">
+                  <div className="flex items-center gap-1 text-gray-600">
+                    <Clock className="h-3 w-3" />
+                    <span>{work.started_at && work.completed_at ? calculateDuration(work.started_at, work.completed_at) : 'N/A'}</span>
+                  </div>
+                  {work.work_amount != null && Number(work.work_amount) > 0 && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full font-semibold">
+                      ₹{Number(work.work_amount).toLocaleString('en-IN')} Travel Allowance
+                    </span>
+                  )}
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${getStatusColor(work.status)}`}>
+                    {work.status.replace('_', ' ')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-wrap items-center gap-2 shrink-0 border-t xl:border-t-0 pt-3 xl:pt-0 border-gray-100">
+                {isPending && (
+                  <button
+                    onClick={() => handleOpenApproval(work)}
+                    className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-1.5"
+                  >
+                    <CheckCircle className="h-3.5 w-3.5" /> Approve
+                  </button>
+                )}
+                {!isPending && (
+                  <button
+                    onClick={() => handleOpenDetails(work)}
+                    className="p-1.5 text-blue-600 hover:bg-blue-50 border border-blue-100 rounded-lg transition-colors"
+                    title="Edit Amount"
+                  >
+                    <Edit className="h-4 w-4" />
+                  </button>
+                )}
+                <button
+                  onClick={() => { setSelectedWork(work); setShowMapModal(true); }}
+                  className="p-1.5 text-indigo-600 hover:bg-indigo-50 border border-indigo-100 rounded-lg transition-colors"
+                  title="View Map"
+                >
+                  <MapIcon className="h-4 w-4" />
+                </button>
+                {isPending && (
+                  <button
+                    onClick={() => { setSelectedWork(work); setShowTimelineModal(true); }}
+                    className="p-1.5 text-purple-600 hover:bg-purple-50 border border-purple-100 rounded-lg transition-colors"
+                    title="Timeline"
+                  >
+                    <History className="h-4 w-4" />
+                  </button>
+                )}
+                <button
+                  onClick={() => { setSelectedWork(work); setShowViolationsModal(true); }}
+                  className="p-1.5 text-orange-600 hover:bg-orange-50 border border-orange-100 rounded-lg transition-colors"
+                  title="Violations"
+                >
+                  <AlertTriangle className="h-4 w-4" />
+                </button>
+                {isPending && (
+                  <button
+                    onClick={() => { setSelectedWork(work); setDenyReason(''); setShowDenyModal(true); }}
+                    className="p-1.5 text-red-600 hover:bg-red-50 border border-red-100 rounded-lg transition-colors"
+                    title="Deny"
+                  >
+                    <XCircle className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+
+      {/* ─── Page Header ─── */}
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Work Location Approvals</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Review and approve completed work assignments</p>
+        </div>
+        <div className="flex items-center gap-3 text-sm text-gray-500">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-full font-semibold">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            {completedWorks.length} Pending
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full font-semibold">
+            <CheckCircle className="h-3.5 w-3.5" />
+            {approvedWorks.length} Approved
+          </span>
+        </div>
+      </div>
+
+      {/* ─── Tab Bar ─── */}
+      <div className="flex gap-1 p-1 bg-gray-100 rounded-xl w-fit mb-6">
+        <button
+          onClick={() => handleTabChange('pending')}
+          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+            activeTab === 'pending'
+              ? 'bg-white text-amber-700 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+            activeTab === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-gray-200 text-gray-600'
+          }`}>{completedWorks.length}</span>
+          Pending Approval
+        </button>
+        <button
+          onClick={() => handleTabChange('approved')}
+          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+            activeTab === 'approved'
+              ? 'bg-white text-green-700 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+            activeTab === 'approved' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'
+          }`}>{approvedWorks.length}</span>
+          Approved
+        </button>
+      </div>
+
+      {/* ─── Tab Content ─── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+
+        {/* PENDING TAB */}
+        {activeTab === 'pending' && (
+          <>
+            {completedWorks.length === 0 ? (
+              <div className="text-center py-20 px-6">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle className="h-8 w-8 text-green-500" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">All caught up!</h3>
+                <p className="text-gray-500 text-sm">No work assignments are waiting for your review.</p>
+              </div>
+            ) : (
+              <>
+                {paginatedPendingGroups.map(group => renderJourneyGroup(group, true))}
+                {renderPagination(
+                  pendingPage,
+                  pendingTotalPages,
+                  () => setPendingPage(p => Math.max(1, p - 1)),
+                  () => setPendingPage(p => Math.min(pendingTotalPages, p + 1))
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {/* APPROVED TAB */}
+        {activeTab === 'approved' && (
+          <>
+            {approvedWorks.length === 0 ? (
+              <div className="text-center py-20 px-6">
+                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle className="h-8 w-8 text-gray-400" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">No approved work yet</h3>
+                <p className="text-gray-500 text-sm">Approved work assignments will appear here.</p>
+              </div>
+            ) : (
+              <>
+                {paginatedApprovedGroups.map(group => renderJourneyGroup(group, false))}
+                {renderPagination(
+                  approvedPage,
+                  approvedTotalPages,
+                  () => setApprovedPage(p => Math.max(1, p - 1)),
+                  () => setApprovedPage(p => Math.min(approvedTotalPages, p + 1))
+                )}
+              </>
+            )}
+          </>
+        )}
+
+      </div>
+
+      {/* APPROVAL MODAL */}
+      {showApprovalModal && selectedWork && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">Approve Work</h2>
+              <button onClick={() => { setShowApprovalModal(false); setSelectedWork(null); }} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <div className="text-sm font-medium text-gray-700 mb-2">Employee</div>
+                <div className="text-base text-gray-900">{selectedWork.employee_name}</div>
+              </div>
+
+              <div>
+                <div className="text-sm font-medium text-gray-700 mb-2">Location</div>
+                <div className="text-base text-gray-900">{selectedWork.location_name}</div>
+                {selectedWork.formatted_address && (
+                  <div className="text-sm text-gray-600 mt-1">{selectedWork.formatted_address}</div>
+                )}
+              </div>
+
+              {selectedWork.started_at && selectedWork.completed_at && (
+                <div>
+                  <div className="text-sm font-medium text-gray-700 mb-2">Work Duration</div>
+                  <div className="text-base text-gray-900">
+                    {calculateDuration(selectedWork.started_at, selectedWork.completed_at)}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    {format(new Date(selectedWork.started_at), 'hh:mm a')} - {format(new Date(selectedWork.completed_at), 'hh:mm a')}
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-4 border-t border-gray-200">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Travel Allowance Amount (₹)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={workAmount}
+                  onChange={(e) => setWorkAmount(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  placeholder="e.g. 500"
+                />
+                <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
+                  This amount will be auto-added as a Travel Allowance earning in payroll.
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => { setShowApprovalModal(false); setSelectedWork(null); }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleApprove}
+                  disabled={submitting}
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Approving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="h-4 w-4" />
+                      Approve Work
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* COMPREHENSIVE DETAILS & EDIT MODAL */}
+      {showDetailsModal && selectedWork && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between shrink-0">
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <CheckCircle2 className="h-6 w-6 text-green-600" />
+                Work Assignment Details
+              </h2>
+              <button onClick={() => { setShowDetailsModal(false); setSelectedWork(null); }} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-8 flex-1">
+              {/* Info Grid Section */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-gray-50 p-5 rounded-lg border border-gray-100">
+                <div>
+                  <div className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-1"><User className="h-4 w-4"/> Employee</div>
+                  <div className="text-base text-gray-900 font-medium">{selectedWork.employee_name}</div>
+                  <div className="text-sm text-gray-600">{selectedWork.employee_email}</div>
+                </div>
+
+                <div>
+                  <div className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-1"><MapPin className="h-4 w-4"/> Location</div>
+                  <div className="text-base text-gray-900 font-medium">{selectedWork.location_name}</div>
+                  {selectedWork.formatted_address && (
+                    <div className="text-sm text-gray-600 line-clamp-2">{selectedWork.formatted_address}</div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-1"><Calendar className="h-4 w-4"/> Date Assigned</div>
+                  <div className="text-base text-gray-900">{format(new Date(selectedWork.assignment_date), 'MMMM d, yyyy')}</div>
+                </div>
+
+                <div>
+                  <div className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-1"><Clock className="h-4 w-4"/> Total Tracking Time</div>
+                  {selectedWork.started_at && selectedWork.completed_at ? (
+                    <>
+                      <div className="text-base text-gray-900 font-medium">
+                        {calculateDuration(selectedWork.started_at, selectedWork.completed_at)}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {format(new Date(selectedWork.started_at), 'hh:mm a')} - {format(new Date(selectedWork.completed_at), 'hh:mm a')}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-gray-500 text-sm">Not tracked</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Description Section */}
+              <div>
+                <h3 className="text-md font-semibold text-gray-900 mb-2 flex items-center gap-2"><AlignLeft className="h-4 w-4" /> Work Description</h3>
+                <div className="text-sm text-gray-800 bg-white border border-gray-200 p-4 rounded-lg shadow-sm">
+                  {selectedWork.work_description}
+                </div>
+              </div>
+
+              {/* Timeline Section */}
+              <div>
+                <h3 className="text-md font-semibold text-gray-900 mb-4 flex items-center gap-2"><History className="h-4 w-4"/> Activity Timeline</h3>
+                {timelineEvents.length === 0 ? (
+                  <div className="text-center py-4 text-gray-500 bg-gray-50 rounded-lg border border-gray-100">
+                    <Clock className="h-5 w-5 mx-auto mb-1 opacity-50" />
+                    No tracking activity recorded
+                  </div>
+                ) : (
+                  <div className="relative border-l-2 border-gray-200 ml-3 space-y-6">
+                    {timelineEvents.map((log, index) => (
+                      <div key={index} className="relative pl-6">
+                        <span className="absolute -left-3.5 top-0.5 bg-white ring-4 ring-white rounded-full">
+                          {getTimelineIcon(log.status)}
+                        </span>
+                        <div className="flex flex-col">
+                          <span className="text-sm font-semibold text-gray-900 capitalize">
+                            {log.status}
+                          </span>
+                          <span className="text-sm text-gray-700 my-0.5">
+                            {log.message}
+                          </span>
+                          {log.lat && log.lng && (
+                            <ReverseGeocodeAddress lat={log.lat} lng={log.lng} />
+                          )}
+                          <span className="text-xs text-gray-500">
+                            {format(new Date(log.timestamp), 'MMM d, yyyy - hh:mm:ss a')}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Editable Footer Section */}
+            <div className="p-6 border-t border-gray-200 shrink-0 bg-gray-50 rounded-b-lg">
+              <h3 className="text-md font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <Edit className="h-4 w-4 text-gray-500" />
+                Update Approved Amount
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={workAmount}
+                    onChange={(e) => setWorkAmount(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="e.g. 50"
+                  />
+                </div>
+                {/* <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
+                  <input
+                    type="text"
+                    value={workUnit}
+                    onChange={(e) => setWorkUnit(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="e.g. sq ft, items, hours"
+                  />
+                </div> */}
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason for Update <span className="text-red-500">*</span></label>
+                <textarea
+                  value={updateReason}
+                  onChange={(e) => setUpdateReason(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none h-20"
+                  placeholder="e.g., Fixing incorrect travel allowance approved earlier..."
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => { setShowDetailsModal(false); setSelectedWork(null); }}
+                  className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+                  disabled={submitting}
+                >
+                  Close
+                </button>
+                <button
+                  onClick={handleUpdateEdit}
+                  disabled={submitting}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      Save Changes
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DENY MODAL */}
+      {showDenyModal && selectedWork && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">Deny Work</h2>
+              <button onClick={() => { setShowDenyModal(false); setSelectedWork(null); }} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600">
+                You are about to deny the work submitted by <strong>{selectedWork.employee_name}</strong>. Please provide a reason below.
+              </p>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Reason for Denial <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={denyReason}
+                  onChange={(e) => setDenyReason(e.target.value)}
+                  placeholder="Enter reason..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 min-h-[100px]"
+                  required
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4 border-t border-gray-200">
+                <button
+                  onClick={() => { setShowDenyModal(false); setSelectedWork(null); }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeny}
+                  disabled={submitting || !denyReason.trim()}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Denying...
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="h-4 w-4" />
+                      Confirm Deny
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NEW VIOLATIONS MODAL */}
+      {showViolationsModal && selectedWork && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between shrink-0 bg-orange-50 rounded-t-lg">
+              <h2 className="text-xl font-bold text-orange-800 flex items-center gap-2">
+                <AlertCircle className="h-6 w-6" />
+                Radius Violations History
+              </h2>
+              <button onClick={() => { setShowViolationsModal(false); setSelectedWork(null); }} className="text-orange-400 hover:text-orange-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1">
+              <div className="mb-6 bg-white border border-gray-200 p-4 rounded-lg shadow-sm">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <User className="h-4 w-4 text-blue-600"/> 
+                  {selectedWork.employee_name}
+                </h3>
+                <div className="mt-2 text-sm text-gray-600 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div><span className="font-medium text-gray-500">Location:</span> {selectedWork.location_name}</div>
+                  <div><span className="font-medium text-gray-500">Allowed Radius:</span> {selectedWork.allowed_radius_meters}m</div>
+                </div>
+              </div>
+              
+              {loading && violations.length === 0 ? (
+                <div className="flex justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-orange-600" />
+                </div>
+              ) : violations.length === 0 ? (
+                <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg border border-gray-200 border-dashed">
+                  <ShieldCheck className="h-10 w-10 mx-auto mb-3 text-green-500 opacity-80" />
+                  <p className="text-lg font-medium text-gray-900">No violations recorded</p>
+                  <p className="text-sm mt-1">The employee stayed within the allowed radius.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {violations.map((violation) => (
+                    <div key={violation.id} className="bg-red-50 border border-red-100 rounded-lg p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:shadow-md transition-shadow">
+                      <div>
+                        <div className="font-semibold text-red-800 capitalize flex items-center gap-2">
+                          <AlertTriangle className="h-4 w-4 text-red-600" />
+                          {violation.violation_type.replace('_', ' ')}
+                        </div>
+                        <div className="text-sm text-red-700 mt-1.5 font-medium">
+                          Distance from center: {violation.distance_from_center}m
+                        </div>
+                        <div className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                          <MapPin className="h-3 w-3" />
+                          {violation.latitude.toFixed(6)}, {violation.longitude.toFixed(6)}
+                        </div>
+                      </div>
+                      <div className="text-left sm:text-right w-full sm:w-auto border-t sm:border-t-0 border-red-200 pt-3 sm:pt-0">
+                        <div className="text-sm font-bold text-red-900">
+                          {format(new Date(violation.violated_at || violation.created_at), 'MMM d, yyyy')}
+                        </div>
+                        <div className="text-xs font-medium text-red-700 mt-0.5">
+                          {format(new Date(violation.violated_at || violation.created_at), 'hh:mm:ss a')}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <div className="px-6 py-4 border-t border-gray-200 shrink-0 bg-gray-50 rounded-b-lg">
+              <button
+                onClick={() => { setShowViolationsModal(false); setSelectedWork(null); }}
+                className="w-full px-4 py-2 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-100 transition-colors shadow-sm"
+              >
+                Close Summary
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MAP MODAL — Journey Path View */}
+      {showMapModal && selectedWork && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                  <MapIcon className="h-5 w-5 text-blue-600" />
+                  Journey Tracking — {selectedWork.location_name}
+                </h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {selectedWork.employee_name} &nbsp;·&nbsp; {selectedWork.formatted_address || `${selectedWork.latitude.toFixed(5)}, ${selectedWork.longitude.toFixed(5)}`}
+                </p>
+              </div>
+              <button onClick={() => { setShowMapModal(false); setSelectedWork(null); }} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Journey Path Map — multi-location aware */}
+              <JourneyMapSwitch
+                points={multiMapData?.allPoints || []}
+                workLat={Number(selectedWork.latitude)}
+                workLng={Number(selectedWork.longitude)}
+                workName={selectedWork.location_name}
+                radiusMeters={selectedWork.allowed_radius_meters}
+                height="460px"
+                workSites={multiMapData?.workSites && multiMapData.workSites.length > 1 ? multiMapData.workSites : undefined}
+                segments={multiMapData?.segments && multiMapData.segments.length > 0 ? multiMapData.segments : undefined}
+              />
+
+              {/* Legend */}
+              <div className="flex flex-wrap gap-4 text-xs text-gray-600">
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> Journey Start</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-500 inline-block" /> Events</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-violet-500 inline-block" /> Last Event</div>
+                <div className="flex items-center gap-1.5"><span className="w-8 h-0 border-t-2 border-indigo-500 inline-block" /> Travel Path</div>
+                <div className="flex items-center gap-1.5"><span className="w-8 h-0 border-t-2 border-emerald-500 inline-block" /> Work Tracking</div>
+                <div className="flex items-center gap-1.5"><span className="w-8 h-0 border-t-2 border-orange-500 inline-block" /> Return Journey</div>
+                {/* Dynamically Styled Radius Indicators */}
+                <div className="flex items-center gap-1.5"><span className="w-6 h-0 border-t-2 border-dashed border-blue-500 inline-block" /> Assigned Radius</div>
+                <div className="flex items-center gap-1.5"><span className="w-6 h-0 border-t-2 border-dashed border-green-500 inline-block" /> Valid Radius</div>
+                <div className="flex items-center gap-1.5"><span className="w-6 h-0 border-t-2 border-dashed border-red-500 inline-block" /> Violated Radius</div>
+              </div>
+
+              {/* Multi-location visit summary */}
+              {multiMapData?.workSites && multiMapData.workSites.length > 1 && (
+                <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                  <div className="text-xs font-semibold text-blue-700 mb-2">📍 Locations Visited Today ({multiMapData.workSites.length})</div>
+                  <div className="flex flex-wrap gap-2">
+                    {multiMapData.workSites.map((ws, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-blue-200 rounded-full text-xs text-blue-800 font-medium">
+                        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: ['#ef4444','#f97316','#eab308','#7c3aed','#2563eb'][i % 5] }} />
+                        {ws.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Event timeline */}
+              {journeyLogs.length > 0 ? (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="bg-gray-50 px-4 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200">
+                    Journey Timeline ({timelineEvents.length} events)
+                  </div>
+                  <div className="divide-y divide-gray-100 max-h-52 overflow-y-auto">
+                    {timelineEvents.map((evt, i) => (
+                      <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                        <span className="text-base">{getTimelineIcon(evt.status)}</span>
+                        <div className="flex-1">
+                          <div className="text-sm font-medium text-gray-800 capitalize">{evt.status}</div>
+                          <div className="text-xs text-gray-500">{evt.message}</div>
+                        </div>
+                        <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                          {format(new Date(evt.timestamp), 'hh:mm a')}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-6 text-sm text-gray-400 border border-dashed border-gray-200 rounded-lg">
+                  No journey tracking data recorded yet for this assignment.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PENDING WORKS TIMELINE MODAL */}
+      {showTimelineModal && selectedWork && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <History className="h-5 w-5 text-purple-600" />
+                Work Timeline
+              </h2>
+              <button onClick={() => { setShowTimelineModal(false); setSelectedWork(null); }} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 max-h-[70vh] overflow-y-auto">
+              <div className="mb-6">
+                <h3 className="font-medium text-gray-900">{selectedWork.employee_name}</h3>
+                <p className="text-sm text-gray-500">{format(new Date(selectedWork.assignment_date), 'MMMM d, yyyy')}</p>
+              </div>
+
+              {timelineEvents.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+                  Loading timeline...
+                </div>
+              ) : (
+                <div className="relative border-l-2 border-gray-200 ml-3 space-y-8">
+                  {timelineEvents.map((log, index) => (
+                    <div key={index} className="relative pl-6">
+                      <span className="absolute -left-3.5 top-0.5 bg-white ring-4 ring-white rounded-full">
+                        {getTimelineIcon(log.status)}
+                      </span>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold text-gray-900 capitalize">
+                          {log.status}
+                        </span>
+                        <span className="text-sm text-gray-700 my-0.5">
+                          {log.message}
+                        </span>
+                        {log.lat && log.lng && (
+                          <ReverseGeocodeAddress lat={log.lat} lng={log.lng} />
+                        )}
+                        <span className="text-xs text-gray-500">
+                          {format(new Date(log.timestamp), 'hh:mm:ss a')}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {selectedWork.started_at && selectedWork.completed_at && (
+                <div className="mt-8 p-4 bg-gray-50 rounded-lg flex items-center justify-between border border-gray-100">
+                  <span className="text-sm font-medium text-gray-700">Total Wall-Clock Time</span>
+                  <span className="text-sm font-bold text-blue-600">
+                    {calculateDuration(selectedWork.started_at, selectedWork.completed_at)}
+                  </span>
+                </div>
+              )}
+            </div>
+            
+            <div className="px-6 py-4 border-t border-gray-200">
+              <button
+                onClick={() => { setShowTimelineModal(false); setSelectedWork(null); }}
+                className="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Close Timeline
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

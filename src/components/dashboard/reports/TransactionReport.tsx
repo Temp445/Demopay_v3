@@ -1,0 +1,431 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { AlertCircle, FileText, ChevronDown } from 'lucide-react';
+import { useReportsStore } from '../../../stores/reportsStore';
+import { supabase } from '../../../lib/supabase';
+import ReportTable from './ReportTable';
+import ReportActions from './ReportActions';
+import PayslipReport from './PayslipReport';
+
+interface TransactionReportProps {
+  subtype: string;
+  filters: {
+    startDate: string;
+    endDate: string;
+    department: string;
+    employee: string;
+  };
+  externalSelectedComponents?: string[];
+  onComponentsChange?: (components: string[]) => void;
+}
+
+// Types for Auxiliary Data
+type Holiday = { id: string; name: string; date: string; is_recurring: boolean; };
+type RecurringPattern = { week_day: string; week_occurrence: string; };
+
+type LeaveRequest = {
+  start_date: string;
+  end_date: string;
+  status: string;
+  leave_types: { name: string } | null;
+  employee: { employee_code: string } | null;
+};
+
+export default function TransactionReport({ 
+  subtype, 
+  filters,
+  externalSelectedComponents,
+  onComponentsChange 
+}: TransactionReportProps) {
+  const { transactionReports, loading, error, fetchTransactionReport } = useReportsStore();
+  
+  const [columns, setColumns] = useState<string[]>([]);
+  const [availableEarnings, setAvailableEarnings] = useState<string[]>([]);
+  const [availableDeductions, setAvailableDeductions] = useState<string[]>([]);
+  
+  const [localSelectedComponents, setLocalSelectedComponents] = useState<string[]>([]);
+  const selectedComponents = externalSelectedComponents || localSelectedComponents;
+
+  const updateSelectedComponents = (newSelection: string[]) => {
+    setLocalSelectedComponents(newSelection);
+    if (onComponentsChange) {
+      onComponentsChange(newSelection);
+    }
+  };
+  
+  const [showComponentDropdown, setShowComponentDropdown] = useState(false);
+  const componentDropdownRef = useRef<HTMLDivElement>(null);
+  
+  const [expandedEmployee, setExpandedEmployee] = useState<string | null>(null);
+
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [patterns, setPatterns] = useState<RecurringPattern[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
+  const [auxLoading, setAuxLoading] = useState(true);
+
+  const reportData = transactionReports[subtype]?.data || [];
+  const summary = transactionReports[subtype]?.summary || {};
+  const isAttendance = subtype === 'attendance';
+
+  // --- HELPER: Formats keys ---
+  const formatColumnName = (key: string) => {
+    if (!key) return '';
+    
+    // Custom formatting for LOP Days
+    if (key === 'lopDays') return 'LOP';
+    if (key === 'totalWorkingDays') return 'Work Days'; 
+    if (key === 'paidWorkingDays') return 'Paid Days';  
+
+    let cleanKey = key.replace(/\s+/g, ' ').trim();
+    cleanKey = cleanKey.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+    return cleanKey.split(' ').map(word => 
+      word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+    ).join(' ');
+  };
+
+  useEffect(() => {
+    fetchTransactionReport(subtype, filters);
+  }, [subtype, filters, fetchTransactionReport]);
+
+  useEffect(() => {
+    if (!isAttendance) return;
+    const fetchAuxData = async () => {
+      setAuxLoading(true);
+      try {
+        const promises: Promise<any>[] = [
+          supabase.from('holidays').select('id, name, date, is_recurring').eq('is_active', true),
+          supabase.from('holiday_recurring_patterns').select('week_day, week_occurrence').eq('is_active', true)
+        ];
+        let leaveQuery = supabase
+          .from('leave_requests')
+          .select('start_date, end_date, status, leave_types(name), employee:employees(employee_code)')
+          .in('status', ['Approved', 'Pending']);
+        if (filters.startDate) leaveQuery = leaveQuery.gte('end_date', filters.startDate);
+        if (filters.endDate) leaveQuery = leaveQuery.lte('start_date', filters.endDate);
+        promises.push(leaveQuery);
+        const [holRes, patRes, leaveRes] = await Promise.all(promises);
+        setHolidays(holRes.data || []);
+        setPatterns(patRes.data || []);
+        setLeaveRequests(leaveRes.data || []);
+      } catch (err) {
+        console.error('Unexpected error fetching aux data:', err);
+      } finally {
+        setAuxLoading(false);
+      }
+    };
+    fetchAuxData();
+  }, [isAttendance, filters.startDate, filters.endDate]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (componentDropdownRef.current && !componentDropdownRef.current.contains(event.target as Node)) {
+        setShowComponentDropdown(false);
+      }
+    };
+    if (showComponentDropdown) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showComponentDropdown]);
+
+  /* ---------------- HELPERS ---------------- */
+  const isHoliday = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+    if (holidays.some(h => h.date === dateStr)) return true;
+    const dayOfMonth = date.getDate();
+    const weekNum = Math.ceil(dayOfMonth / 7);
+    const isLast = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate() - dayOfMonth < 7;
+    const occurrenceMap: Record<number, string> = { 1: 'first', 2: 'second', 3: 'third', 4: 'fourth' };
+    return patterns.some(p => p.week_day === dayName && (p.week_occurrence === occurrenceMap[weekNum] || (p.week_occurrence === 'last' && isLast)));
+  };
+
+  const getLeaveStatus = (empCode: string, dateStr: string): string | null => {
+    const leave = leaveRequests.find(req => req.employee?.employee_code === empCode && req.start_date <= dateStr && req.end_date >= dateStr);
+    if (!leave) return null;
+    if (leave.status === 'Approved') return leave.leave_types?.name || 'Leave'; // @ts-ignore
+    else if (leave.status === 'Pending') return 'Pending';
+    return null;
+  };
+
+  /* ---------------- ATTENDANCE GROUPING LOGIC ---------------- */
+  const groupedAttendance = useMemo(() => {
+    if (!isAttendance || auxLoading) return [];
+    const uniqueEmployees = new Map<string, any>();
+    const recordMap = new Map<string, any>();
+    reportData.forEach((row: any) => {
+      const dateStr = row.date ? new Date(row.date).toISOString().split('T')[0] : '';
+      if (!dateStr) return;
+      if (!uniqueEmployees.has(row.employeeCode)) uniqueEmployees.set(row.employeeCode, { employeeCode: row.employeeCode, name: row.name, department: row.department });
+      recordMap.set(`${row.employeeCode}_${dateStr}`, row);
+    });
+    let targetDates: string[] = [];
+    if (filters.startDate && filters.endDate) {
+      const start = new Date(filters.startDate);
+      const end = new Date(filters.endDate);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) targetDates.push(d.toISOString().split('T')[0]);
+    } else {
+      const dates = new Set<string>();
+      reportData.forEach((r: any) => { if (r.date) dates.add(new Date(r.date).toISOString().split('T')[0]); });
+      targetDates = Array.from(dates).sort();
+    }
+    const result: any[] = [];
+    uniqueEmployees.forEach((empInfo, empCode) => {
+      const empStats = { ...empInfo, presentDays: 0, absentDays: 0, totalDays: 0, records: [] as any[] };
+      targetDates.forEach(date => {
+        empStats.totalDays += 1;
+        const key = `${empCode}_${date}`;
+        let status = 'Absent', request = '-', record = null, isPresent = false;
+        if (recordMap.has(key)) {
+          record = recordMap.get(key);
+          if (record.status === 'Present' || record.status === 'Half Day' || record.status === 'Late') isPresent = true;
+        }
+        if (isPresent) { status = record.status; empStats.presentDays += 1; empStats.records.push({ ...record, request: request }); }
+        else {
+          if (isHoliday(date)) return;
+          const leaveName = getLeaveStatus(empCode, date);
+          if (leaveName) { status = 'Absent'; request = leaveName; empStats.absentDays += 1; }
+          else { status = 'Absent'; request = '-'; empStats.absentDays += 1; }
+          empStats.records.push({ date: date, status: status, request: request, clockIn: '-', clockOut: '-', workingHours: 0, lateMinutes: 0, overtimeMinutes: 0, ...empInfo });
+        }
+      });
+      empStats.records.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      result.push(empStats);
+    });
+    return result;
+  }, [reportData, isAttendance, filters, holidays, patterns, leaveRequests, auxLoading]);
+
+
+  /* ---------------- COLUMN LOGIC ---------------- */
+  useEffect(() => {
+    if (reportData.length > 0 && subtype === 'monthly') {
+      // UPDATED: Added 'lopDays' to the default list of columns
+      const defaultColumns = [
+  'employeeCode', 
+  'name', 
+  'department', 
+  'payPeriod', 
+  'totalWorkingDays', // Add this
+  'lopDays', 
+  'paidWorkingDays',  // Add this
+  'earnings', 
+  'deductions', 
+  'netAmount', 
+  'paymentDate', 
+  'status'
+];
+      const earningSet = new Set<string>();
+      const deductionSet = new Set<string>();
+
+      reportData.forEach((row: any) => {
+        if (row.salary_components && Array.isArray(row.salary_components)) {
+          row.salary_components.forEach((comp: any) => { if (comp.name) earningSet.add(comp.name); });
+        }
+        if (row.deduction_components && Array.isArray(row.deduction_components)) {
+          row.deduction_components.forEach((comp: any) => { if (comp.name) deductionSet.add(comp.name); });
+        }
+        
+        // Manually check for Bonus and Overtime
+        if (row.bonus !== undefined && row.bonus !== null) earningSet.add('Bonus');
+        if (row.overtime_amount !== undefined && row.overtime_amount !== null) earningSet.add('Overtime Amount');
+      });
+
+      deductionSet.forEach((deductionName) => {
+        if (earningSet.has(deductionName)) earningSet.delete(deductionName);
+      });
+
+      const sortedEarnings = Array.from(earningSet).sort();
+      const sortedDeductions = Array.from(deductionSet).sort();
+
+      setAvailableEarnings(sortedEarnings);
+      setAvailableDeductions(sortedDeductions);
+
+      const allAvailable = [...sortedEarnings, ...sortedDeductions];
+      const selectedSortedColumns = allAvailable.filter(comp => selectedComponents.includes(comp));
+      setColumns([...defaultColumns, ...selectedSortedColumns]);
+
+    } else if (reportData.length > 0) {
+      setColumns(Object.keys(reportData[0]));
+    }
+  }, [reportData, selectedComponents, subtype]);
+
+  const getReportTitle = () => {
+    switch (subtype) {
+      case 'monthly': return 'Monthly Salary Report';
+      case 'attendance': return 'Attendance Report';
+      case 'leave': return 'Leave Balance Report';
+      case 'overtime': return 'Overtime Report';
+      case 'bonus': return 'Bonus Payment Report';
+      case 'loan': return 'Loan/Advance Report';
+      case 'payslip': return 'Payslip Report';
+      case 'permissionBalance': return 'Employee Permission Balance Report';
+      default: return 'Transaction Report';
+    }
+  };
+
+  /* ---------------- DATA PROCESSING ---------------- */
+  const enhancedReportData = useMemo(() => {
+    return reportData.map((row: any) => {
+      if (subtype !== 'monthly') return row;
+      const enhancedRow = { ...row };
+      
+      selectedComponents.forEach(compName => {
+        // 1. Try finding in arrays
+        const sComp = row.salary_components?.find((c: any) => c.name === compName);
+        const dComp = row.deduction_components?.find((c: any) => c.name === compName);
+        
+        let amount = sComp?.amount || dComp?.amount;
+
+        // 2. If not in arrays, check top-level keys for Bonus/Overtime
+        if (amount === undefined) {
+           if (compName === 'Bonus') amount = row.bonus;
+           if (compName === 'Overtime Amount') amount = row.overtime_amount;
+        }
+
+        enhancedRow[compName] = amount || 0;
+      });
+      return enhancedRow;
+    });
+  }, [reportData, subtype, selectedComponents]);
+
+  const handleComponentToggle = (componentName: string) => {
+    const isSelected = selectedComponents.includes(componentName);
+    const newSelection = isSelected 
+      ? selectedComponents.filter(c => c !== componentName) 
+      : [...selectedComponents, componentName];
+    updateSelectedComponents(newSelection);
+  };
+
+  const handleSelectAllComponents = () => {
+    const allComponents = [...availableEarnings, ...availableDeductions];
+    const newSelection = selectedComponents.length === allComponents.length ? [] : allComponents;
+    updateSelectedComponents(newSelection);
+  };
+
+  /* ---------------- RENDER ---------------- */
+  // Special rendering for payslip report
+  if (subtype === 'payslip') {
+    return <PayslipReport data={reportData} loading={loading} error={error} />;
+  }
+
+  if (loading || (isAttendance && auxLoading)) return <div className="flex justify-center items-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div></div>;
+  if (error) return <div className="rounded-md bg-red-50 p-4"><div className="flex"><AlertCircle className="h-5 w-5 text-red-400" /><div className="ml-3"><h3 className="text-sm font-medium text-red-800">{error}</h3></div></div></div>;
+  if (reportData.length === 0) return <div className="text-center py-12"><FileText className="mx-auto h-12 w-12 text-gray-400" /><h3 className="mt-2 text-sm font-medium text-gray-900">No data available</h3><p className="mt-1 text-sm text-gray-500">Try changing your filters.</p></div>;
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-semibold text-gray-900">{getReportTitle()}</h2>
+        <div className="flex space-x-2">
+          {subtype === 'monthly' && (availableEarnings.length + availableDeductions.length) > 0 && (
+            <div className="relative" ref={componentDropdownRef}>
+              <button
+                className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                onClick={() => setShowComponentDropdown(!showComponentDropdown)}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Select Components ({selectedComponents.length})
+                <ChevronDown className="h-4 w-4 ml-1" />
+              </button>
+              {showComponentDropdown && (
+                <div className="absolute right-0 mt-2 w-72 bg-white rounded-md shadow-lg z-10 border border-gray-200 max-h-96 overflow-y-auto">
+                  <div className="p-2 border-b border-gray-200 sticky top-0 bg-white z-20">
+                    <button onClick={handleSelectAllComponents} className="w-full text-left px-3 py-2 text-xs font-medium text-indigo-600 hover:bg-indigo-50 rounded-md">
+                      {selectedComponents.length === (availableEarnings.length + availableDeductions.length) ? 'Deselect All' : 'Select All'}
+                    </button>
+                  </div>
+                  <div className="py-2">
+                    {availableEarnings.length > 0 && (
+                      <>
+                        <div className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase bg-gray-50">Earnings</div>
+                        {availableEarnings.map((comp) => (
+                          <label key={comp} className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" checked={selectedComponents.includes(comp)} onChange={() => handleComponentToggle(comp)} className="h-4 w-4 text-indigo-600 rounded border-gray-300" />
+                            <span className="ml-3 text-xs text-gray-700">{formatColumnName(comp)}</span>
+                          </label>
+                        ))}
+                      </>
+                    )}
+                    {availableDeductions.length > 0 && (
+                      <>
+                        <div className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase bg-gray-50 mt-2">Deductions</div>
+                        {availableDeductions.map((comp) => (
+                          <label key={comp} className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" checked={selectedComponents.includes(comp)} onChange={() => handleComponentToggle(comp)} className="h-4 w-4 text-indigo-600 rounded border-gray-300" />
+                            <span className="ml-3 text-xs text-gray-700">{formatColumnName(comp)}</span>
+                          </label>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <ReportActions data={enhancedReportData} columns={columns} title={getReportTitle()} />
+        </div>
+      </div>
+
+      <div className="bg-white shadow overflow-hidden sm:rounded-md">
+        <div className="px-4 py-5 sm:px-6 bg-gray-50 border-b border-gray-200">
+          <h3 className="text-lg leading-6 font-medium text-gray-900">Report Details</h3>
+          <p className="mt-1 max-w-2xl text-sm text-gray-500">
+            Generated on {new Date().toLocaleString('en-GB')} 
+            {filters.department && ` | Department: ${filters.department}`}
+            {filters.startDate && ` | Period: ${filters.startDate} to ${filters.endDate}`}
+          </p>
+        </div>
+        
+        {isAttendance ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Department</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Present Days</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Absent Days</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y bg-white">
+                {groupedAttendance.map(emp => (
+                  <React.Fragment key={emp.employeeCode}>
+                    <tr className="hover:bg-gray-50">
+                      <td className="px-4 py-4 text-sm font-medium text-gray-900">{emp.name}</td>
+                      <td className="px-4 py-4 text-sm text-gray-500">{emp.department}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-green-600">{emp.presentDays}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-red-600">{emp.absentDays}</td>
+                      <td className="px-4 py-4 text-right">
+                        <button className="text-indigo-600 hover:text-indigo-900 text-sm font-medium" onClick={() => setExpandedEmployee(expandedEmployee === emp.employeeCode ? null : emp.employeeCode)}>
+                          {expandedEmployee === emp.employeeCode ? 'Hide Details' : 'View Records'}
+                        </button>
+                      </td>
+                    </tr>
+                    {expandedEmployee === emp.employeeCode && (
+                      <tr><td colSpan={5} className="bg-gray-50 px-4 py-4"><ReportTable data={emp.records} columns={['date', 'status', 'request', 'clockIn', 'clockOut', 'workingHours', 'lateMinutes', 'overtimeMinutes']} /></td></tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <ReportTable data={enhancedReportData} columns={columns} />
+        )}
+        
+        {Object.keys(summary).length > 0 && (
+          <div className="px-4 py-5 sm:px-6 bg-gray-50 border-t border-gray-200">
+            <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">Summary</h3>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {Object.entries(summary).map(([key, value]) => (
+                <div key={key} className="bg-white p-4 shadow rounded-lg border border-gray-200">
+                  <dt className="text-sm font-medium text-gray-500 truncate">{formatColumnName(key)}</dt>
+                  <dd className="mt-1 text-2xl font-semibold text-gray-900">{typeof value === 'number' ? value.toLocaleString('en-IN', { style: 'currency', currency: 'INR' }) : value}</dd>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

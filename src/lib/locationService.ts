@@ -44,11 +44,31 @@ export function getCurrentPosition(): Promise<GeolocationPosition> {
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: 10000,
-      maximumAge: 0,
-    });
+    // Try high accuracy first
+    navigator.geolocation.getCurrentPosition(
+      resolve,
+      (err) => {
+        console.warn('High accuracy geolocation failed, trying low accuracy...', err);
+        // Fallback to low accuracy, longer timeout, and allow fully cached position
+        navigator.geolocation.getCurrentPosition(
+          resolve,
+          (fallbackErr) => {
+            console.error('Geolocation fallback also failed:', fallbackErr);
+            reject(fallbackErr);
+          },
+          {
+            enableHighAccuracy: false,
+            timeout: 40000,
+            maximumAge: Infinity, // Accept any cached location
+          }
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 20000,
+        maximumAge: 10000, // Allow slightly cached position (10s)
+      }
+    );
   });
 }
 

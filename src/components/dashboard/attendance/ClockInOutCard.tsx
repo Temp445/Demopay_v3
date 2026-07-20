@@ -310,6 +310,12 @@ export default function ClockInOutCard({
       const employeeId = selectedEmployee?.id || user?.id;
       if (!employeeId) throw new Error("No employee selected");
 
+      if (manual && !manualReason.trim()) {
+        setError("Please provide a reason for the manual entry.");
+        setLoading(false);
+        return;
+      }
+
       // Validate employee status before proceeding
       if (selectedEmployee) {
         const restrictedStatuses = ['relieved', 'suspended', 'terminated'];
@@ -390,8 +396,10 @@ export default function ClockInOutCard({
             distanceMeters: locResult.distanceMeters ?? undefined,
             status: locResult.status,
           };
-        } catch (locErr) {
-          setError("Failed to get your location. Please ensure location services are enabled.");
+        } catch (locErr: any) {
+          console.error("Location error:", locErr);
+          const msg = locErr?.message || "Unknown error";
+          setError(`Failed to get your location (${msg}). Please ensure location services are enabled and you are on a secure connection (HTTPS).`);
           setLoading(false);
           return;
         }
@@ -584,7 +592,7 @@ export default function ClockInOutCard({
                       htmlFor="manual-reason"
                       className="block text-sm font-medium text-gray-700"
                     >
-                      Reason for Manual Entry
+                      Reason for Manual Entry <span className="text-red-500">*</span>
                     </label>
                     <textarea
                       id="manual-reason"

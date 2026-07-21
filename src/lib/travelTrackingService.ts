@@ -12,16 +12,18 @@
 import { supabase } from './supabase';
 import { calculateDistance } from './locationService';
 
-// Thresholds
-const TIME_THRESHOLD_MS   = 5 * 60 * 1000; // 5 minutes
-const DIST_THRESHOLD_M    = 100;            // 100 meters
-const MIN_ACCURACY_M      = 150;            // Ignore GPS fixes worse than 150m accuracy
+// Default Thresholds (if not provided by config)
+const DEFAULT_TIME_THRESHOLD_MS   = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_DIST_THRESHOLD_M    = 100;            // 100 meters
+const MIN_ACCURACY_M              = 2500;           // Relaxed accuracy limit for desktop browser testing
 
 export interface TravelSession {
   timestampId: string;
   employeeId: string;
   tenantId: string;
   startTime: number; // Date.now() when tracking started
+  intervalMins?: number;
+  thresholdMeters?: number;
 }
 
 export interface TravelSummary {
@@ -38,6 +40,8 @@ export interface TravelBreadcrumb {
   recorded_at: string;
 }
 
+const STORAGE_KEY = 'ace_payroll_travel_session';
+
 // --- Internal state (module-scoped, survives re-renders) ---
 let watchId: number | null = null;
 let activeSession: TravelSession | null = null;
@@ -46,6 +50,26 @@ let lastStoredLng: number | null = null;
 let lastStoredTime: number = 0;
 let cumulativeDistance: number = 0;
 let sessionStartTime: number = 0;
+let activeTimeThresholdMs: number = DEFAULT_TIME_THRESHOLD_MS;
+let activeDistThresholdM: number = DEFAULT_DIST_THRESHOLD_M;
+
+function saveState() {
+  if (!activeSession) {
+    localStorage.removeItem(STORAGE_KEY);
+    return;
+  }
+  const state = {
+    activeSession,
+    cumulativeDistance,
+    sessionStartTime,
+    activeTimeThresholdMs,
+    activeDistThresholdM,
+    lastStoredTime,
+    lastStoredLat,
+    lastStoredLng,
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
 
 // Internal callback — use registerDistanceCallback() from outside the module
 let _distanceCallback: ((meters: number) => void) | null = null;
@@ -75,10 +99,17 @@ export function startTravelTracking(session: TravelSession): void {
 
   activeSession = session;
   cumulativeDistance = 0;
-  sessionStartTime = Date.now();
+  sessionStartTime = session.startTime;
+  
+  // Use configured thresholds or fallback to defaults
+  activeTimeThresholdMs = session.intervalMins !== undefined ? session.intervalMins * 60 * 1000 : DEFAULT_TIME_THRESHOLD_MS;
+  activeDistThresholdM = session.thresholdMeters !== undefined ? session.thresholdMeters : DEFAULT_DIST_THRESHOLD_M;
+
   lastStoredTime = Date.now();
   lastStoredLat = null;
   lastStoredLng = null;
+  
+  saveState();
 
   if (!navigator.geolocation) {
     console.warn('[TravelTracking] Geolocation not available.');
@@ -138,6 +169,7 @@ export async function stopTravelTracking(writeSummary: boolean = true): Promise<
   }
 
   activeSession = null;
+  localStorage.removeItem(STORAGE_KEY);
   return summary;
 }
 
@@ -164,6 +196,13 @@ export async function getTravelLogs(
     longitude: Number(row.longitude),
     cumulative_distance_meters: Number(row.cumulative_distance_meters),
   }));
+}
+
+/**
+ * Get the current accumulated distance in meters.
+ */
+export function getCumulativeDistance(): number {
+  return cumulativeDistance;
 }
 
 /**
@@ -204,8 +243,8 @@ async function handlePositionUpdate(position: GeolocationPosition): Promise<void
   // Hybrid threshold: store if enough time OR enough distance has passed
   const shouldStore =
     lastStoredLat === null || // Always store the very first fix
-    timeSinceLast >= TIME_THRESHOLD_MS ||
-    distanceMoved >= DIST_THRESHOLD_M;
+    timeSinceLast >= activeTimeThresholdMs ||
+    distanceMoved >= activeDistThresholdM;
 
   if (!shouldStore) return;
 
@@ -221,6 +260,8 @@ async function handlePositionUpdate(position: GeolocationPosition): Promise<void
   lastStoredLat = latitude;
   lastStoredLng = longitude;
   lastStoredTime = now;
+
+  saveState();
 
   // Insert breadcrumb into database
   const { error } = await supabase
@@ -239,5 +280,44 @@ async function handlePositionUpdate(position: GeolocationPosition): Promise<void
     console.error('[TravelTracking] Failed to insert breadcrumb:', error.message);
   } else {
     console.log(`[TravelTracking] Breadcrumb stored — cumulative: ${cumulativeDistance.toFixed(0)}m`);
+  }
+}
+
+// Auto-resume if active session exists in localStorage
+if (typeof window !== 'undefined') {
+  const savedStr = localStorage.getItem(STORAGE_KEY);
+  if (savedStr) {
+    try {
+      const state = JSON.parse(savedStr);
+      if (state.activeSession) {
+        activeSession = state.activeSession;
+        cumulativeDistance = state.cumulativeDistance || 0;
+        sessionStartTime = state.sessionStartTime || Date.now();
+        activeTimeThresholdMs = state.activeTimeThresholdMs || DEFAULT_TIME_THRESHOLD_MS;
+        activeDistThresholdM = state.activeDistThresholdM || DEFAULT_DIST_THRESHOLD_M;
+        lastStoredTime = state.lastStoredTime || Date.now();
+        lastStoredLat = state.lastStoredLat;
+        lastStoredLng = state.lastStoredLng;
+
+        console.log('[TravelTracking] Resuming saved travel session...');
+        
+        if (navigator.geolocation) {
+          watchId = navigator.geolocation.watchPosition(
+            handlePositionUpdate,
+            (err) => {
+              console.warn('[TravelTracking] GPS error on resume:', err.message);
+            },
+            {
+              enableHighAccuracy: true,
+              timeout: 10000,
+              maximumAge: 0,
+            }
+          );
+        }
+      }
+    } catch (e) {
+      console.error('[TravelTracking] Failed to parse saved session', e);
+      localStorage.removeItem(STORAGE_KEY);
+    }
   }
 }

@@ -83,6 +83,11 @@ export default function ClockInOutCard({
   const [requireLocation, setRequireLocation] = useState(false);
   const [branchLocations, setBranchLocations] = useState<any[]>([]);
 
+  // Travel Tracking Config
+  const [enableTravelTracking, setEnableTravelTracking] = useState(false);
+  const [gpsInterval, setGpsInterval] = useState(5);
+  const [gpsThreshold, setGpsThreshold] = useState(100);
+
   // Travel tracking live badge state
   const [liveDistance, setLiveDistance] = useState<number>(0);
   const [isTracking, setIsTracking] = useState(false);
@@ -93,7 +98,10 @@ export default function ClockInOutCard({
       setLiveDistance(meters);
     });
     // Restore badge if tracking was already active (e.g. user navigated away and came back)
-    setIsTracking(travelService.isTravelTrackingActive());
+    if (travelService.isTravelTrackingActive()) {
+      setIsTracking(true);
+      setLiveDistance(travelService.getCumulativeDistance());
+    }
     return () => {
       unregisterDistanceCallback();
     };
@@ -112,7 +120,7 @@ export default function ClockInOutCard({
         // 1. Fetch config for manual clock in and location requirement
         const { data: configData } = await supabase
           .from('attendance_validation_config')
-          .select('allow_manual_clock_in_out, require_location')
+          .select('allow_manual_clock_in_out, require_location, enable_travel_tracking, gps_sampling_interval_mins, min_movement_threshold_meters')
           .eq('tenant_id', currentTenant.id)
           .eq('is_active', true)
           .maybeSingle();
@@ -120,9 +128,15 @@ export default function ClockInOutCard({
         if (configData) {
           setAllowManualClockIn(!!configData.allow_manual_clock_in_out);
           setRequireLocation(!!configData.require_location);
+          setEnableTravelTracking(!!configData.enable_travel_tracking);
+          setGpsInterval(configData.gps_sampling_interval_mins ?? 5);
+          setGpsThreshold(configData.min_movement_threshold_meters ?? 100);
         } else {
           setAllowManualClockIn(false);
           setRequireLocation(false);
+          setEnableTravelTracking(false);
+          setGpsInterval(5);
+          setGpsThreshold(100);
         }
 
         // Fetch company settings branch locations
@@ -479,27 +493,31 @@ export default function ClockInOutCard({
         location_address: locationData.address,
       });
 
-      // Start travel tracking after a successful Outside-Office clock-IN
+      // Start travel tracking after a successful Outside-Office clock-IN, if enabled
       if (entryType === 'IN' && locationData.status === 'Outside Office' && !manual && currentTenant?.id) {
-        // Fetch the ID of the row we just inserted
-        const { data: createdTs } = await supabase
-          .from('attendance_timestamp')
-          .select('id')
-          .eq('employee_id', employeeId)
-          .eq('entry', 'IN')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        if (enableTravelTracking) {
+          // Fetch the ID of the row we just inserted
+          const { data: createdTs } = await supabase
+            .from('attendance_timestamp')
+            .select('id')
+            .eq('employee_id', employeeId)
+            .eq('entry', 'IN')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
-        if (createdTs?.id) {
-          travelService.startTravelTracking({
-            timestampId: createdTs.id,
-            employeeId,
-            tenantId: currentTenant.id,
-            startTime: Date.now(),
-          });
-          setIsTracking(true);
-          setLiveDistance(0);
+          if (createdTs?.id) {
+            travelService.startTravelTracking({
+              timestampId: createdTs.id,
+              employeeId,
+              tenantId: currentTenant.id,
+              startTime: Date.now(),
+              intervalMins: gpsInterval,
+              thresholdMeters: gpsThreshold
+            });
+            setIsTracking(true);
+            setLiveDistance(0);
+          }
         }
       }
 

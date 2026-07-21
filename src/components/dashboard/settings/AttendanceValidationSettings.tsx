@@ -3,6 +3,7 @@ import { Save, AlertCircle, CheckCircle } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import toast from 'react-hot-toast';
 import { validateAuth } from '../../../stores/utils/storeUtils';
+import { useSettingsStore } from '../../../stores/settingsStore';
 
 interface ValidationConfig {
   id?: string;
@@ -20,6 +21,9 @@ interface ValidationConfig {
   enable_half_day_rules: boolean;
   allow_manual_clock_in_out: boolean;
   require_location: boolean;
+  enable_travel_tracking: boolean;
+  gps_sampling_interval_mins: number;
+  min_movement_threshold_meters: number;
 }
 
 const defaultConfig: ValidationConfig = {
@@ -35,7 +39,10 @@ const defaultConfig: ValidationConfig = {
   permission_round_up_to_minutes: 30,
   enable_half_day_rules: true,
   allow_manual_clock_in_out: false,
-  require_location: false
+  require_location: false,
+  enable_travel_tracking: false,
+  gps_sampling_interval_mins: 5,
+  min_movement_threshold_meters: 20
 };
 
 export default function AttendanceValidationSettings() {
@@ -43,9 +50,11 @@ export default function AttendanceValidationSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const { companySettings, fetchCompanySettings } = useSettingsStore();
 
   useEffect(() => {
     loadConfig();
+    fetchCompanySettings();
   }, []);
 
   const loadConfig = async () => {
@@ -119,6 +128,13 @@ export default function AttendanceValidationSettings() {
   };
 
   const handleChange = (field: keyof ValidationConfig, value: number | boolean) => {
+    if (field === 'require_location' && value === true) {
+      const locations = companySettings?.branch_locations || [];
+      if (locations.length === 0) {
+        toast.error('Please add at least one branch location before requiring location for attendance.');
+        return; // Prevent enabling
+      }
+    }
     setConfig(prev => ({ ...prev, [field]: value }));
     setHasChanges(true);
   };
@@ -352,6 +368,60 @@ export default function AttendanceValidationSettings() {
           <p className="text-xs text-gray-500 mt-2 ml-8">
             When enabled, the browser will request GPS location and validate against configured branch radii.
           </p>
+        </div>
+
+        {/* Field Travel Tracking */}
+        <div className="border-b pb-6">
+          
+          <div className="flex items-center space-x-3 mb-4">
+            <input
+              type="checkbox"
+              id="enable_travel_tracking"
+              checked={config.enable_travel_tracking || false}
+              onChange={(e) => handleChange('enable_travel_tracking', e.target.checked)}
+              className="h-5 w-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <label htmlFor="enable_travel_tracking" className="text-sm font-medium text-gray-700">
+              Enable Travel Tracking
+            </label>
+          </div>
+          <p className="text-xs text-gray-500 mt-2 mb-6 ml-8">
+            When enabled, the system will track the employee's travel route if they clock in outside the office.
+          </p>
+
+          {config.enable_travel_tracking && (
+            <div className="grid grid-cols-2 gap-4 ml-8">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  GPS Sampling Interval (minutes)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={config.gps_sampling_interval_mins === undefined ? '' : config.gps_sampling_interval_mins}
+                  onChange={(e) => handleChange('gps_sampling_interval_mins', e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value)))}
+                  placeholder="e.g., 5"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">How often to record a breadcrumb</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Minimum Movement Threshold (meters)
+                </label>
+                <input
+                  type="number"
+                  min="5"
+                  value={config.min_movement_threshold_meters === undefined ? '' : config.min_movement_threshold_meters}
+                  onChange={(e) => handleChange('min_movement_threshold_meters', e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value)))}
+                  placeholder="e.g., 20"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Skip breadcrumb if distance moved is less than this value</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Half Day Rules */}

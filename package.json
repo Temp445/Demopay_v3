@@ -33,7 +33,7 @@
     "leaflet": "^1.9.4",
     "leaflet-routing-machine": "^3.2.12",
     "lucide-react": "^0.344.0",
-    "maplibre-gl": "^5.21.1",
+    "maplibre-gl": "^5.24.0",
     "onnxruntime-web": "^1.24.3",
     "pdf-parse": "^2.4.5",
     "react": "^18.3.1",

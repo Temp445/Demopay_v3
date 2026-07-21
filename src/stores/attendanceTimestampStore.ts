@@ -26,6 +26,7 @@ export interface AttendanceTimestamp {
   manual_reason?: string;
   distance_from_branch?: number;
   office_location_status?: 'Office' | 'Outside Office';
+  location_address?: string;
 }
 
 export interface CreateTimestampRequest {
@@ -40,6 +41,7 @@ export interface CreateTimestampRequest {
   manual_reason?: string;
   distance_from_branch?: number;
   office_location_status?: 'Office' | 'Outside Office';
+  location_address?: string;
 }
 
 interface AttendanceTimestampStore extends StoreState<AttendanceTimestamp> {
@@ -74,6 +76,7 @@ export const useAttendanceTimestampStore = create<AttendanceTimestampStore>((set
         manual_reason: request.manual_reason,
         distance_from_branch: request.distance_from_branch,
         office_location_status: request.office_location_status,
+        location_address: request.location_address,
       };
 
       const { data, error } = await supabase

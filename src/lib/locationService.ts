@@ -115,7 +115,7 @@ export async function validateLocationAgainstBranches(
       latitude: currentLat,
       longitude: currentLng,
       nearestBranch,
-      distanceMeters: shortestDistance !== Infinity ? shortestDistance : null,
+      distanceMeters: (shortestDistance !== Infinity && !isWithinRadius) ? shortestDistance : null,
       status: isWithinRadius ? 'Office' : 'Outside Office',
     };
   } catch (error) {

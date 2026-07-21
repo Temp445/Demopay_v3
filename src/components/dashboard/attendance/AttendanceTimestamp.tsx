@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Clock, Calendar, RefreshCw, XCircle } from 'lucide-react';
+import { Search, Clock, Calendar, RefreshCw, XCircle, MapPin, Map as MapIcon, X, Navigation } from 'lucide-react';
 import { useEmployeesStore, type Employee } from '../../../stores/employeesStore';
 import { useShiftsStore } from '../../../stores/shiftsStore';
 import { useAttendanceTimestampStore } from '../../../stores/attendanceTimestampStore';
 import ClockInOutCard from './ClockInOutCard';
 import { format } from 'date-fns';
-// Import the role access hook (adjust path as needed based on your folder structure)
-import { useRoleAccess } from '../../../hooks/useRoleAccess'; 
+import { useRoleAccess } from '../../../hooks/useRoleAccess';
+import LocationMapPicker from '../location/LocationMapPicker';
+import TravelRouteViewer from '../location/TravelRouteViewer';
 
 const timingStatusLabel: Record<'OK' | 'OUTSIDE_SHIFT' | 'NO_SHIFT_ASSIGNED', string> = {
   OK: 'Ok',
@@ -18,6 +19,70 @@ const timingStatusColor: Record<'OK' | 'OUTSIDE_SHIFT' | 'NO_SHIFT_ASSIGNED', st
   OK: 'bg-green-100 text-green-800',
   OUTSIDE_SHIFT: 'bg-yellow-100 text-yellow-800',
   NO_SHIFT_ASSIGNED: 'bg-red-100 text-red-800',
+};
+
+// Component to display address from latitude and longitude
+const LocationAddressDisplay = ({ lat, lng, fallback, preTranscribedAddress }: { lat: number | null | undefined, lng: number | null | undefined, fallback: string, preTranscribedAddress?: string | null }) => {
+  const [address, setAddress] = useState<string | null>(preTranscribedAddress || null);
+  const [loading, setLoading] = useState(!preTranscribedAddress);
+
+  useEffect(() => {
+    if (preTranscribedAddress) return;
+    if (lat == null || lng == null) return;
+    let isMounted = true;
+    setLoading(true);
+    
+    // Using OpenStreetMap Nominatim for free reverse geocoding
+    fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`, {
+      headers: {
+        'Accept-Language': 'en-US,en;q=0.9',
+      }
+    })
+      .then(res => {
+        if (!res.ok) throw new Error("Geocoding failed");
+        return res.json();
+      })
+      .then(data => {
+        if (isMounted && data.display_name) {
+          // Keep it short for the table display
+          const parts = data.display_name.split(', ');
+          const shortAddress = parts.slice(0, 3).join(', '); 
+          setAddress(shortAddress);
+        } else if (isMounted) {
+          // If no display_name, fallback to coordinates
+          setAddress(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+        }
+      })
+      .catch(err => {
+        console.error('Reverse geocoding error:', err);
+        // Fallback to raw coordinates on rate limit / network error
+        if (isMounted) {
+          setAddress(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+        }
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+      
+    return () => { isMounted = false; };
+  }, [lat, lng]);
+
+  return (
+    <div className="flex flex-col">
+      <div className="text-sm text-gray-900">{fallback}</div>
+      {lat != null && lng != null && (
+        <div className="mt-0.5">
+          {loading ? (
+            <div className="text-xs text-gray-400 animate-pulse">Loading address...</div>
+          ) : address ? (
+            <div className="text-xs text-gray-500 whitespace-normal line-clamp-2" title={address}>{address}</div>
+          ) : (
+            <div className="text-xs text-gray-500 font-mono">{lat.toFixed(5)}, {lng.toFixed(5)}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 };
 
 // Helper function to get status badge color
@@ -36,16 +101,19 @@ const getStatusBadgeColor = (status: string): string => {
 
 export default function AttendanceTimestamp() {
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-  const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [startDate, setStartDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [lastRefresh, setLastRefresh] = useState(Date.now());
 
   // Custom searchable dropdown states
   const [employeeSearchText, setEmployeeSearchText] = useState('');
   const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
+  const [selectedMapLocation, setSelectedMapLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [selectedRouteEntry, setSelectedRouteEntry] = useState<any | null>(null);
 
   const { items: employees, fetchEmployees } = useEmployeesStore();
   const { items: shifts, fetchShifts } = useShiftsStore();
-  const { items: timestamps, loading, fetchTimestampsByEmployee } = useAttendanceTimestampStore();
+  const { items: timestamps, loading, fetchTimestampsByDateRange } = useAttendanceTimestampStore();
   
   // 1. Get role access details
   const { isEmployee, employeeId, canViewAllData, loading: roleLoading, role } = useRoleAccess();
@@ -67,10 +135,10 @@ export default function AttendanceTimestamp() {
   }, [employees, showAdminView, employeeId, selectedEmployee]);
 
   useEffect(() => {
-    if (selectedEmployee) {
-      fetchTimestampsByEmployee(selectedEmployee.id, selectedDate);
+    if (selectedEmployee && startDate && endDate) {
+      fetchTimestampsByDateRange(selectedEmployee.id, startDate, endDate);
     }
-  }, [selectedEmployee, selectedDate, lastRefresh, fetchTimestampsByEmployee]);
+  }, [selectedEmployee, startDate, endDate, lastRefresh, fetchTimestampsByDateRange]);
 
   // Filter logic for the searchable dropdown
   const filteredEmployeeOptions = useMemo(() => {
@@ -254,17 +322,25 @@ export default function AttendanceTimestamp() {
                   <div>
                     <h2 className="text-lg font-medium text-gray-900">Timestamp Entries</h2>
                     <p className="mt-1 text-sm text-gray-500">
-                      View all clock in/out entries for the selected date
+                      View all clock in/out entries for the selected date range
                     </p>
                   </div>
-                  <div className="flex  items-stretch sm:items-center gap-3">
-                    <div className="flex items-center">
-                      <Calendar className="h-6 w-6 text-gray-400 mr-2" />
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    <div className="flex items-center space-x-2">
+                      <Calendar className="h-5 w-5 text-gray-400" />
                       <input
                         type="date"
-                        value={selectedDate}
-                        onChange={(e) => setSelectedDate(e.target.value)}
-                        className="block w-full sm:w-auto py-1 px-0.5 md:py-1.5 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="block w-full sm:w-auto py-1 px-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                      />
+                      <span className="text-gray-500 text-sm">to</span>
+                      <input
+                        type="date"
+                        value={endDate}
+                        min={startDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        className="block w-full sm:w-auto py-1 px-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                       />
                     </div>
                     <button
@@ -288,37 +364,128 @@ export default function AttendanceTimestamp() {
                     <Clock className="mx-auto h-12 w-12 text-gray-400" />
                     <h3 className="mt-2 text-sm font-medium text-gray-900">No timestamps found</h3>
                     <p className="mt-1 text-sm text-gray-500">
-                      No clock in/out entries found on {format(new Date(selectedDate), 'MMMM d, yyyy')}
+                      No clock in/out entries found between {startDate ? format(new Date(startDate), 'MMM d, yyyy') : ''} and {endDate ? format(new Date(endDate), 'MMM d, yyyy') : ''}
                     </p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Entry Type
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Timestamp
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Assigned Shift
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Timing Status
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Mode
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Location
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Reason
-                          </th>
-                        </tr>
-                      </thead>
+                  <div className="space-y-4 md:space-y-0">
+                    {/* Mobile View: Cards */}
+                    <div className="block md:hidden space-y-4">
+                      {timestamps.map((entry) => (
+                        <div key={entry.id} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm flex flex-col gap-3 hover:border-indigo-300 transition-colors">
+                          <div className="flex justify-between items-start">
+                            <div className="flex items-center gap-3">
+                               {entry.entry === 'IN' ? (
+                                  <div className="h-10 w-10 flex items-center justify-center rounded-full bg-green-50 border border-green-100 shrink-0">
+                                    <Clock className="h-5 w-5 text-green-600" />
+                                  </div>
+                                ) : (
+                                  <div className="h-10 w-10 flex items-center justify-center rounded-full bg-red-50 border border-red-100 shrink-0">
+                                    <Clock className="h-5 w-5 text-red-600" />
+                                  </div>
+                                )}
+                                <div>
+                                  <span className="text-sm font-bold text-gray-900 block">Clock {entry.entry === 'IN' ? 'In' : 'Out'}</span>
+                                  <span className="text-xs font-medium text-gray-500">{format(new Date(entry.timestamp), 'h:mm:ss a')}</span>
+                                </div>
+                            </div>
+                            <span className={`px-2.5 py-1 inline-flex text-[10px] uppercase tracking-wider font-bold rounded-md shadow-sm ${timingStatusColor[entry.timing_status]}`}>
+                              {timingStatusLabel[entry.timing_status]}
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-3 text-sm bg-gray-50/80 p-3 rounded-lg border border-gray-100">
+                            <div>
+                              <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Date</span>
+                              <span className="font-semibold text-gray-800">{format(new Date(entry.timestamp), 'MMM d, yyyy')}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Shift</span>
+                              <span className="font-semibold text-gray-800">{entry.shift_name || '-'}</span>
+                            </div>
+                            <div className="col-span-2">
+                              <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Mode</span>
+                              <span className="font-semibold text-gray-800">{entry.attendance_mode || '-'}</span>
+                            </div>
+                          </div>
+                          
+                          {(entry.latitude || entry.office_location_status) && (
+                            <div className="text-sm px-1">
+                               <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Location</span>
+                               <LocationAddressDisplay 
+                                  lat={entry.latitude} 
+                                  lng={entry.longitude} 
+                                  fallback={entry.office_location_status || '-'} 
+                                  preTranscribedAddress={entry.location_address}
+                                />
+                                 {entry.distance_from_branch != null && (
+                                  <div className="text-[11px] font-bold text-indigo-600 mt-1.5 flex items-center">
+                                    <MapPin className="h-3 w-3 mr-1" />
+                                    {Math.round(entry.distance_from_branch)}m away from branch
+                                  </div>
+                                )}
+                                {entry.latitude != null && entry.longitude != null && (
+                                  <>
+                                    {entry.travel_distance_meters > 0 ? (
+                                      <button
+                                        onClick={() => setSelectedRouteEntry(entry)}
+                                        className="mt-2 inline-flex items-center px-2 py-1 border border-emerald-200 text-[11px] font-medium rounded text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+                                      >
+                                        <Navigation className="h-3 w-3 mr-1" />
+                                        View Route
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() => setSelectedMapLocation({ lat: entry.latitude!, lng: entry.longitude! })}
+                                        className="mt-2 inline-flex items-center px-2 py-1 border border-indigo-200 text-[11px] font-medium rounded text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                                      >
+                                        <MapIcon className="h-3 w-3 mr-1" />
+                                        View in Map
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                            </div>
+                          )}
+
+                          {entry.manual_reason && (
+                            <div className="text-sm bg-yellow-50 p-2.5 rounded-lg border border-yellow-200 mt-1">
+                               <span className="block text-[10px] font-bold text-yellow-700 uppercase tracking-widest mb-0.5">Manual Reason</span>
+                               <span className="text-yellow-900 font-medium text-xs leading-relaxed">{entry.manual_reason}</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Desktop View: Table */}
+                    <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50/80 backdrop-blur-sm">
+                          <tr>
+                            <th className="px-6 py-4 text-left text-[11px] font-bold text-gray-500 uppercase tracking-widest">
+                              Entry Type
+                            </th>
+                            <th className="px-6 py-4 text-left text-[11px] font-bold text-gray-500 uppercase tracking-widest">
+                              Timestamp
+                            </th>
+                            <th className="px-6 py-4 text-left text-[11px] font-bold text-gray-500 uppercase tracking-widest">
+                              Assigned Shift
+                            </th>
+                            <th className="px-6 py-4 text-left text-[11px] font-bold text-gray-500 uppercase tracking-widest">
+                              Timing Status
+                            </th>
+                            <th className="px-6 py-4 text-left text-[11px] font-bold text-gray-500 uppercase tracking-widest">
+                              Mode
+                            </th>
+                            <th className="px-6 py-4 text-left text-[11px] font-bold text-gray-500 uppercase tracking-widest">
+                              Location
+                            </th>
+                            <th className="px-6 py-4 text-left text-[11px] font-bold text-gray-500 uppercase tracking-widest">
+                              Reason
+                            </th>
+                          </tr>
+                        </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
                         {timestamps.map((entry) => (
                           <tr key={entry.id} className="hover:bg-gray-50">
@@ -362,19 +529,53 @@ export default function AttendanceTimestamp() {
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                               {entry.attendance_mode || '-'}
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="text-sm text-gray-900">{entry.office_location_status || '-'}</div>
+                            <td className="px-6 py-4">
+                              <LocationAddressDisplay 
+                                lat={entry.latitude} 
+                                lng={entry.longitude} 
+                                fallback={entry.office_location_status || '-'} 
+                                preTranscribedAddress={entry.location_address}
+                              />
                               {entry.distance_from_branch != null && (
-                                <div className="text-xs text-gray-500">{Math.round(entry.distance_from_branch)}m away</div>
+                                <div className="text-[11px] font-bold text-indigo-600 mt-1 flex items-center">
+                                  <MapPin className="h-3 w-3 mr-1" />
+                                  {Math.round(entry.distance_from_branch)}m away
+                                </div>
+                              )}
+                              {entry.latitude != null && entry.longitude != null && (
+                                <>
+                                  {entry.travel_distance_meters > 0 ? (
+                                    <button
+                                      onClick={() => setSelectedRouteEntry(entry)}
+                                      className="mt-1.5 inline-flex items-center px-2 py-1 border border-emerald-200 text-[10px] font-medium rounded text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+                                    >
+                                      <Navigation className="h-3 w-3 mr-1" />
+                                      View Route
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => setSelectedMapLocation({ lat: entry.latitude!, lng: entry.longitude! })}
+                                      className="mt-1.5 inline-flex items-center px-2 py-1 border border-indigo-200 text-[10px] font-medium rounded text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                                    >
+                                      <MapIcon className="h-3 w-3 mr-1" />
+                                      View in Map
+                                    </button>
+                                  )}
+                                </>
                               )}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 truncate max-w-[150px]" title={entry.manual_reason || ''}>
-                              {entry.manual_reason || '-'}
+                              {entry.manual_reason ? (
+                                <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-yellow-50 text-yellow-800 border border-yellow-200 truncate max-w-full">
+                                  {entry.manual_reason}
+                                </span>
+                              ) : '-'}
                             </td>
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>
@@ -399,6 +600,68 @@ export default function AttendanceTimestamp() {
           </div>
         )}
       </div>
+
+      {/* Map Modal */}
+      {selectedMapLocation && (
+        <div className="fixed inset-0 z-[9999] overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:p-0">
+            <div 
+              className="fixed inset-0 transition-opacity bg-gray-500/75 backdrop-blur-sm" 
+              aria-hidden="true" 
+              onClick={() => setSelectedMapLocation(null)}
+            ></div>
+            <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            <div className="inline-block align-bottom bg-white rounded-xl text-left overflow-hidden shadow-2xl sm:my-8 sm:align-middle sm:max-w-2xl w-full">
+              <div className="bg-white px-4 pt-4 pb-3 border-b border-gray-100 flex justify-between items-center sm:px-6">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                  <MapPin className="h-5 w-5 mr-2 text-indigo-600" />
+                  Clock Entry Location
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMapLocation(null)}
+                  className="bg-white rounded-md text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 p-1"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="p-4 sm:p-6 bg-gray-50">
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden relative">
+                  <LocationMapPicker 
+                    lat={selectedMapLocation.lat} 
+                    lng={selectedMapLocation.lng} 
+                    showSearch={false}
+                    readOnly={true}
+                    onLocationSelect={() => {}} 
+                    height="400px" 
+                  />
+                </div>
+              </div>
+              <div className="bg-white px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setSelectedMapLocation(null)}
+                  className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:w-auto sm:text-sm"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Travel Route Viewer Modal */}
+      {selectedRouteEntry && (
+        <TravelRouteViewer
+          timestampId={selectedRouteEntry.id}
+          employeeName={selectedRouteEntry.employee_name || 'Employee'}
+          clockInTime={selectedRouteEntry.timestamp}
+          totalDistanceMeters={selectedRouteEntry.travel_distance_meters || 0}
+          totalDurationSeconds={selectedRouteEntry.travel_duration_seconds || 0}
+          onClose={() => setSelectedRouteEntry(null)}
+        />
+      )}
     </div>
   );
 }

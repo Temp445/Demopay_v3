@@ -7,6 +7,7 @@ import {
   Camera,
   User,
   Loader2,
+  Navigation,
 } from "lucide-react";
 import { useAttendanceTimestampStore } from "../../../stores/attendanceTimestampStore";
 import { useAuth } from "../../../contexts/AuthContext";
@@ -16,6 +17,8 @@ import FaceRecognitionModal from "./FaceRecognitionModal";
 import { supabase } from "../../../lib/supabase";
 import { useTenant } from '../../../contexts/TenantContext';
 import { validateLocationAgainstBranches } from '../../../lib/locationService';
+import * as travelService from '../../../lib/travelTrackingService';
+import { registerDistanceCallback, unregisterDistanceCallback } from '../../../lib/travelTrackingService';
 
 interface Shift {
   id: string;
@@ -79,6 +82,22 @@ export default function ClockInOutCard({
   // New Location requirements
   const [requireLocation, setRequireLocation] = useState(false);
   const [branchLocations, setBranchLocations] = useState<any[]>([]);
+
+  // Travel tracking live badge state
+  const [liveDistance, setLiveDistance] = useState<number>(0);
+  const [isTracking, setIsTracking] = useState(false);
+
+  // Register live distance callback from service so UI badge updates in real-time
+  useEffect(() => {
+    registerDistanceCallback((meters: number) => {
+      setLiveDistance(meters);
+    });
+    // Restore badge if tracking was already active (e.g. user navigated away and came back)
+    setIsTracking(travelService.isTravelTrackingActive());
+    return () => {
+      unregisterDistanceCallback();
+    };
+  }, []);
 
   // Fetch validation settings & tenant active screens to determine logic
   useEffect(() => {
@@ -385,16 +404,43 @@ export default function ClockInOutCard({
         longitude: undefined as number | undefined,
         distanceMeters: undefined as number | undefined,
         status: undefined as 'Office' | 'Outside Office' | undefined,
+        address: undefined as string | undefined,
       };
 
       if (requireLocation) {
         try {
           const locResult = await validateLocationAgainstBranches(branchLocations);
+          let fetchedAddress: string | undefined = undefined;
+
+          // Attempt to reverse geocode the location to save it permanently in the database
+          if (locResult.latitude && locResult.longitude) {
+            try {
+              const res = await fetch(`https://photon.komoot.io/reverse?lon=${locResult.longitude}&lat=${locResult.latitude}&lang=en`);
+              if (res.ok) {
+                const data = await res.json();
+                if (data.features && data.features.length > 0) {
+                  const props = data.features[0].properties;
+                  const name = props.name || '';
+                  const street = [props.housenumber, props.street].filter(Boolean).join(' ');
+                  const city = props.city || props.town || props.village || props.county || '';
+                  const state = props.state || '';
+                  
+                  // Build a concise, readable address
+                  const displayNameParts = [name, street, city, state].filter(p => p && p.trim() !== '');
+                  fetchedAddress = Array.from(new Set(displayNameParts)).join(', ');
+                }
+              }
+            } catch (geocodeErr) {
+              console.warn("Silent failure on reverse geocoding during clock in:", geocodeErr);
+            }
+          }
+
           locationData = {
             latitude: locResult.latitude,
             longitude: locResult.longitude,
             distanceMeters: locResult.distanceMeters ?? undefined,
             status: locResult.status,
+            address: fetchedAddress,
           };
         } catch (locErr: any) {
           console.error("Location error:", locErr);
@@ -409,6 +455,15 @@ export default function ClockInOutCard({
       if (manual) mode = 'Manual';
       else if (faceVerified) mode = 'Facial Recognition';
 
+      // Stop any active travel tracking before inserting (for OUT or Office re-entry)
+      if (entryType === 'OUT' || (entryType === 'IN' && locationData.status === 'Office')) {
+        if (travelService.isTravelTrackingActive()) {
+          await travelService.stopTravelTracking(true);
+          setIsTracking(false);
+          setLiveDistance(0);
+        }
+      }
+
       await createTimestamp({
         employee_id: employeeId,
         shift_id: finalShiftId,
@@ -421,7 +476,32 @@ export default function ClockInOutCard({
         longitude: locationData.longitude,
         distance_from_branch: locationData.distanceMeters,
         office_location_status: locationData.status,
+        location_address: locationData.address,
       });
+
+      // Start travel tracking after a successful Outside-Office clock-IN
+      if (entryType === 'IN' && locationData.status === 'Outside Office' && !manual && currentTenant?.id) {
+        // Fetch the ID of the row we just inserted
+        const { data: createdTs } = await supabase
+          .from('attendance_timestamp')
+          .select('id')
+          .eq('employee_id', employeeId)
+          .eq('entry', 'IN')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (createdTs?.id) {
+          travelService.startTravelTracking({
+            timestampId: createdTs.id,
+            employeeId,
+            tenantId: currentTenant.id,
+            startTime: Date.now(),
+          });
+          setIsTracking(true);
+          setLiveDistance(0);
+        }
+      }
 
       setLatestEntryType(entryType);
       onAttendanceUpdated();
@@ -480,6 +560,20 @@ export default function ClockInOutCard({
               </h3>
             </div>
           </div>
+
+          {/* Live Travel Tracking Badge */}
+          {isTracking && (
+            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium px-3 py-1.5 rounded-full animate-pulse-badge">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+              <Navigation className="h-3.5 w-3.5" />
+              Tracking travel &mdash; {liveDistance >= 1000
+                ? `${(liveDistance / 1000).toFixed(2)} km`
+                : `${Math.round(liveDistance)} m`}
+            </div>
+          )}
           
           {/* Hide toggles until config is loaded to prevent popping */}
           {!isConfigLoading && (canViewAllData || showFaceToggle) && (

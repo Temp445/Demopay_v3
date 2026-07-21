@@ -81,19 +81,14 @@ BEGIN
     -- Office Arrival Logic: Outside Office -> Office
     -- If the open attendance was 'Outside Office' and this device punch is considered 'Office' (device punch implies office presence)
     IF v_last_punch IS NOT NULL AND v_last_entry = 'IN' AND v_last_office_status = 'Outside Office' AND COALESCE(v_last_office_processed, false) = false THEN
-        UPDATE public.attendance_timestamp
-        SET 
-            office_location_status = 'Office',
-            office_arrival_processed = true,
-            distance_from_branch = 0,
-            latitude = v_latitude,
-            longitude = v_longitude
-        WHERE employee_id = v_employee_uuid AND "timestamp" = v_last_punch;
+        v_new_entry := 'IN';
         
-        RETURN NEW;
-    END IF;
+        -- Mark the previous outside punch as processed so it doesn't trigger this condition again
+        UPDATE public.attendance_timestamp
+        SET office_arrival_processed = true
+        WHERE employee_id = v_employee_uuid AND "timestamp" = v_last_punch;
 
-    IF v_last_punch IS NOT NULL AND v_last_entry = 'IN' THEN
+    ELSIF v_last_punch IS NOT NULL AND v_last_entry = 'IN' THEN
         v_timegap := ABS(EXTRACT(EPOCH FROM (NEW.event_time - v_last_punch)));
         v_last_event_date := (v_last_punch AT TIME ZONE 'Asia/Kolkata')::DATE;
         

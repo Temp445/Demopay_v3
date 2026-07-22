@@ -52,12 +52,16 @@ export default function ClockInOutCard({
   const [currentTime, setCurrentTime] = useState(new Date());
   
   const [manualMode, setManualMode] = useState(false);
-  const [manualDateTime, setManualDateTime] = useState(
-    new Date().toISOString().slice(0, 16)
-  );
-  const [manualTransientDateTime, setManualTransientDateTime] = useState(
-    new Date().toISOString().slice(0, 16)
-  );
+  const [manualDateTime, setManualDateTime] = useState(() => {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    return now.toISOString().slice(0, 16);
+  });
+  const [manualTransientDateTime, setManualTransientDateTime] = useState(() => {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    return now.toISOString().slice(0, 16);
+  });
   const [manualReason, setManualReason] = useState("");
   const [latestEntryType, setLatestEntryType] = useState<"IN" | "OUT" | null>(null);
 
@@ -336,18 +340,17 @@ export default function ClockInOutCard({
   ) => {
     if (!user && !selectedEmployee) return;
 
+    if (manual && !manualReason.trim()) {
+      setError("Please provide a reason for manual entry.");
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
 
       const employeeId = selectedEmployee?.id || user?.id;
       if (!employeeId) throw new Error("No employee selected");
-
-      if (manual && !manualReason.trim()) {
-        setError("Please provide a reason for the manual entry.");
-        setLoading(false);
-        return;
-      }
 
       // Validate employee status before proceeding
       if (selectedEmployee) {
@@ -459,7 +462,13 @@ export default function ClockInOutCard({
         } catch (locErr: any) {
           console.error("Location error:", locErr);
           const msg = locErr?.message || "Unknown error";
-          setError(`Failed to get your location (${msg}). Please ensure location services are enabled and you are on a secure connection (HTTPS).`);
+          let friendlyMsg = "We couldn't get your location. Please ensure location services are enabled in your browser settings.";
+          if (msg.toLowerCase().includes("timeout")) {
+            friendlyMsg = "Getting your location took too long. Please check your internet connection or step outside for a better GPS signal, then try again.";
+          } else if (msg.toLowerCase().includes("denied")) {
+            friendlyMsg = "Location access was denied. Please allow location access in your browser settings to clock in/out.";
+          }
+          setError(friendlyMsg);
           setLoading(false);
           return;
         }
@@ -526,14 +535,17 @@ export default function ClockInOutCard({
 
       if (manual) {
         setManualMode(false);
-        setManualDateTime(new Date().toISOString().slice(0, 16));
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        setManualDateTime(now.toISOString().slice(0, 16));
+        setManualTransientDateTime(now.toISOString().slice(0, 16));
         setManualReason("");
       }
-    } catch (err) {
+    } catch (err: any) {
+      console.error("ClockInOut Error:", err);
       setError(
-        err instanceof Error
-          ? err.message
-          : `Failed to clock ${entryType.toLowerCase()}`
+        err?.message ||
+        (typeof err === 'string' ? err : `Failed to clock ${entryType.toLowerCase()}`)
       );
     } finally {
       setLoading(false);
@@ -704,7 +716,7 @@ export default function ClockInOutCard({
                       htmlFor="manual-reason"
                       className="block text-sm font-medium text-gray-700"
                     >
-                      Reason for Manual Entry <span className="text-red-500">*</span>
+                      Reason for Manual Entry
                     </label>
                     <textarea
                       id="manual-reason"
@@ -713,6 +725,7 @@ export default function ClockInOutCard({
                       value={manualReason}
                       onChange={(e) => setManualReason(e.target.value)}
                       placeholder="Please provide a reason for manual time entry"
+                      required
                     />
                   </div>
                   <div className="flex flex-col sm:flex-row gap-4">

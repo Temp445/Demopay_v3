@@ -127,6 +127,12 @@ export default function AttendanceValidationSettings() {
     }
   };
 
+  const handleCancel = async () => {
+    setLoading(true);
+    await loadConfig();
+    setHasChanges(false);
+  };
+
   const handleChange = (field: keyof ValidationConfig, value: number | boolean) => {
     if (field === 'require_location' && value === true) {
       const locations = companySettings?.branch_locations || [];
@@ -148,28 +154,19 @@ export default function AttendanceValidationSettings() {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Attendance Validation Settings</h2>
-          <p className="text-sm text-gray-600 mt-1">
-            Configure attendance validation rules for your organization
-          </p>
-        </div>
-        <button
-          onClick={handleSave}
-          className={`flex items-center space-x-2 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-700 text-white`}
-        >
-          <Save className="h-5 w-5" />
-          <span>{saving ? 'Saving...' : 'Save Changes'}</span>
-        </button>
+    <div className="bg-white rounded-lg shadow-md p-4 sm:p-6">
+      <div className="mb-6">
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Attendance Validation Settings</h2>
+        <p className="text-sm text-gray-600 mt-1">
+          Configure attendance validation rules for your organization
+        </p>
       </div>
 
       <div className="space-y-6">
         {/* Grace Time Settings */}
         <div className="border-b pb-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Grace Time Settings</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Entry Grace Time (minutes)
@@ -203,7 +200,7 @@ export default function AttendanceValidationSettings() {
         {/* Late Entry Settings */}
         <div className="border-b pb-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Late Entry Settings</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Late Entry Limit (minutes)
@@ -237,7 +234,7 @@ export default function AttendanceValidationSettings() {
         {/* Early Exit Settings */}
         <div className="border-b pb-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Early Exit Settings</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Early Exit Limit (minutes)
@@ -271,7 +268,7 @@ export default function AttendanceValidationSettings() {
         {/* Permission Settings */}
         <div className="border-b pb-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Permission Settings</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Minimum Permission (minutes)
@@ -390,20 +387,24 @@ export default function AttendanceValidationSettings() {
           </p>
 
           {config.enable_travel_tracking && (
-            <div className="grid grid-cols-2 gap-4 ml-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:ml-8 mt-4 sm:mt-0">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   GPS Sampling Interval (minutes)
                 </label>
                 <input
                   type="number"
-                  min="1"
+                  min="5"
                   value={config.gps_sampling_interval_mins === undefined ? '' : config.gps_sampling_interval_mins}
-                  onChange={(e) => handleChange('gps_sampling_interval_mins', e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value)))}
+                  onChange={(e) => handleChange('gps_sampling_interval_mins', e.target.value === '' ? '' : parseInt(e.target.value))}
+                  onBlur={(e) => {
+                    const val = parseInt(e.target.value);
+                    if (!isNaN(val) && val < 5) handleChange('gps_sampling_interval_mins', 5);
+                  }}
                   placeholder="e.g., 5"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <p className="text-xs text-gray-500 mt-1">How often to record a breadcrumb</p>
+                <p className="text-xs text-gray-500 mt-1">Records location periodically when the employee is stationary (Min: 5 mins)</p>
               </div>
 
               <div>
@@ -412,13 +413,17 @@ export default function AttendanceValidationSettings() {
                 </label>
                 <input
                   type="number"
-                  min="5"
+                  min="20"
                   value={config.min_movement_threshold_meters === undefined ? '' : config.min_movement_threshold_meters}
-                  onChange={(e) => handleChange('min_movement_threshold_meters', e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value)))}
+                  onChange={(e) => handleChange('min_movement_threshold_meters', e.target.value === '' ? '' : parseInt(e.target.value))}
+                  onBlur={(e) => {
+                    const val = parseInt(e.target.value);
+                    if (!isNaN(val) && val < 20) handleChange('min_movement_threshold_meters', 20);
+                  }}
                   placeholder="e.g., 20"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <p className="text-xs text-gray-500 mt-1">Skip breadcrumb if distance moved is less than this value</p>
+                <p className="text-xs text-gray-500 mt-1">Records a checkpoint each time they move this distance (Min: 20 meters)</p>
               </div>
             </div>
           )}
@@ -444,10 +449,29 @@ export default function AttendanceValidationSettings() {
           </p>
         </div> */}
 
+        {/* Action Buttons */}
+        <div className="flex  sm:flex-row items-center justify-end gap-3 ">
+          <button
+            onClick={handleCancel}
+            disabled={saving || !hasChanges}
+            className={`w-full sm:w-auto px-4 py-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50`}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !hasChanges}
+            className={`flex items-center justify-center space-x-2 w-full sm:w-auto px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-700 text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50`}
+          >
+            <Save className="h-5 w-5 shrink-0" />
+            <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+          </button>
+        </div>
+
         {/* Information Box */}
         <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
           <div className="flex items-start space-x-3">
-            <AlertCircle className="h-5 w-5 text-blue-600 mt-0.5" />
+            <AlertCircle className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
             <div className="flex-1">
               <h4 className="text-sm font-semibold text-blue-900 mb-2">Validation Flow</h4>
               <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">

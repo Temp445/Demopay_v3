@@ -657,6 +657,16 @@ export default function AttendanceTimestamp() {
           timestampId={selectedRouteEntry.id}
           employeeName={selectedRouteEntry.employee_name || 'Employee'}
           clockInTime={selectedRouteEntry.timestamp}
+          clockOutTime={
+            timestamps
+              .filter(
+                (t) =>
+                  t.entry === 'OUT' &&
+                  t.employee_id === selectedRouteEntry.employee_id &&
+                  new Date(t.timestamp).getTime() > new Date(selectedRouteEntry.timestamp).getTime()
+              )
+              .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())[0]?.timestamp
+          }
           totalDistanceMeters={selectedRouteEntry.travel_distance_meters || 0}
           totalDurationSeconds={selectedRouteEntry.travel_duration_seconds || 0}
           onClose={() => setSelectedRouteEntry(null)}

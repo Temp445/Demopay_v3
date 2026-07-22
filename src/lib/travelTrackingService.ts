@@ -240,11 +240,19 @@ async function handlePositionUpdate(position: GeolocationPosition): Promise<void
     distanceMoved = calculateDistance(lastStoredLat, lastStoredLng, latitude, longitude);
   }
 
+  // To prevent rapid-fire database spam from GPS drift on very low distance thresholds 
+  // (e.g. if the user sets distance threshold to 1 meter), we enforce an absolute 
+  // minimum throttle of 15 seconds between any two breadcrumbs.
+  const ABSOLUTE_MIN_TIME_MS = 15000;
+  
+  const isTimeThresholdMet = timeSinceLast >= activeTimeThresholdMs;
+  const isDistThresholdMet = distanceMoved >= activeDistThresholdM && timeSinceLast >= ABSOLUTE_MIN_TIME_MS;
+
   // Hybrid threshold: store if enough time OR enough distance has passed
   const shouldStore =
     lastStoredLat === null || // Always store the very first fix
-    timeSinceLast >= activeTimeThresholdMs ||
-    distanceMoved >= activeDistThresholdM;
+    isTimeThresholdMet ||
+    isDistThresholdMet;
 
   if (!shouldStore) return;
 

@@ -79,6 +79,7 @@ export default function TravelRouteViewer({
 }: TravelRouteViewerProps) {
   const [logs, setLogs] = useState<TravelBreadcrumb[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showLabels, setShowLabels] = useState(true);
 
   useEffect(() => {
     getTravelLogs(timestampId).then(data => {
@@ -95,7 +96,7 @@ export default function TravelRouteViewer({
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh] overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
@@ -144,68 +145,117 @@ export default function TravelRouteViewer({
           </div>
         </div>
 
-        {/* Map */}
-        <div className="flex-1 min-h-0 relative" style={{ height: '400px' }}>
-          {loading ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="animate-spin h-8 w-8 border-2 border-indigo-500 border-t-transparent rounded-full" />
+        {/* Main Content Area */}
+        <div className="flex flex-col md:flex-row h-[500px]">
+          {/* Map */}
+          <div className="w-full md:flex-1 h-[300px] md:h-full relative bg-gray-50 border-b md:border-b-0 md:border-r border-gray-100">
+            {loading ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="animate-spin h-8 w-8 border-2 border-indigo-500 border-t-transparent rounded-full" />
+              </div>
+            ) : logs.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+                No GPS breadcrumbs recorded for this session.
+              </div>
+            ) : (
+              <MapContainer
+                center={coords[0] || [13.0827, 80.2707]}
+                zoom={14}
+                style={{ height: '100%', width: '100%' }}
+                zoomControl={false}
+                attributionControl={false}
+              >
+                <ZoomControl position="bottomright" />
+                <FitBounds coords={coords} />
+
+                <TileLayer
+                  url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+                  maxZoom={21}
+                  attribution="© Google Maps"
+                />
+
+                {/* Route polyline */}
+                <Polyline
+                  positions={coords}
+                  pathOptions={{
+                    color: '#4f46e5',
+                    weight: 4,
+                    opacity: 0.85,
+                    lineJoin: 'round',
+                  }}
+                />
+
+                {/* Start marker */}
+                <Marker position={coords[0]} icon={startIcon}>
+                  {showLabels && (
+                    <Tooltip permanent direction="top" offset={[0, -10]}>
+                      <span className="text-xs font-semibold text-green-700">
+                        Clock In · {new Date(logs[0].recorded_at).toLocaleString()}
+                      </span>
+                    </Tooltip>
+                  )}
+                </Marker>
+
+                {/* End marker */}
+                {coords.length > 1 && (
+                  <Marker position={coords[coords.length - 1]} icon={endIcon}>
+                    {showLabels && (
+                      <Tooltip permanent direction="top" offset={[0, -10]}>
+                        <span className="text-xs font-semibold text-red-700">
+                          {clockOutTime ? 'Clock Out' : 'Current Location'} · {new Date(logs[logs.length - 1].recorded_at).toLocaleString()}
+                        </span>
+                      </Tooltip>
+                    )}
+                  </Marker>
+                )}
+              </MapContainer>
+            )}
+          </div>
+
+          {/* Timeline History */}
+          <div className="w-full md:w-72 h-[200px] md:h-full bg-white flex flex-col">
+            <div className="p-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
+              <h3 className="text-sm font-semibold text-gray-900">GPS Checkpoints</h3>
+              <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
+                {logs.length}
+              </span>
             </div>
-          ) : logs.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-              No GPS breadcrumbs recorded for this session.
+            <div className="p-4 overflow-y-auto flex-1 space-y-4">
+              {logs.map((log, index) => (
+                <div key={index} className="flex gap-3">
+                  <div className="flex flex-col items-center mt-1">
+                    <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${index === 0 ? 'bg-green-500' : index === logs.length - 1 ? 'bg-red-500' : 'bg-indigo-400'}`}></div>
+                    {index !== logs.length - 1 && <div className="w-0.5 h-full bg-gray-200 my-1"></div>}
+                  </div>
+                  <div className="pb-2">
+                    <p className="text-xs font-medium text-gray-900 leading-tight">
+                      {index === 0 ? 'Clock In' : index === logs.length - 1 ? (clockOutTime ? 'Clock Out' : 'Current Location') : 'Checkpoint'}
+                    </p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">{new Date(log.recorded_at).toLocaleString()}</p>
+                    {log.accuracy && <p className="text-[9px] text-gray-400 mt-0.5">Acc: {Math.round(log.accuracy)}m</p>}
+                  </div>
+                </div>
+              ))}
+              {logs.length === 0 && (
+                <div className="text-center text-xs text-gray-400 mt-4">
+                  No checkpoints found.
+                </div>
+              )}
             </div>
-          ) : (
-            <MapContainer
-              center={coords[0] || [13.0827, 80.2707]}
-              zoom={14}
-              style={{ height: '100%', width: '100%' }}
-              zoomControl={false}
-              attributionControl={false}
-            >
-              <ZoomControl position="bottomright" />
-              <FitBounds coords={coords} />
-
-              <TileLayer
-                url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
-                maxZoom={21}
-                attribution="© Google Maps"
-              />
-
-              {/* Route polyline */}
-              <Polyline
-                positions={coords}
-                pathOptions={{
-                  color: '#4f46e5',
-                  weight: 4,
-                  opacity: 0.85,
-                  lineJoin: 'round',
-                }}
-              />
-
-              {/* Start marker */}
-              <Marker position={coords[0]} icon={startIcon}>
-                <Tooltip permanent direction="top" offset={[0, -10]}>
-                  <span className="text-xs font-semibold text-green-700">
-                    Start · {new Date(logs[0].recorded_at).toLocaleTimeString()}
-                  </span>
-                </Tooltip>
-              </Marker>
-
-              {/* End marker */}
-              <Marker position={coords[coords.length - 1]} icon={endIcon}>
-                <Tooltip permanent direction="top" offset={[0, -10]}>
-                  <span className="text-xs font-semibold text-red-700">
-                    End · {new Date(logs[logs.length - 1].recorded_at).toLocaleTimeString()}
-                  </span>
-                </Tooltip>
-              </Marker>
-            </MapContainer>
-          )}
+          </div>
         </div>
 
-        {/* Breadcrumb count footer */}
-        <div className="px-5 py-3 border-t border-gray-100 text-xs text-gray-400 flex justify-between">
-          <span>{logs.length} GPS checkpoints recorded</span>
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-gray-100 text-xs text-gray-500 flex justify-between items-center bg-gray-50">
+          <label className="flex items-center space-x-2 cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={showLabels}
+              onChange={(e) => setShowLabels(e.target.checked)}
+              className="rounded text-indigo-600 focus:ring-indigo-500 border-gray-300 h-4 w-4"
+            />
+            <span className="font-medium text-gray-700">Show Map Labels</span>
+          </label>
           <span>Route shown on Google Maps</span>
         </div>
       </div>

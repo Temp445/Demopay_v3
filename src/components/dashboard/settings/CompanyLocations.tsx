@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MapPin, Plus, Trash2, Edit2, Loader2, Save, X } from 'lucide-react';
 import { useSettingsStore } from '../../../stores/settingsStore';
-import LocationMapPicker from '../location/LocationMapPicker';
+import MapPickerSwitch from '../location/MapPickerSwitch';
 import toast from 'react-hot-toast';
 import { supabase } from '../../../lib/supabase';
 import { validateAuth } from '../../../stores/utils/storeUtils';
@@ -308,7 +308,7 @@ export default function CompanyLocations() {
                 <label className="block text-sm font-semibold text-gray-800">Pin Location on Map</label>
               </div>
               <div className="w-full relative bg-white p-2 sm:p-4">
-                <LocationMapPicker
+                <MapPickerSwitch
                   initialLat={formData.latitude || 13.0827}
                   initialLng={formData.longitude || 80.2707}
                   lat={formData.latitude || undefined}

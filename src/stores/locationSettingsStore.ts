@@ -8,13 +8,15 @@ export interface LocationSettings {
   radius_monitoring_enabled: boolean;
   work_event_notifications_enabled: boolean;
   violation_notifications_enabled: boolean;
-  google_maps_enabled: boolean;
-  google_maps_api_key: string | null;
   journey_tracking_interval_mins: number;
+  minimum_movement_threshold_meters: number;
   work_radius_tracking_interval_mins: number;
+  work_radius_minimum_movement_threshold_meters: number;
   allow_add_new_location: boolean;
   field_work_integration_enabled: boolean;
   field_work_component_id: string | null;
+  travel_allowance_method: 'manual' | 'distance' | 'fixed';
+  travel_allowance_rate: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -24,13 +26,15 @@ const DEFAULT_SETTINGS: LocationSettings = {
   radius_monitoring_enabled: true,
   work_event_notifications_enabled: true,
   violation_notifications_enabled: true,
-  google_maps_enabled: false,
-  google_maps_api_key: null,
   journey_tracking_interval_mins: 5,
+  minimum_movement_threshold_meters: 10,
   work_radius_tracking_interval_mins: 15,
+  work_radius_minimum_movement_threshold_meters: 10,
   allow_add_new_location: false,
   field_work_integration_enabled: false,
   field_work_component_id: null,
+  travel_allowance_method: 'manual',
+  travel_allowance_rate: 0,
 };
 
 interface LocationSettingsStore {

@@ -134,7 +134,10 @@ export function startTravelTracking(session: TravelSession): void {
 /**
  * Stop tracking and optionally write the final summary.
  */
-export async function stopTravelTracking(writeSummary: boolean = true): Promise<TravelSummary | null> {
+export async function stopTravelTracking(
+  writeSummary: boolean = true,
+  finalLocation?: { latitude: number; longitude: number }
+): Promise<TravelSummary | null> {
   if (watchId !== null) {
     navigator.geolocation.clearWatch(watchId);
     watchId = null;
@@ -143,6 +146,27 @@ export async function stopTravelTracking(writeSummary: boolean = true): Promise<
   if (!activeSession || !writeSummary) {
     activeSession = null;
     return null;
+  }
+
+  // Insert final breadcrumb if provided
+  if (finalLocation) {
+    let distanceMoved = 0;
+    if (lastStoredLat !== null && lastStoredLng !== null) {
+      distanceMoved = calculateDistance(lastStoredLat, lastStoredLng, finalLocation.latitude, finalLocation.longitude);
+    }
+    cumulativeDistance += distanceMoved;
+
+    await supabase
+      .from('attendance_travel_logs')
+      .insert({
+        tenant_id: activeSession.tenantId,
+        employee_id: activeSession.employeeId,
+        start_timestamp_id: activeSession.timestampId,
+        latitude: finalLocation.latitude,
+        longitude: finalLocation.longitude,
+        accuracy: 10,
+        cumulative_distance_meters: Math.round(cumulativeDistance),
+      });
   }
 
   const durationSeconds = Math.round((Date.now() - sessionStartTime) / 1000);

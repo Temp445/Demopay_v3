@@ -111,6 +111,7 @@ export default function FaceRecognitionModal({
     try {
       setProcessingFace(true);
       setError(null);
+      setVerificationResult(null);
 
       // --- BIOMETRIC COOLDOWN CHECK ---
       if (mode === 'verify') {
@@ -150,16 +151,42 @@ export default function FaceRecognitionModal({
         return;
       }
 
-      if (mode === 'enroll') {
-        const canvas = document.createElement('canvas');
-        canvas.width = 320; canvas.height = 240;
-        canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0, 320, 240);
-        const base64 = canvas.toDataURL('image/jpeg', 0.6);
+      // Capture the image as base64 for both enroll and verify
+      const videoWidth = videoRef.current.videoWidth || 320;
+      const videoHeight = videoRef.current.videoHeight || 240;
+      
+      const MAX_SIZE = 400;
+      let scale = 1;
+      if (videoWidth > videoHeight) {
+          scale = MAX_SIZE / videoWidth;
+      } else {
+          scale = MAX_SIZE / videoHeight;
+      }
+      
+      const targetWidth = videoWidth * scale;
+      const targetHeight = videoHeight * scale;
 
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        if (facingMode === 'user') {
+          // Un-mirror the captured image if using the front camera
+          ctx.translate(targetWidth, 0);
+          ctx.scale(-1, 1);
+        }
+        ctx.drawImage(videoRef.current, 0, 0, targetWidth, targetHeight);
+      }
+      
+      const base64 = canvas.toDataURL('image/jpeg', 0.6);
+
+      if (mode === 'enroll') {
         const success = await databaseService.saveEmployeeFaceData(employeeId, embedding, base64, tenantId);
         if (success) {
           setVerificationResult({ success: true, message: 'Scan Complete!' });
-          setTimeout(() => { onSuccess(employeeId); onClose(); }, 1500);
+          setTimeout(() => { onSuccess(employeeId, base64); onClose(); }, 1500);
         }
       } else {
         const faceData = await databaseService.getEmployeeFaceData(employeeId);
@@ -170,7 +197,7 @@ export default function FaceRecognitionModal({
         const similarity = similarityService.cosineSimilarity(embedding, storedEmbedding);
         if (similarityService.isMatch(similarity)) {
           setVerificationResult({ success: true, message: 'Identity Verified!', confidence: similarity * 100 });
-          setTimeout(() => { onSuccess(employeeId); onClose(); }, 1500);
+          setTimeout(() => { onSuccess(employeeId, base64); onClose(); }, 1500);
         } else {
           setVerificationResult({ success: false, message: 'Verification Failed' });
         }
@@ -187,8 +214,8 @@ export default function FaceRecognitionModal({
   return (
     <div className="fixed inset-0 z-[100] flex flex-col justify-center items-center bg-slate-950/95 backdrop-blur-md sm:p-6 transition-all">
       
-      {/* Container: Full Screen App on Mobile, Centered Card on Desktop */}
-      <div className="relative flex flex-col w-full h-full sm:h-auto bg-white sm:shadow-2xl overflow-hidden sm:rounded-[36px] sm:max-w-[440px] animate-in fade-in zoom-in-95 duration-300">
+      {/* Container: Centered Card on all devices */}
+      <div className="relative flex flex-col w-[92%] sm:w-full max-h-[95dvh] sm:max-h-none sm:h-auto bg-white shadow-2xl overflow-hidden rounded-[32px] sm:rounded-[36px] max-w-[440px] animate-in fade-in zoom-in-95 duration-300">
         
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 sm:px-6 sm:py-5 border-b border-slate-100 shrink-0 bg-white z-10">
@@ -211,7 +238,7 @@ export default function FaceRecognitionModal({
         </div>
 
         {/* Body */}
-        <div className="flex flex-col flex-1 p-4 sm:p-6 overflow-hidden bg-slate-50/50">
+        <div className="flex flex-col p-4 sm:p-6 overflow-y-auto bg-slate-50/50 shrink-0">
           {error && (
             <div className="flex items-center p-3 mb-4 text-sm font-medium text-red-600 bg-red-50 rounded-xl border border-red-100 animate-in shake duration-300 shrink-0">
               <AlertCircle className="shrink-0 mr-3" size={18} />
@@ -220,10 +247,26 @@ export default function FaceRecognitionModal({
           )}
 
           {/* Camera Container */}
-          <div className="relative w-full flex-1 sm:flex-none sm:aspect-[4/5] bg-slate-950 rounded-[28px] sm:rounded-[32px] overflow-hidden shadow-2xl border-4 sm:border-[8px] border-white isolate">
+          <div className="relative w-full aspect-[3/4] sm:aspect-[4/5] bg-slate-950 rounded-[24px] sm:rounded-[32px] overflow-hidden shadow-xl sm:shadow-2xl border-4 sm:border-[8px] border-white isolate shrink-0 mx-auto">
             {loading ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-100">
-                <RefreshCw className="text-indigo-600 animate-spin" size={40} />
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900">
+                <div className="relative w-16 h-16 sm:w-20 sm:h-20 mb-4 sm:mb-6">
+                  <div className="absolute inset-0 rounded-full border-[2px] sm:border-[3px] border-indigo-500/20"></div>
+                  <div className="absolute inset-0 rounded-full border-[2px] sm:border-[3px] border-indigo-500 border-t-transparent animate-spin"></div>
+                  <div className="absolute inset-2 rounded-full border-[2px] sm:border-[3px] border-cyan-400/20"></div>
+                  <div className="absolute inset-2 rounded-full border-[2px] sm:border-[3px] border-cyan-400 border-b-transparent animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }}></div>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <User className="text-white w-5 h-5 sm:w-6 sm:h-6 animate-pulse" />
+                  </div>
+                </div>
+                <div className="flex flex-col items-center space-y-2">
+                  <p className="text-indigo-400 font-bold tracking-[0.2em] text-[10px] sm:text-xs uppercase animate-pulse">Initializing System</p>
+                  <div className="flex space-x-1">
+                    <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                    <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                    <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                  </div>
+                </div>
               </div>
             ) : (
               <>

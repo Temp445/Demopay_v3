@@ -42,6 +42,7 @@ import AdvanceSettings from './components/dashboard/settings/AdvanceSettings';
 import GatePassesPage from './components/dashboard/gatepasses/GatePassesPage';
 import LocationDetectionPage from './components/dashboard/location/LocationDetectionPage';
 import WorkLocationApprovalPage from './components/dashboard/location/WorkLocationApprovalPage';
+import OutsideOfficeApprovalPage from './components/dashboard/location/OutsideOfficeApprovalPage';
 import { Toaster } from "react-hot-toast";
 import StructureAssignmentPage from './components/dashboard/payroll/StructureAssignmentPage';
 import OTEmployeeManagement from './components/dashboard/overtime/OTEmployeeManagement';
@@ -179,6 +180,7 @@ function App() {
                 <Route path="location-tracking" element={<LiveTrackingSwitch />} />
                 <Route path="work-location-assignment" element={<WorkLocationAssignmentPage />} />
                 <Route path="work-location-approval" element={<WorkLocationApprovalPage />} />
+                <Route path="outside-office-approval" element={<OutsideOfficeApprovalPage />} />
                 <Route path="location-settings" element={<LocationSettingsPage />} />
                 {/* <Route path="billing" element={<BillingPage />} /> */}
 

@@ -16,8 +16,13 @@ import {
 } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { X, Navigation, Clock, Ruler, Gauge } from 'lucide-react';
+import { X, Navigation, Clock, Ruler, Gauge, Maximize2, Minimize2 } from 'lucide-react';
 import { getTravelLogs, TravelBreadcrumb } from '../../../lib/travelTrackingService';
+import { useSettingsStore } from '../../../stores/settingsStore';
+import { GoogleMap, Marker as GoogleMarker, Polyline as GooglePolyline, useJsApiLoader } from '@react-google-maps/api';
+import MapLibre3DViewer, { Map3DMarker, Map3DRoute } from './MapLibre3DViewer';
+
+const libraries: ('places' | 'geocoding')[] = ['places', 'geocoding'];
 
 // --- Custom icons ---
 const startIcon = L.divIcon({
@@ -80,6 +85,15 @@ export default function TravelRouteViewer({
   const [logs, setLogs] = useState<TravelBreadcrumb[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
+  const [mapType, setMapType] = useState<'map' | 'satellite' | '3d'>('map');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const { companySettings } = useSettingsStore();
+
+  const isGoogleEnabled = companySettings?.google_maps_enabled && companySettings?.google_maps_api_key;
+  const { isLoaded } = useJsApiLoader({
+    googleMapsApiKey: companySettings?.google_maps_api_key || '',
+    libraries,
+  });
 
   useEffect(() => {
     getTravelLogs(timestampId).then(data => {
@@ -95,11 +109,11 @@ export default function TravelRouteViewer({
     : '0.0';
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden">
+    <div className={`fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center ${isFullscreen ? 'p-0' : 'p-4'}`}>
+      <div className={`bg-white shadow-2xl w-full flex flex-col overflow-hidden ${isFullscreen ? 'h-full max-w-full rounded-none' : 'max-w-4xl max-h-[90vh] rounded-2xl'}`}>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
           <div className="flex items-center gap-2">
             <div className="h-9 w-9 rounded-full bg-indigo-100 flex items-center justify-center">
               <Navigation className="h-5 w-5 text-indigo-600" />
@@ -112,12 +126,22 @@ export default function TravelRouteViewer({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsFullscreen(!isFullscreen)}
+              className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            >
+              {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+              title="Close"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         {/* Summary Stats */}
@@ -146,9 +170,34 @@ export default function TravelRouteViewer({
         </div>
 
         {/* Main Content Area */}
-        <div className="flex flex-col md:flex-row h-[500px]">
+        <div className={`flex flex-col md:flex-row ${isFullscreen ? 'flex-1 min-h-0' : 'h-[500px]'}`}>
           {/* Map */}
-          <div className="w-full md:flex-1 h-[300px] md:h-full relative bg-gray-50 border-b md:border-b-0 md:border-r border-gray-100">
+          <div className="w-full md:flex-1 h-[300px] md:h-full relative bg-gray-50 border-b md:border-b-0 md:border-r border-gray-100 flex flex-col">
+            <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-[1000] flex bg-white rounded-md shadow-md border border-gray-300 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setMapType('map')}
+                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === 'map' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+              >
+                Map
+              </button>
+              <button
+                type="button"
+                onClick={() => setMapType('satellite')}
+                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === 'satellite' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+              >
+                Satellite
+              </button>
+              <button
+                type="button"
+                onClick={() => setMapType('3d')}
+                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === '3d' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+              >
+                3D
+              </button>
+            </div>
+
+            <div className="flex-1 w-full h-full relative">
             {loading ? (
               <div className="flex items-center justify-center h-full">
                 <div className="animate-spin h-8 w-8 border-2 border-indigo-500 border-t-transparent rounded-full" />
@@ -157,6 +206,55 @@ export default function TravelRouteViewer({
               <div className="flex items-center justify-center h-full text-gray-400 text-sm">
                 No GPS breadcrumbs recorded for this session.
               </div>
+            ) : mapType === '3d' ? (
+              <MapLibre3DViewer
+                center={coords[0] || [13.0827, 80.2707]}
+                routes={[{ coordinates: coords, color: '#4f46e5', weight: 4 }]}
+                markers={[
+                  ...(coords.length > 0 ? [{
+                    lat: coords[0][0],
+                    lng: coords[0][1],
+                    color: '#16a34a',
+                    popupHTML: `<div class="font-bold text-green-700">Clock In</div><div class="text-xs">${new Date(logs[0].recorded_at).toLocaleString()}</div>`
+                  }] : []),
+                  ...(coords.length > 1 ? [{
+                    lat: coords[coords.length - 1][0],
+                    lng: coords[coords.length - 1][1],
+                    color: '#dc2626',
+                    popupHTML: `<div class="font-bold text-red-700">${clockOutTime ? 'Clock Out' : 'Current Location'}</div><div class="text-xs">${new Date(logs[logs.length - 1].recorded_at).toLocaleString()}</div>`
+                  }] : [])
+                ]}
+                height="100%"
+              />
+            ) : isGoogleEnabled && isLoaded ? (
+              <GoogleMap
+                mapContainerStyle={{ width: '100%', height: '100%' }}
+                options={{
+                  disableDefaultUI: false,
+                  mapTypeControl: false,
+                  streetViewControl: false,
+                  fullscreenControl: false,
+                  mapTypeId: mapType === 'satellite' ? 'satellite' : 'roadmap',
+                }}
+                onLoad={(map) => {
+                  if (coords.length > 0) {
+                    const bounds = new google.maps.LatLngBounds();
+                    coords.forEach(coord => bounds.extend({ lat: coord[0], lng: coord[1] }));
+                    map.fitBounds(bounds);
+                  }
+                }}
+              >
+                <GooglePolyline
+                  path={coords.map(c => ({ lat: c[0], lng: c[1] }))}
+                  options={{ strokeColor: '#4f46e5', strokeWeight: 4, strokeOpacity: 0.85 }}
+                />
+                
+                <GoogleMarker position={{ lat: coords[0][0], lng: coords[0][1] }} />
+                
+                {coords.length > 1 && (
+                  <GoogleMarker position={{ lat: coords[coords.length - 1][0], lng: coords[coords.length - 1][1] }} />
+                )}
+              </GoogleMap>
             ) : (
               <MapContainer
                 center={coords[0] || [13.0827, 80.2707]}
@@ -169,7 +267,9 @@ export default function TravelRouteViewer({
                 <FitBounds coords={coords} />
 
                 <TileLayer
-                  url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+                  url={mapType === 'satellite' 
+                    ? "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}"
+                    : "https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"}
                   maxZoom={21}
                   attribution="© Google Maps"
                 />
@@ -210,6 +310,7 @@ export default function TravelRouteViewer({
                 )}
               </MapContainer>
             )}
+            </div>
           </div>
 
           {/* Timeline History */}

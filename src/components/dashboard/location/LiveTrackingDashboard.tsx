@@ -19,6 +19,7 @@ import toast from 'react-hot-toast';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { WorkLocation } from '../../../types/workLocation';
+import MapLibre3DViewer from './MapLibre3DViewer';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -59,7 +60,7 @@ export default function LiveTrackingDashboard() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  const [mapType, setMapType] = useState<'street' | 'satellite'>('street');
+  const [mapType, setMapType] = useState<'street' | 'satellite' | '3d'>('street');
   const mapRef = useRef<L.Map | null>(null);
 
   useEffect(() => {
@@ -377,8 +378,69 @@ export default function LiveTrackingDashboard() {
                 >
                   Satellite
                 </button>
+                <button
+                  onClick={() => setMapType('3d')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === '3d' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                >
+                  3D
+                </button>
               </div>
 
+              {mapType === '3d' ? (
+                <MapLibre3DViewer
+                  center={calculateMapCenter()}
+                  height="100%"
+                  circles={activeWorks.map(work => {
+                    const tracking = latestTracking.get(work.id);
+                    const withinRadius = tracking ? isWithinRadius(work, tracking) : true;
+                    const signalLost = isSignalLost(tracking);
+                    const isTraveling = work.status === 'assigned';
+                    
+                    return {
+                      lat: Number(work.latitude),
+                      lng: Number(work.longitude),
+                      radius: Number(work.allowed_radius_meters),
+                      color: signalLost ? '#9ca3af' : isTraveling ? '#3b82f6' : withinRadius ? '#22c55e' : '#ef4444'
+                    };
+                  })}
+                  markers={[
+                    ...activeWorks.map(work => ({
+                      lat: Number(work.latitude),
+                      lng: Number(work.longitude),
+                      color: '#ef4444',
+                      popupHTML: `<div class="font-bold">${work.location_name}</div><div class="text-xs">Assigned Site Center</div>`
+                    })),
+                    ...activeWorks.filter(w => latestTracking.get(w.id)).map(work => {
+                      const tracking = latestTracking.get(work.id)!;
+                      const withinRadius = isWithinRadius(work, tracking);
+                      const signalLost = isSignalLost(tracking);
+                      const isTraveling = work.status === 'assigned';
+                      
+                      let color = '#3b82f6';
+                      if (signalLost) color = '#9ca3af';
+                      else if (!isTraveling && withinRadius) color = '#22c55e';
+                      else if (!isTraveling && !withinRadius) color = '#ef4444';
+
+                      return {
+                        lat: Number(tracking.latitude),
+                        lng: Number(tracking.longitude),
+                        color,
+                        popupHTML: `<div class="font-bold">${work.employee_name}</div><div class="text-xs font-semibold" style="color:${color}">${isTraveling ? 'En Route to Site' : withinRadius ? 'Within allowed area' : 'Outside allowed area'}</div><div class="text-[10px] text-gray-500 mt-1">Last Update: ${new Date(tracking.recorded_at).toLocaleTimeString()}</div>`
+                      };
+                    })
+                  ]}
+                  routes={activeWorks.map(work => {
+                    const tracking = latestTracking.get(work.id);
+                    if (!tracking) return null;
+                    return {
+                      coordinates: [[Number(work.latitude), Number(work.longitude)], [Number(tracking.latitude), Number(tracking.longitude)]] as [number, number][],
+                      color: '#9ca3af',
+                      dashArray: [4, 4],
+                      weight: 2
+                    };
+                  }).filter(Boolean) as any}
+                />
+              ) : (
               <MapContainer
                 center={calculateMapCenter()}
                 zoom={selectedWork ? 15 : 12}
@@ -477,6 +539,7 @@ export default function LiveTrackingDashboard() {
                   );
                 })}
               </MapContainer>
+              )}
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-gray-600">

@@ -1,4 +1,4 @@
-import { useLocationSettingsStore } from '../../../stores/locationSettingsStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import LocationMapPicker from './LocationMapPicker';
 import GoogleMapsMapPicker from './GoogleMapsMapPicker';
 
@@ -17,13 +17,16 @@ interface MapPickerSwitchProps {
   }) => void;
   showSearch?: boolean;
   height?: string;
+  lat?: number;
+  lng?: number;
+  radius?: number;
 }
 
 export default function MapPickerSwitch(props: MapPickerSwitchProps) {
-  const { settings } = useLocationSettingsStore();
+  const { companySettings } = useSettingsStore();
 
-  if (settings.google_maps_enabled && settings.google_maps_api_key) {
-    return <GoogleMapsMapPicker apiKey={settings.google_maps_api_key} {...props} />;
+  if (companySettings?.google_maps_enabled && companySettings?.google_maps_api_key) {
+    return <GoogleMapsMapPicker apiKey={companySettings.google_maps_api_key} {...props} />;
   }
 
   return <LocationMapPicker {...props} />;

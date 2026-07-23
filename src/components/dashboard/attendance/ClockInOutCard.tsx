@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Clock,
   LogIn,
@@ -19,6 +19,8 @@ import { useTenant } from '../../../contexts/TenantContext';
 import { validateLocationAgainstBranches } from '../../../lib/locationService';
 import * as travelService from '../../../lib/travelTrackingService';
 import { registerDistanceCallback, unregisterDistanceCallback } from '../../../lib/travelTrackingService';
+import { useOutsideOfficeApprovalsStore } from '../../../stores/outsideOfficeApprovalsStore';
+import OutsideOfficeReasonModal from './OutsideOfficeReasonModal';
 
 interface Shift {
   id: string;
@@ -47,10 +49,12 @@ export default function ClockInOutCard({
   canViewAllData = false, // Default to false if not provided
 }: ClockInOutCardProps) {
   const [loading, setLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [isConfigLoading, setIsConfigLoading] = useState(true); // Added to prevent flickering
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-  
+  const cachedLocationDataRef = useRef<{ data: any, time: number } | null>(null);
+
   const [manualMode, setManualMode] = useState(false);
   const [manualDateTime, setManualDateTime] = useState(() => {
     const now = new Date();
@@ -64,6 +68,7 @@ export default function ClockInOutCard({
   });
   const [manualReason, setManualReason] = useState("");
   const [latestEntryType, setLatestEntryType] = useState<"IN" | "OUT" | null>(null);
+  const [latestEntryTime, setLatestEntryTime] = useState<string | null>(null);
 
   // States for shift tracking
   const [assignedShifts, setAssignedShifts] = useState<AssignedShift[]>([]);
@@ -82,7 +87,7 @@ export default function ClockInOutCard({
   const [allowManualClockIn, setAllowManualClockIn] = useState(false);
   const [hasFaceScreens, setHasFaceScreens] = useState(true);
   const [hasHikScreens, setHasHikScreens] = useState(false);
-  
+
   // New Location requirements
   const [requireLocation, setRequireLocation] = useState(false);
   const [branchLocations, setBranchLocations] = useState<any[]>([]);
@@ -91,10 +96,19 @@ export default function ClockInOutCard({
   const [enableTravelTracking, setEnableTravelTracking] = useState(false);
   const [gpsInterval, setGpsInterval] = useState(5);
   const [gpsThreshold, setGpsThreshold] = useState(100);
+  const [captureImageEnabled, setCaptureImageEnabled] = useState(false);
 
   // Travel tracking live badge state
   const [liveDistance, setLiveDistance] = useState<number>(0);
   const [isTracking, setIsTracking] = useState(false);
+
+  // Outside office approval state
+  const { createApproval, updateClockOut, updateInsideOfficeClockIn } = useOutsideOfficeApprovalsStore();
+  const [pendingApproval, setPendingApproval] = useState<{
+    id: string;
+    clockInTime: string;
+    attendanceLocation?: string | null;
+  } | null>(null);
 
   // Register live distance callback from service so UI badge updates in real-time
   useEffect(() => {
@@ -117,31 +131,57 @@ export default function ClockInOutCard({
       setIsConfigLoading(false);
       return;
     }
-    
+
     const fetchConfig = async () => {
       setIsConfigLoading(true);
       try {
-        // 1. Fetch config for manual clock in and location requirement
-        const { data: configData } = await supabase
+        // 1. Fetch global config for manual clock in and location requirement
+        const { data: globalConfig } = await supabase
           .from('attendance_validation_config')
-          .select('allow_manual_clock_in_out, require_location, enable_travel_tracking, gps_sampling_interval_mins, min_movement_threshold_meters')
+          .select('allow_manual_clock_in_out, require_location, enable_travel_tracking, capture_image_while_face_clockin, gps_sampling_interval_mins, min_movement_threshold_meters, device_tracking_applicability')
           .eq('tenant_id', currentTenant.id)
           .eq('is_active', true)
           .maybeSingle();
-          
-        if (configData) {
-          setAllowManualClockIn(!!configData.allow_manual_clock_in_out);
-          setRequireLocation(!!configData.require_location);
-          setEnableTravelTracking(!!configData.enable_travel_tracking);
-          setGpsInterval(configData.gps_sampling_interval_mins ?? 5);
-          setGpsThreshold(configData.min_movement_threshold_meters ?? 100);
-        } else {
-          setAllowManualClockIn(false);
-          setRequireLocation(false);
-          setEnableTravelTracking(false);
-          setGpsInterval(5);
-          setGpsThreshold(100);
+
+        let configToUse = globalConfig || {
+          allow_manual_clock_in_out: false,
+          require_location: false,
+          enable_travel_tracking: false,
+          capture_image_while_face_clockin: false,
+          gps_sampling_interval_mins: 5,
+          min_movement_threshold_meters: 100,
+          device_tracking_applicability: 'common'
+        };
+
+        // Enforce Strict Mode applicability
+        if (configToUse.device_tracking_applicability === 'specific') {
+          // Ignore global bools, default to false
+          configToUse.allow_manual_clock_in_out = false;
+          configToUse.require_location = false;
+          configToUse.enable_travel_tracking = false;
+          configToUse.capture_image_while_face_clockin = false;
+
+          // Only fetch specific settings if in specific mode
+          if (selectedEmployee?.id) {
+            const { data: empConfig } = await supabase
+              .from('employee_attendance_settings')
+              .select('allow_manual_clock_in_out, require_location, enable_travel_tracking, capture_image_while_face_clockin')
+              .eq('tenant_id', currentTenant.id)
+              .eq('employee_id', selectedEmployee.id)
+              .maybeSingle();
+
+            if (empConfig) {
+              configToUse = { ...configToUse, ...empConfig };
+            }
+          }
         }
+
+        setAllowManualClockIn(!!configToUse.allow_manual_clock_in_out);
+        setRequireLocation(!!configToUse.require_location);
+        setEnableTravelTracking(!!configToUse.enable_travel_tracking);
+        setGpsInterval(configToUse.gps_sampling_interval_mins ?? 5);
+        setGpsThreshold(configToUse.min_movement_threshold_meters ?? 100);
+        setCaptureImageEnabled(!!configToUse.capture_image_while_face_clockin);
 
         // Fetch company settings branch locations
         const { data: companyData } = await supabase
@@ -149,7 +189,7 @@ export default function ClockInOutCard({
           .select('branch_locations')
           .eq('tenant_id', currentTenant.id)
           .maybeSingle();
-          
+
         if (companyData && companyData.branch_locations) {
           setBranchLocations(companyData.branch_locations);
         } else {
@@ -180,7 +220,7 @@ export default function ClockInOutCard({
         setIsConfigLoading(false);
       }
     };
-    
+
     fetchConfig();
   }, [currentTenant?.id]);
 
@@ -201,10 +241,10 @@ export default function ClockInOutCard({
   }, [canViewAllData, hasFaceScreens, hasHikScreens]);
 
   // Derived Visibility Rules
-  const showFaceToggle = canViewAllData 
-    ? hasFaceScreens 
+  const showFaceToggle = canViewAllData
+    ? hasFaceScreens
     : (hasFaceScreens && allowManualClockIn);
-    
+
   // UPDATED LOGIC: Ensure Admins ALWAYS see the actions so they can use Manual Mode
   let canShowClockInActions = true;
   if (canViewAllData) {
@@ -235,7 +275,8 @@ export default function ClockInOutCard({
           ? new Date(manualDateTime).toISOString().split("T")[0]
           : new Date().toISOString().split("T")[0];
         const latestEntry = await getLatestEntryType(selectedEmployee.id, todayStrForEntry);
-        setLatestEntryType(latestEntry);
+        setLatestEntryType(latestEntry?.type || null);
+        setLatestEntryTime(latestEntry?.timestamp || null);
 
         // 2. Fetch face enrollment status
         const enrolled = await hasEnrolledFace(selectedEmployee.id);
@@ -336,7 +377,8 @@ export default function ClockInOutCard({
   const handleClockInOut = async (
     entryType: "IN" | "OUT",
     manual: boolean = false,
-    faceVerified: boolean = false
+    faceVerified: boolean = false,
+    capturedImageBase64?: string
   ) => {
     if (!user && !selectedEmployee) return;
 
@@ -347,7 +389,7 @@ export default function ClockInOutCard({
 
     try {
       setLoading(true);
-      setError(null);
+      setLoadingAction(manual ? `MANUAL_${entryType}` : entryType);
 
       const employeeId = selectedEmployee?.id || user?.id;
       if (!employeeId) throw new Error("No employee selected");
@@ -374,12 +416,78 @@ export default function ClockInOutCard({
         }
       }
 
+      let locationData = {
+        latitude: undefined as number | undefined,
+        longitude: undefined as number | undefined,
+        distanceMeters: undefined as number | undefined,
+        status: undefined as 'Office' | 'Outside Office' | undefined,
+        address: undefined as string | undefined,
+      };
+
+      if (requireLocation) {
+        const cache = cachedLocationDataRef.current;
+        if (cache && Date.now() - cache.time < 5 * 60 * 1000) {
+          locationData = cache.data;
+        } else {
+          try {
+            const locResult = await validateLocationAgainstBranches(branchLocations);
+            let fetchedAddress: string | undefined = undefined;
+
+            // Attempt to reverse geocode the location to save it permanently in the database
+            if (locResult.latitude && locResult.longitude) {
+              try {
+                const res = await fetch(`https://photon.komoot.io/reverse?lon=${locResult.longitude}&lat=${locResult.latitude}&lang=en`);
+                if (res.ok) {
+                  const data = await res.json();
+                  if (data.features && data.features.length > 0) {
+                    const props = data.features[0].properties;
+                    const name = props.name || '';
+                    const street = [props.housenumber, props.street].filter(Boolean).join(' ');
+                    const city = props.city || props.town || props.village || props.county || '';
+                    const state = props.state || '';
+
+                    // Build a concise, readable address
+                    const displayNameParts = [name, street, city, state].filter(p => p && p.trim() !== '');
+                    fetchedAddress = Array.from(new Set(displayNameParts)).join(', ');
+                  }
+                }
+              } catch (geocodeErr) {
+                console.warn("Silent failure on reverse geocoding during clock in:", geocodeErr);
+              }
+            }
+
+            locationData = {
+              latitude: locResult.latitude,
+              longitude: locResult.longitude,
+              distanceMeters: locResult.distanceMeters ?? undefined,
+              status: locResult.status,
+              address: fetchedAddress,
+            };
+
+            cachedLocationDataRef.current = { data: locationData, time: Date.now() };
+          } catch (locErr: any) {
+            console.error("Location error:", locErr);
+            const msg = locErr?.message || "Unknown error";
+            let friendlyMsg = "We couldn't get your location. Please ensure location services are enabled in your browser settings.";
+            if (msg.toLowerCase().includes("timeout")) {
+              friendlyMsg = "Getting your location took too long. Please check your internet connection or step outside for a better GPS signal, then try again.";
+            } else if (msg.toLowerCase().includes("denied")) {
+              friendlyMsg = "Location access was denied. Please allow location access in your browser settings to clock in/out.";
+            }
+            setError(friendlyMsg);
+            setLoading(false);
+            return;
+          }
+        }
+      }
+
       if (useFaceRecognition && !manual && !faceVerified) {
         if (!hasFaceEnrolled) {
           setError("Please enroll your face first or use Manual Mode.");
           setLoading(false);
           return;
         }
+        setError(null);
         setIsFaceRecognitionModalOpen(true);
         setFaceRecognitionMode("verify");
         setLoading(false);
@@ -416,64 +524,6 @@ export default function ClockInOutCard({
         timingStatus = "NO_SHIFT_ASSIGNED";
       }
 
-      let locationData = {
-        latitude: undefined as number | undefined,
-        longitude: undefined as number | undefined,
-        distanceMeters: undefined as number | undefined,
-        status: undefined as 'Office' | 'Outside Office' | undefined,
-        address: undefined as string | undefined,
-      };
-
-      if (requireLocation) {
-        try {
-          const locResult = await validateLocationAgainstBranches(branchLocations);
-          let fetchedAddress: string | undefined = undefined;
-
-          // Attempt to reverse geocode the location to save it permanently in the database
-          if (locResult.latitude && locResult.longitude) {
-            try {
-              const res = await fetch(`https://photon.komoot.io/reverse?lon=${locResult.longitude}&lat=${locResult.latitude}&lang=en`);
-              if (res.ok) {
-                const data = await res.json();
-                if (data.features && data.features.length > 0) {
-                  const props = data.features[0].properties;
-                  const name = props.name || '';
-                  const street = [props.housenumber, props.street].filter(Boolean).join(' ');
-                  const city = props.city || props.town || props.village || props.county || '';
-                  const state = props.state || '';
-                  
-                  // Build a concise, readable address
-                  const displayNameParts = [name, street, city, state].filter(p => p && p.trim() !== '');
-                  fetchedAddress = Array.from(new Set(displayNameParts)).join(', ');
-                }
-              }
-            } catch (geocodeErr) {
-              console.warn("Silent failure on reverse geocoding during clock in:", geocodeErr);
-            }
-          }
-
-          locationData = {
-            latitude: locResult.latitude,
-            longitude: locResult.longitude,
-            distanceMeters: locResult.distanceMeters ?? undefined,
-            status: locResult.status,
-            address: fetchedAddress,
-          };
-        } catch (locErr: any) {
-          console.error("Location error:", locErr);
-          const msg = locErr?.message || "Unknown error";
-          let friendlyMsg = "We couldn't get your location. Please ensure location services are enabled in your browser settings.";
-          if (msg.toLowerCase().includes("timeout")) {
-            friendlyMsg = "Getting your location took too long. Please check your internet connection or step outside for a better GPS signal, then try again.";
-          } else if (msg.toLowerCase().includes("denied")) {
-            friendlyMsg = "Location access was denied. Please allow location access in your browser settings to clock in/out.";
-          }
-          setError(friendlyMsg);
-          setLoading(false);
-          return;
-        }
-      }
-
       let mode: 'Device' | 'Manual' | 'Live' | 'Facial Recognition' = 'Live';
       if (manual) mode = 'Manual';
       else if (faceVerified) mode = 'Facial Recognition';
@@ -481,7 +531,11 @@ export default function ClockInOutCard({
       // Stop any active travel tracking before inserting (for OUT or Office re-entry)
       if (entryType === 'OUT' || (entryType === 'IN' && locationData.status === 'Office')) {
         if (travelService.isTravelTrackingActive()) {
-          await travelService.stopTravelTracking(true);
+          const finalLocation = locationData.latitude && locationData.longitude ? {
+            latitude: locationData.latitude,
+            longitude: locationData.longitude
+          } : undefined;
+          await travelService.stopTravelTracking(true, finalLocation);
           setIsTracking(false);
           setLiveDistance(0);
         }
@@ -500,6 +554,7 @@ export default function ClockInOutCard({
         distance_from_branch: locationData.distanceMeters,
         office_location_status: locationData.status,
         location_address: locationData.address,
+        captured_image: capturedImageBase64,
       });
 
       // Start travel tracking after a successful Outside-Office clock-IN, if enabled
@@ -530,8 +585,50 @@ export default function ClockInOutCard({
         }
       }
 
+      // ── Outside Office Approval Workflow ──
+      if (currentTenant?.id && employeeId) {
+        const todayDate = timestamp.toISOString().split('T')[0];
+
+        if (entryType === 'IN' && locationData.status === 'Outside Office') {
+          // Fetch the timestamp ID we just created
+          const { data: createdTs } = await supabase
+            .from('attendance_timestamp')
+            .select('id')
+            .eq('employee_id', employeeId)
+            .eq('entry', 'IN')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (createdTs?.id) {
+            const approval = await createApproval({
+              tenantId: currentTenant.id,
+              employeeId,
+              timestampId: createdTs.id,
+              clockInTime: timestamp.toISOString(),
+              attendanceLocation: locationData.address,
+            });
+            if (approval) {
+              setPendingApproval({
+                id: approval.id,
+                clockInTime: approval.clock_in_time,
+                attendanceLocation: approval.attendance_location,
+              });
+            }
+          }
+        } else if (entryType === 'OUT') {
+          // Auto-update clock_out_time on any open outside-office approval for today
+          await updateClockOut(employeeId, todayDate, timestamp.toISOString());
+        } else if (entryType === 'IN' && locationData.status === 'Office') {
+          // Employee returned to office — record inside_office_clock_in_time
+          await updateInsideOfficeClockIn(employeeId, todayDate, timestamp.toISOString());
+        }
+      }
+
       setLatestEntryType(entryType);
+      setLatestEntryTime(timestamp.toISOString());
       onAttendanceUpdated();
+      cachedLocationDataRef.current = null;
 
       if (manual) {
         setManualMode(false);
@@ -549,10 +646,13 @@ export default function ClockInOutCard({
       );
     } finally {
       setLoading(false);
+      setLoadingAction(null);
     }
   };
 
-  const handleFaceRecognitionSuccess = (verifiedEmployeeId?: string) => {
+  // ── Render ──
+
+  const handleFaceRecognitionSuccess = (verifiedEmployeeId?: string, capturedImageBase64?: string) => {
     setIsFaceRecognitionModalOpen(false);
 
     if (faceRecognitionMode === "enroll") {
@@ -565,7 +665,8 @@ export default function ClockInOutCard({
       selectedEmployee &&
       verifiedEmployeeId === selectedEmployee.id
     ) {
-      handleClockInOut(latestEntryType !== "IN" ? "IN" : "OUT", false, true);
+      const finalImageToSave = captureImageEnabled ? capturedImageBase64 : undefined;
+      handleClockInOut(latestEntryType !== "IN" ? "IN" : "OUT", false, true, finalImageToSave);
     } else {
       setError("Face verification failed. Identity could not be confirmed.");
     }
@@ -579,16 +680,20 @@ export default function ClockInOutCard({
   const showHikWarning = !canViewAllData && hasHikScreens && !hasFaceScreens && !allowManualClockIn;
 
   return (
-    <div className="bg-white rounded-lg shadow">
-      <div className="p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center">
-            <Clock className="h-6 w-6 text-indigo-600" />
-            <div className="ml-2">
-              <h3 className="text-lg font-medium text-gray-900">
-                {currentTime.toLocaleTimeString()}
-              </h3>
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden relative transition-all duration-500 hover:shadow-[0_16px_48px_rgba(0,0,0,0.08)]">
+      {/* Top Accent Border */}
+      <div className="h-2 w-full bg-indigo-500"></div>
+
+      <div className="p-5 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 sm:gap-6 mb-6">
+          <div className="flex justify-between items-center md:flex-col">
+            <div className="flex items-center space-x-2 text-indigo-600 mb-1 sm:mb-1.5">
+              <Clock className="h-4 w-4 sm:h-5 sm:w-5" />
+              <span className="text-base sm:text-sm font-bold uppercase tracking-wider">Current Time</span>
             </div>
+            <h3 className="text-2xl sm:text-xl 2xl:text-2xl font-bold text-gray-900 tracking-tight -mt-2 md:mt-0 ml-6">
+              {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </h3>
           </div>
 
           {/* Live Travel Tracking Badge */}
@@ -604,50 +709,42 @@ export default function ClockInOutCard({
                 : `${Math.round(liveDistance)} m`}
             </div>
           )}
-          
+
           {/* Hide toggles until config is loaded to prevent popping */}
           {!isConfigLoading && (canViewAllData || showFaceToggle) && (
-            <div className="flex flex-wrap items-center gap-3 sm:space-x-4 sm:gap-0">
+            <div className="flex flex-wrap items-center gap-3">
               {canViewAllData && (
                 <button
                   onClick={() => setManualMode(!manualMode)}
-                  className="text-sm text-indigo-600 hover:text-indigo-900"
+                  className="h-9 px-4 inline-flex items-center justify-center text-sm font-semibold rounded-lg transition-all duration-200 ease-in-out bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 shadow-sm"
                 >
-                  {manualMode ? "Live Mode" : "Manual Mode"}
+                  {manualMode ? "Switch to Live Mode" : "Switch to Manual Mode"}
                 </button>
               )}
 
               {showFaceToggle && (
-                <div className="flex items-center">
-                  <input
-                    id="use-face-recognition"
-                    type="checkbox"
-                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                    checked={useFaceRecognition}
-                    onChange={(e) => setUseFaceRecognition(e.target.checked)}
-                  />
-                  <label
-                    htmlFor="use-face-recognition"
-                    className="ml-2 text-sm text-gray-700"
+                <div
+                  className="h-9 inline-flex items-center space-x-2 bg-white px-3 rounded-lg border border-gray-200 shadow-sm cursor-pointer hover:bg-gray-50 transition-colors"
+                  onClick={() => setUseFaceRecognition(!useFaceRecognition)}
+                >
+                  <button
+                    type="button"
+                    className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${useFaceRecognition ? 'bg-indigo-600' : 'bg-gray-300'
+                      }`}
+                    role="switch"
+                    aria-checked={useFaceRecognition}
                   >
-                    Use Face Recognition
-                  </label>
+                    <span
+                      aria-hidden="true"
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${useFaceRecognition ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                    />
+                  </button>
+                  <span className="text-sm font-semibold text-gray-700 select-none">Face Auth</span>
                 </div>
               )}
 
-              {/* FIX: Added canViewAllData here so regular employees never see Enroll/Update Face */}
-              {canViewAllData && selectedEmployee && useFaceRecognition && showFaceToggle && (
-                <button
-                  onClick={() => {
-                    setFaceRecognitionMode("enroll");
-                    setIsFaceRecognitionModalOpen(true);
-                  }}
-                  className="inline-flex items-center px-2 py-1 border border-gray-300 text-xs rounded text-gray-700 bg-white hover:bg-gray-50 bg-indigo-50"
-                >
-                  <User className="h-3 w-3 mr-1" />
-                  {hasFaceEnrolled ? "Update Face" : "Enroll Face"}
-                </button>
-              )}
+              {/* FIX: Removed Enroll/Update Face button per request. */}
             </div>
           )}
         </div>
@@ -694,84 +791,96 @@ export default function ClockInOutCard({
             {/* Only render the clock in/out actions if they are permitted */}
             {canShowClockInActions && !showHikWarning && (
               manualMode && canViewAllData ? (
-                <div className="mt-4 space-y-4">
-                  <div>
+                <div className="mt-6 space-y-6">
+                  <div className="bg-gray-50/80 p-5 rounded-2xl border border-gray-200/60 shadow-sm">
                     <label
                       htmlFor="manual-datetime"
-                      className="block text-sm font-medium text-gray-700"
+                      className="block text-sm font-bold text-gray-700 mb-3"
                     >
                       Date and Time
                     </label>
                     <input
                       type="datetime-local"
                       id="manual-datetime"
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                      className="block w-full sm:w-fit px-4 py-3 rounded-xl border-2 border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all sm:text-sm"
                       value={manualTransientDateTime}
                       onChange={(e) => setManualTransientDateTime(e.target.value)}
                       onBlur={() => setManualDateTime(manualTransientDateTime)}
                     />
                   </div>
-                  <div>
+                  <div className="bg-gray-50/80 p-5 rounded-2xl border border-gray-200/60 shadow-sm">
                     <label
                       htmlFor="manual-reason"
-                      className="block text-sm font-medium text-gray-700"
+                      className="block text-sm font-bold text-gray-700 mb-3"
                     >
-                      Reason for Manual Entry
+                      Reason for Manual Entry *
                     </label>
                     <textarea
                       id="manual-reason"
                       rows={3}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                      className="block w-full px-4 py-3 rounded-xl border-2 border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all sm:text-sm"
                       value={manualReason}
                       onChange={(e) => setManualReason(e.target.value)}
-                      placeholder="Please provide a reason for manual time entry"
+                      placeholder="Please provide a detailed reason for manual time entry..."
                       required
                     />
                   </div>
-                  <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                     <button
                       onClick={() => handleClockInOut("IN", true)}
                       disabled={!canClockIn}
-                      className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 inline-flex justify-center items-center px-4 py-3 sm:px-5 sm:py-3 border border-transparent rounded-xl shadow-md sm:shadow-lg text-base sm:text-base font-bold text-white bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all hover:-translate-y-0.5"
                     >
-                      <LogIn className="h-4 w-4 mr-2" />
-                      Manual Clock In
+                      {loadingAction === "MANUAL_IN" ? (
+                        <Loader2 className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5 animate-spin" />
+                      ) : (
+                        <LogIn className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5" />
+                      )}
+                      {loadingAction === "MANUAL_IN" ? "Processing..." : "Manual Clock In"}
                     </button>
                     <button
                       onClick={() => handleClockInOut("OUT", true)}
                       disabled={!canClockOut}
-                      className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 inline-flex justify-center items-center px-4 py-3 sm:px-5 sm:py-3 border border-transparent rounded-xl shadow-md sm:shadow-lg text-base sm:text-base font-bold text-white bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 focus:outline-none focus:ring-4 focus:ring-rose-200 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all hover:-translate-y-0.5"
                     >
-                      <LogOut className="h-4 w-4 mr-2" />
-                      Manual Clock Out
+                      {loadingAction === "MANUAL_OUT" ? (
+                        <Loader2 className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5 animate-spin" />
+                      ) : (
+                        <LogOut className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5" />
+                      )}
+                      {loadingAction === "MANUAL_OUT" ? "Processing..." : "Manual Clock Out"}
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col sm:flex-row gap-4 mt-4">
+                <div className="flex gap-3 sm:gap-4 mt-4">
                   <button
                     onClick={() => handleClockInOut("IN", false)}
                     disabled={!canClockIn}
-                    className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 inline-flex justify-center items-center px-4 py-3 sm:px-5 sm:py-3 border border-transparent rounded-xl shadow-md sm:shadow-lg text-base sm:text-base font-bold text-white bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all hover:-translate-y-0.5"
                   >
-                    {useFaceRecognition ? (
-                      <Camera className="h-4 w-4 mr-2" />
+                    {loadingAction === "IN" ? (
+                      <Loader2 className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5 animate-spin" />
+                    ) : useFaceRecognition ? (
+                      <Camera className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5" />
                     ) : (
-                      <LogIn className="h-4 w-4 mr-2" />
+                      <LogIn className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5" />
                     )}
-                    Clock In
+                    {loadingAction === "IN" ? "Processing..." : "Clock In"}
                   </button>
                   <button
                     onClick={() => handleClockInOut("OUT", false)}
                     disabled={!canClockOut}
-                    className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 inline-flex justify-center items-center px-4 py-3 sm:px-5 sm:py-3 border border-transparent rounded-xl shadow-md sm:shadow-lg text-base sm:text-base font-bold text-white bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 focus:outline-none focus:ring-4 focus:ring-rose-200 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all hover:-translate-y-0.5"
                   >
-                    {useFaceRecognition ? (
-                      <Camera className="h-4 w-4 mr-2" />
+                    {loadingAction === "OUT" ? (
+                      <Loader2 className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5 animate-spin" />
+                    ) : useFaceRecognition ? (
+                      <Camera className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5" />
                     ) : (
-                      <LogOut className="h-4 w-4 mr-2" />
+                      <LogOut className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5" />
                     )}
-                    Clock Out
+                    {loadingAction === "OUT" ? "Processing..." : "Clock Out"}
                   </button>
                 </div>
               )
@@ -780,25 +889,32 @@ export default function ClockInOutCard({
         )}
 
         {latestEntryType && (
-          <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-500">
-                  Latest Entry
-                </p>
-                <p className="mt-1 text-lg text-gray-900">
-                  {latestEntryType === "IN" ? "Clocked In" : "Clocked Out"}
-                </p>
+          <div className="mt-4 sm:mt-6 p-4 sm:p-5 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-200 shadow-sm flex items-start sm:items-center justify-between gap-3 sm:gap-0">
+            <div>
+              <p className="text-xs sm:text-xs font-bold text-indigo-600 uppercase tracking-wider mb-1">
+                Latest Entry Status
+              </p>
+              <div className="flex items-center space-x-2 sm:space-x-3">
+                <div className={`h-2.5 w-2.5 sm:h-2.5 sm:w-2.5 rounded-full ${latestEntryType === 'IN' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
+                <div className="flex flex-col">
+                  <p className="text-base sm:text-lg font-semibold text-gray-900 tracking-tight">
+                    {latestEntryType === "IN" ? "Clocked In" : "Clocked Out"}
+                  </p>
+                  {latestEntryTime && (
+                    <p className="text-sm font-medium text-gray-500 mt-0.5">
+                      at {new Date(latestEntryTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} on {new Date(latestEntryTime).toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
               </div>
-              <div
-                className={`px-3 py-1 rounded-full text-sm font-medium ${
-                  latestEntryType === "IN"
-                    ? "bg-green-100 text-green-800"
-                    : "bg-red-100 text-red-800"
+            </div>
+            <div
+              className={`px-4 py-2 rounded-lg text-sm font-bold uppercase tracking-wider shadow-sm ${latestEntryType === "IN"
+                  ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                  : "bg-rose-100 text-rose-800 border border-rose-200"
                 }`}
-              >
-                {latestEntryType}
-              </div>
+            >
+              {latestEntryType}
             </div>
           </div>
         )}
@@ -811,6 +927,16 @@ export default function ClockInOutCard({
           employeeId={selectedEmployee.id}
           mode={faceRecognitionMode}
           onSuccess={handleFaceRecognitionSuccess}
+        />
+      )}
+
+      {pendingApproval && selectedEmployee && (
+        <OutsideOfficeReasonModal
+          approvalId={pendingApproval.id}
+          employeeName={selectedEmployee.name}
+          clockInTime={pendingApproval.clockInTime}
+          attendanceLocation={pendingApproval.attendanceLocation}
+          onSubmitted={() => setPendingApproval(null)}
         />
       )}
     </div>

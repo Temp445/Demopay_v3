@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, Marker, Circle, useJsApiLoader } from '@react-google-maps/api';
 import { Search, MapPin, LocateFixed, X, Lightbulb } from 'lucide-react';
 import type { LocationSearchResult } from '../../../types/workLocation';
 
@@ -21,6 +21,9 @@ interface GoogleMapsMapPickerProps {
   }) => void;
   showSearch?: boolean;
   height?: string;
+  lat?: number;
+  lng?: number;
+  radius?: number;
 }
 
 export default function GoogleMapsMapPicker({
@@ -30,13 +33,16 @@ export default function GoogleMapsMapPicker({
   onLocationSelect,
   showSearch = true,
   height = '400px',
+  lat,
+  lng,
+  radius,
 }: GoogleMapsMapPickerProps) {
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: apiKey,
     libraries,
   });
 
-  const [position, setPosition] = useState({ lat: initialLat, lng: initialLng });
+  const [position, setPosition] = useState({ lat: lat !== undefined ? lat : initialLat, lng: lng !== undefined ? lng : initialLng });
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<LocationSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -71,6 +77,14 @@ export default function GoogleMapsMapPicker({
       );
     }
   }, [isLoaded]);
+
+  // Update position if controlled lat/lng change
+  useEffect(() => {
+    if (lat !== undefined && lng !== undefined) {
+      setPosition({ lat, lng });
+      mapRef.current?.panTo({ lat, lng });
+    }
+  }, [lat, lng]);
 
   useEffect(() => {
     if (!isLoaded || !autocompleteServiceRef.current) return;
@@ -271,7 +285,7 @@ export default function GoogleMapsMapPicker({
       )}
 
       <div className="relative w-full rounded-xl overflow-hidden shadow-sm border border-gray-300 z-0" style={{ height }}>
-        <div className="absolute right-3 bottom-6 z-[400]">
+        <div className="absolute right-3 bottom-48 z-[400]">
           <button
             type="button"
             onClick={getCurrentLocation}
@@ -307,6 +321,18 @@ export default function GoogleMapsMapPicker({
             draggable
             onDragEnd={handleMarkerDragEnd}
           />
+          {radius && (
+            <Circle
+              center={lat !== undefined && lng !== undefined ? { lat, lng } : position}
+              radius={radius}
+              options={{
+                fillColor: '#22c55e',
+                fillOpacity: 0.15,
+                strokeColor: '#22c55e',
+                strokeWeight: 2,
+              }}
+            />
+          )}
         </GoogleMap>
       </div>
     </div>

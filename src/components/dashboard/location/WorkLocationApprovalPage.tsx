@@ -3,7 +3,8 @@ import {
   CheckCircle, XCircle, MapPin, User, Calendar, Clock, X, Loader2, 
   ExternalLink, Map as MapIcon, History, PlayCircle, PauseCircle, 
   CheckCircle2, CreditCard as Edit, AlignLeft, AlertTriangle, AlertCircle, 
-  ShieldCheck, Navigation, WifiOff, Wifi 
+  ShieldCheck, Navigation, WifiOff, Wifi, Maximize2, Minimize2, Ruler, Gauge,
+  Square, CheckSquare, ListChecks
 } from 'lucide-react';
 import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -16,6 +17,7 @@ import type { WorkSitePin, PathSegment } from './JourneyLeafletMap';
 import { useAuth } from '../../../contexts/AuthContext';
 import { getUserEmployeeData } from '../../../lib/roleBasedAccess';
 import { useEmployeesStore } from '../../../stores/employeesStore';
+import { useLocationSettingsStore } from '../../../stores/locationSettingsStore';
 export interface JourneyGroup {
   id: string;
   employeeName: string;
@@ -24,6 +26,42 @@ export interface JourneyGroup {
   startTime?: string;
   endTime?: string;
   works: WorkLocation[];
+}
+
+// --- UTILS ---
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function formatDistance(meters: number): string {
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  return `${(meters / 1000).toFixed(2)} km`;
+}
+
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3;
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+  const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
+
+function calculateTotalDistance(coords: [number, number][]): number {
+  let total = 0;
+  for (let i = 1; i < coords.length; i++) {
+    total += calculateDistance(coords[i - 1][0], coords[i - 1][1], coords[i][0], coords[i][1]);
+  }
+  return total;
 }
 
 // --- REVERSE GEOCODING COMPONENT ---
@@ -128,15 +166,30 @@ export default function WorkLocationApprovalPage() {
 
   const [allJourneyLogs, setAllJourneyLogs] = useState<any[]>([]);
 
+  // Multi-select state
+  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set());
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkAmount, setBulkAmount] = useState('');
+
   const { user } = useAuth();
   const { items: employees, fetchEmployees } = useEmployeesStore();
   const [isAdmin, setIsAdmin] = useState(true); // Default to true until checked to avoid layout shifts
   const [isReportingHead, setIsReportingHead] = useState(false);
+  const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [currentEmployeeId, setCurrentEmployeeId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchEmployees();
   }, [fetchEmployees]);
+
+  const { settings, fetchSettings } = useLocationSettingsStore();
+  
+  useEffect(() => {
+    if (currentTenant?.id) {
+      fetchSettings(currentTenant.id);
+    }
+  }, [currentTenant?.id, fetchSettings]);
 
   useEffect(() => {
     let isMounted = true;
@@ -385,7 +438,27 @@ export default function WorkLocationApprovalPage() {
 
   const handleOpenApproval = (work: WorkLocation) => {
     setSelectedWork(work);
-    setWorkAmount('');
+    
+    const method = settings?.travel_allowance_method || 'manual';
+    const rate = settings?.travel_allowance_rate || 0;
+    
+    if (method === 'manual') {
+      setWorkAmount('');
+    } else if (method === 'fixed') {
+      setWorkAmount(rate.toString());
+    } else if (method === 'distance') {
+      const workLogs = allJourneyLogs.filter(l => l.work_location_id === work.id && l.latitude && l.longitude);
+      if (workLogs.length > 0) {
+        const coords = workLogs.map(l => [l.latitude, l.longitude] as [number, number]);
+        const distanceMeters = calculateTotalDistance(coords);
+        const distanceKm = distanceMeters / 1000;
+        const amount = Math.round(distanceKm * rate * 100) / 100; // Round to 2 decimal places
+        setWorkAmount(amount > 0 ? amount.toString() : '');
+      } else {
+        setWorkAmount('');
+      }
+    }
+    
     setWorkUnit('');
     setShowApprovalModal(true);
   };
@@ -413,6 +486,63 @@ export default function WorkLocationApprovalPage() {
       setSelectedWork(null);
     } catch (error: any) {
       toast.error(error.message || 'Failed to approve work');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const toggleSelectWork = (workId: string) => {
+    setSelectedWorkIds(prev => {
+      const next = new Set(prev);
+      if (next.has(workId)) next.delete(workId);
+      else next.add(workId);
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedWorkIds.size === completedWorks.length) {
+      setSelectedWorkIds(new Set());
+    } else {
+      setSelectedWorkIds(new Set(completedWorks.map(w => w.id)));
+    }
+  };
+
+  const computeBulkAmount = (): string => {
+    const method = settings?.travel_allowance_method || 'manual';
+    const rate = settings?.travel_allowance_rate || 0;
+    if (method === 'fixed') return rate.toString();
+    if (method === 'distance') {
+      const total = Array.from(selectedWorkIds).reduce((sum, id) => {
+        const logs = allJourneyLogs.filter(l => l.work_location_id === id && l.latitude && l.longitude);
+        if (!logs.length) return sum;
+        const coords = logs.map(l => [l.latitude, l.longitude] as [number, number]);
+        return sum + calculateTotalDistance(coords) / 1000;
+      }, 0);
+      return (Math.round(total * rate * 100) / 100).toString();
+    }
+    return '';
+  };
+
+  const handleOpenBulkModal = () => {
+    setBulkAmount(computeBulkAmount());
+    setShowBulkModal(true);
+  };
+
+  const handleBulkApprove = async () => {
+    if (selectedWorkIds.size === 0) return;
+    setSubmitting(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+      const amount = bulkAmount ? parseFloat(bulkAmount) : undefined;
+      const ids = Array.from(selectedWorkIds);
+      await Promise.all(ids.map(id => approveWork(id, user.id, amount, undefined)));
+      toast.success(`${ids.length} work assignment${ids.length > 1 ? 's' : ''} approved!`);
+      setShowBulkModal(false);
+      setSelectedWorkIds(new Set());
+    } catch (error: any) {
+      toast.error(error.message || 'Bulk approval failed');
     } finally {
       setSubmitting(false);
     }
@@ -767,7 +897,11 @@ export default function WorkLocationApprovalPage() {
             <div
               key={work.id}
               className={`rounded-xl border p-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4 relative overflow-hidden transition-all ${
-                isPending ? 'bg-white border-amber-100 shadow-sm' : 'bg-emerald-50/40 border-emerald-100 shadow-sm'
+                isPending
+                  ? selectedWorkIds.has(work.id)
+                    ? 'bg-amber-50 border-amber-400 shadow-sm ring-1 ring-amber-300'
+                    : 'bg-white border-amber-100 shadow-sm'
+                  : 'bg-emerald-50/40 border-emerald-100 shadow-sm'
               }`}
             >
               <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${
@@ -776,6 +910,17 @@ export default function WorkLocationApprovalPage() {
 
               <div className="flex-1 pl-3">
                 <div className="flex items-start gap-2 mb-2">
+                  {isPending && (
+                    <button
+                      onClick={() => toggleSelectWork(work.id)}
+                      className="flex-shrink-0 mt-0.5 text-amber-500 hover:text-amber-700 transition-colors"
+                      title={selectedWorkIds.has(work.id) ? 'Deselect' : 'Select for bulk approval'}
+                    >
+                      {selectedWorkIds.has(work.id)
+                        ? <CheckSquare className="h-4 w-4" />
+                        : <Square className="h-4 w-4" />}
+                    </button>
+                  )}
                   <MapPin className={`h-4 w-4 mt-0.5 shrink-0 ${isPending ? 'text-amber-500' : 'text-emerald-500'}`} />
                   <div>
                     <div className="font-semibold text-gray-900 text-sm">{work.location_name}</div>
@@ -926,6 +1071,25 @@ export default function WorkLocationApprovalPage() {
               </div>
             ) : (
               <>
+                {/* Select All bar */}
+                <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-gray-50">
+                  <button
+                    onClick={handleSelectAll}
+                    className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-amber-700 transition-colors"
+                  >
+                    {selectedWorkIds.size === completedWorks.length && completedWorks.length > 0
+                      ? <CheckSquare className="h-4 w-4 text-amber-500" />
+                      : <Square className="h-4 w-4 text-gray-400" />}
+                    {selectedWorkIds.size === completedWorks.length && completedWorks.length > 0
+                      ? 'Deselect All'
+                      : `Select All (${completedWorks.length})`}
+                  </button>
+                  {selectedWorkIds.size > 0 && (
+                    <span className="text-xs text-amber-700 font-semibold bg-amber-100 px-2.5 py-1 rounded-full">
+                      {selectedWorkIds.size} selected
+                    </span>
+                  )}
+                </div>
                 {paginatedPendingGroups.map(group => renderJourneyGroup(group, true))}
                 {renderPagination(
                   pendingPage,
@@ -964,6 +1128,101 @@ export default function WorkLocationApprovalPage() {
         )}
 
       </div>
+
+      {/* ─── Bulk Action Floating Bar ─── */}
+      {selectedWorkIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-3 border border-gray-700 animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <ListChecks className="h-5 w-5 text-amber-400 flex-shrink-0" />
+          <span className="text-sm font-semibold">
+            {selectedWorkIds.size} item{selectedWorkIds.size > 1 ? 's' : ''} selected
+          </span>
+          <div className="w-px h-5 bg-gray-600" />
+          <button
+            onClick={handleOpenBulkModal}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-400 rounded-lg text-sm font-semibold transition-colors"
+          >
+            <CheckCircle className="h-4 w-4" />
+            Approve All
+          </button>
+          <button
+            onClick={() => setSelectedWorkIds(new Set())}
+            className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
+          >
+            <X className="h-4 w-4" />
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* ─── BULK APPROVAL MODAL ─── */}
+      {showBulkModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-xl">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ListChecks className="h-5 w-5 text-green-600" />
+                <h2 className="text-lg font-bold text-gray-900">Bulk Approve</h2>
+              </div>
+              <button onClick={() => setShowBulkModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <CheckSquare className="h-5 w-5 text-amber-600 flex-shrink-0" />
+                <div>
+                  <div className="text-sm font-semibold text-amber-800">{selectedWorkIds.size} work assignment{selectedWorkIds.size > 1 ? 's' : ''} selected</div>
+                  <div className="text-xs text-amber-600 mt-0.5">The same travel allowance will be applied to all selected items.</div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Travel Allowance Amount (₹)
+                  {settings?.travel_allowance_method === 'distance' && (
+                    <span className="ml-2 text-xs text-blue-600 font-normal">(Total calculated from all GPS tracks)</span>
+                  )}
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={bulkAmount}
+                  onChange={e => setBulkAmount(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  placeholder="Leave blank to approve without allowance"
+                />
+                <p className="text-xs text-gray-400 mt-1.5">
+                  {settings?.travel_allowance_method === 'manual' && 'Manual mode: enter the receipt-based amount.'}
+                  {settings?.travel_allowance_method === 'fixed' && `Fixed mode: flat ₹${settings.travel_allowance_rate} per journey pre-filled.`}
+                  {settings?.travel_allowance_method === 'distance' && `Distance mode: combined GPS distance × ₹${settings.travel_allowance_rate}/km.`}
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowBulkModal(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleBulkApprove}
+                  disabled={submitting}
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {submitting ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Approving...</>
+                  ) : (
+                    <><CheckCircle className="h-4 w-4" /> Approve {selectedWorkIds.size} Item{selectedWorkIds.size > 1 ? 's' : ''}</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* APPROVAL MODAL */}
       {showApprovalModal && selectedWork && (
@@ -1359,97 +1618,149 @@ export default function WorkLocationApprovalPage() {
       )}
 
       {/* MAP MODAL — Journey Path View */}
-      {showMapModal && selectedWork && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                  <MapIcon className="h-5 w-5 text-blue-600" />
-                  Journey Tracking — {selectedWork.location_name}
-                </h2>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  {selectedWork.employee_name} &nbsp;·&nbsp; {selectedWork.formatted_address || `${selectedWork.latitude.toFixed(5)}, ${selectedWork.longitude.toFixed(5)}`}
-                </p>
-              </div>
-              <button onClick={() => { setShowMapModal(false); setSelectedWork(null); }} className="text-gray-400 hover:text-gray-600">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+      {showMapModal && selectedWork && (() => {
+        const journeyCoords = journeyLogs.filter(log => log.latitude != null && log.longitude != null).map(log => [Number(log.latitude), Number(log.longitude)] as [number, number]);
+        const totalDistanceMeters = calculateTotalDistance(journeyCoords);
+        const firstLogTime = journeyLogs.length > 0 ? new Date(journeyLogs[0].timestamp).getTime() : 0;
+        const lastLogTime = journeyLogs.length > 0 ? new Date(journeyLogs[journeyLogs.length - 1].timestamp).getTime() : 0;
+        const totalDurationSeconds = journeyLogs.length > 0 ? (lastLogTime - firstLogTime) / 1000 : 0;
+        const avgSpeedKmh = totalDurationSeconds > 0 ? ((totalDistanceMeters / 1000) / (totalDurationSeconds / 3600)).toFixed(1) : '0.0';
 
-            <div className="p-6 space-y-4">
-              {/* Journey Path Map — multi-location aware */}
-              <JourneyMapSwitch
-                points={multiMapData?.allPoints || []}
-                workLat={Number(selectedWork.latitude)}
-                workLng={Number(selectedWork.longitude)}
-                workName={selectedWork.location_name}
-                radiusMeters={selectedWork.allowed_radius_meters}
-                height="460px"
-                workSites={multiMapData?.workSites && multiMapData.workSites.length > 1 ? multiMapData.workSites : undefined}
-                segments={multiMapData?.segments && multiMapData.segments.length > 0 ? multiMapData.segments : undefined}
-              />
-
-              {/* Legend */}
-              <div className="flex flex-wrap gap-4 text-xs text-gray-600">
-                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> Journey Start</div>
-                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-500 inline-block" /> Events</div>
-                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-violet-500 inline-block" /> Last Event</div>
-                <div className="flex items-center gap-1.5"><span className="w-8 h-0 border-t-2 border-indigo-500 inline-block" /> Travel Path</div>
-                <div className="flex items-center gap-1.5"><span className="w-8 h-0 border-t-2 border-emerald-500 inline-block" /> Work Tracking</div>
-                <div className="flex items-center gap-1.5"><span className="w-8 h-0 border-t-2 border-orange-500 inline-block" /> Return Journey</div>
-                {/* Dynamically Styled Radius Indicators */}
-                <div className="flex items-center gap-1.5"><span className="w-6 h-0 border-t-2 border-dashed border-blue-500 inline-block" /> Assigned Radius</div>
-                <div className="flex items-center gap-1.5"><span className="w-6 h-0 border-t-2 border-dashed border-green-500 inline-block" /> Valid Radius</div>
-                <div className="flex items-center gap-1.5"><span className="w-6 h-0 border-t-2 border-dashed border-red-500 inline-block" /> Violated Radius</div>
-              </div>
-
-              {/* Multi-location visit summary */}
-              {multiMapData?.workSites && multiMapData.workSites.length > 1 && (
-                <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
-                  <div className="text-xs font-semibold text-blue-700 mb-2">📍 Locations Visited Today ({multiMapData.workSites.length})</div>
-                  <div className="flex flex-wrap gap-2">
-                    {multiMapData.workSites.map((ws, i) => (
-                      <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-blue-200 rounded-full text-xs text-blue-800 font-medium">
-                        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: ['#ef4444','#f97316','#eab308','#7c3aed','#2563eb'][i % 5] }} />
-                        {ws.name}
-                      </span>
-                    ))}
+        return (
+          <div className={`fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center ${isFullscreen ? 'p-0' : 'p-4'}`}>
+            <div className={`bg-white shadow-2xl w-full flex flex-col overflow-hidden ${isFullscreen ? 'h-full max-w-full rounded-none' : 'max-w-4xl max-h-[90vh] rounded-2xl'}`}>
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+                <div className="flex items-center gap-2">
+                  <div className="h-9 w-9 rounded-full bg-blue-100 flex items-center justify-center">
+                    <MapIcon className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-gray-900">Journey Tracking — {selectedWork.location_name}</h2>
+                    <p className="text-xs text-gray-500">
+                      {selectedWork.employee_name} &nbsp;·&nbsp; {selectedWork.formatted_address || `${selectedWork.latitude.toFixed(5)}, ${selectedWork.longitude.toFixed(5)}`}
+                    </p>
                   </div>
                 </div>
-              )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsFullscreen(!isFullscreen)}
+                    className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                  >
+                    {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+                  </button>
+                  <button onClick={() => { setShowMapModal(false); setSelectedWork(null); }} className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
 
-              {/* Event timeline */}
-              {journeyLogs.length > 0 ? (
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <div className="bg-gray-50 px-4 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200">
-                    Journey Timeline ({timelineEvents.length} events)
+              {/* Summary Stats */}
+              <div className="grid grid-cols-3 gap-px bg-gray-100 border-b border-gray-100 shrink-0">
+                <div className="bg-white px-4 py-3 flex items-center gap-3">
+                  <Ruler className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wide">Total Distance</p>
+                    <p className="text-sm font-bold text-gray-900">{formatDistance(totalDistanceMeters)}</p>
                   </div>
-                  <div className="divide-y divide-gray-100 max-h-52 overflow-y-auto">
-                    {timelineEvents.map((evt, i) => (
-                      <div key={i} className="flex items-center gap-3 px-4 py-2.5">
-                        <span className="text-base">{getTimelineIcon(evt.status)}</span>
-                        <div className="flex-1">
-                          <div className="text-sm font-medium text-gray-800 capitalize">{evt.status}</div>
-                          <div className="text-xs text-gray-500">{evt.message}</div>
-                        </div>
-                        <div className="text-xs text-gray-500 font-medium whitespace-nowrap">
-                          {format(new Date(evt.timestamp), 'hh:mm a')}
+                </div>
+                <div className="bg-white px-4 py-3 flex items-center gap-3">
+                  <Clock className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wide">Duration</p>
+                    <p className="text-sm font-bold text-gray-900">{formatDuration(totalDurationSeconds)}</p>
+                  </div>
+                </div>
+                <div className="bg-white px-4 py-3 flex items-center gap-3">
+                  <Gauge className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wide">Avg Speed</p>
+                    <p className="text-sm font-bold text-gray-900">{avgSpeedKmh} km/h</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Content Area */}
+              <div className={`flex flex-col md:flex-row ${isFullscreen ? 'flex-1 min-h-0' : 'h-[500px]'}`}>
+                {/* Map */}
+                <div className="w-full md:flex-1 h-[300px] md:h-full relative bg-gray-50 border-b md:border-b-0 md:border-r border-gray-100">
+                  <JourneyMapSwitch
+                    points={multiMapData?.allPoints || []}
+                    workLat={Number(selectedWork.latitude)}
+                    workLng={Number(selectedWork.longitude)}
+                    workName={selectedWork.location_name}
+                    radiusMeters={selectedWork.allowed_radius_meters}
+                    height="100%"
+                    workSites={multiMapData?.workSites && multiMapData.workSites.length > 1 ? multiMapData.workSites : undefined}
+                    segments={multiMapData?.segments && multiMapData.segments.length > 0 ? multiMapData.segments : undefined}
+                  />
+                </div>
+
+                {/* Sidebar */}
+                <div className="w-full md:w-80 h-[300px] md:h-full flex flex-col bg-white overflow-hidden shrink-0">
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {/* Multi-location visit summary */}
+                    {multiMapData?.workSites && multiMapData.workSites.length > 1 && (
+                      <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                        <div className="text-xs font-semibold text-blue-700 mb-2">📍 Locations Visited Today ({multiMapData.workSites.length})</div>
+                        <div className="flex flex-wrap gap-2">
+                          {multiMapData.workSites.map((ws, i) => (
+                            <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-blue-200 rounded-full text-[10px] text-blue-800 font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ backgroundColor: ['#ef4444','#f97316','#eab308','#7c3aed','#2563eb'][i % 5] }} />
+                              {ws.name}
+                            </span>
+                          ))}
                         </div>
                       </div>
-                    ))}
+                    )}
+
+                    {/* Legend */}
+                    <div className="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                      <div className="text-[10px] font-semibold text-gray-500 uppercase mb-2 tracking-wide">Map Legend</div>
+                      <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-600">
+                        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> Start</div>
+                        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-violet-500 inline-block" /> Last</div>
+                        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block" /> Event</div>
+                        <div className="flex items-center gap-1.5"><span className="w-4 h-0 border-t-2 border-indigo-500 inline-block" /> Path</div>
+                        <div className="flex items-center gap-1.5"><span className="w-4 h-0 border-t-2 border-emerald-500 inline-block" /> Work</div>
+                        <div className="flex items-center gap-1.5"><span className="w-4 h-0 border-t-2 border-orange-500 inline-block" /> Return</div>
+                      </div>
+                    </div>
+
+                    {/* Event timeline */}
+                    {journeyLogs.length > 0 ? (
+                      <div className="border border-gray-200 rounded-lg overflow-hidden flex flex-col">
+                        <div className="bg-gray-50 px-3 py-2 text-[10px] font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200 shrink-0">
+                          Timeline ({timelineEvents.length})
+                        </div>
+                        <div className="divide-y divide-gray-100 overflow-y-auto">
+                          {timelineEvents.map((evt, i) => (
+                            <div key={i} className="flex items-center gap-2 px-3 py-2">
+                              <span className="text-base shrink-0">{getTimelineIcon(evt.status)}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-medium text-gray-800 capitalize truncate">{evt.status}</div>
+                                <div className="text-[10px] text-gray-500 truncate">{evt.message}</div>
+                              </div>
+                              <div className="text-[10px] text-gray-500 font-medium whitespace-nowrap shrink-0">
+                                {format(new Date(evt.timestamp), 'hh:mm a')}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-6 text-[10px] text-gray-400 border border-dashed border-gray-200 rounded-lg">
+                        No tracking data recorded yet.
+                      </div>
+                    )}
                   </div>
                 </div>
-              ) : (
-                <div className="text-center py-6 text-sm text-gray-400 border border-dashed border-gray-200 rounded-lg">
-                  No journey tracking data recorded yet for this assignment.
-                </div>
-              )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* PENDING WORKS TIMELINE MODAL */}
       {showTimelineModal && selectedWork && (

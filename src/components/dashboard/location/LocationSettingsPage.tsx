@@ -19,27 +19,41 @@ interface SettingToggleProps {
 
 function SettingToggle({ label, description, enabled, onChange, icon: Icon, iconBg, iconColor, impact, children }: SettingToggleProps) {
   return (
-    <div className={`rounded-xl border transition-all duration-200 ${enabled ? 'bg-white border-gray-200' : 'bg-gray-50 border-gray-200'}`}>
-      <div className="flex items-start gap-4 p-5">
-        <div className={`p-2.5 rounded-lg ${iconBg} flex-shrink-0`}>
-          <Icon className={`h-5 w-5 ${iconColor}`} />
+    <div className={`rounded-xl border transition-all duration-200 ${enabled ? 'bg-white border-blue-100 shadow-sm' : 'bg-gray-50 border-gray-200'}`}>
+      <div className="flex flex-col sm:flex-row sm:items-start gap-4 p-4 sm:p-5">
+        <div className="flex items-center justify-between w-full sm:w-auto">
+          <div className={`p-2.5 rounded-lg ${iconBg} flex-shrink-0`}>
+            <Icon className={`h-5 w-5 ${iconColor}`} />
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange(!enabled)}
+            className="sm:hidden flex-shrink-0 focus:outline-none"
+            aria-label={`Toggle ${label}`}
+          >
+            {enabled ? (
+              <ToggleRight className="h-8 w-8 text-blue-600 transition-colors" />
+            ) : (
+              <ToggleLeft className="h-8 w-8 text-gray-300 transition-colors" />
+            )}
+          </button>
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h3 className={`text-sm font-semibold ${enabled ? 'text-gray-900' : 'text-gray-500'}`}>{label}</h3>
-              <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{description}</p>
+              <h3 className={`text-base font-semibold ${enabled ? 'text-gray-900' : 'text-gray-500'}`}>{label}</h3>
+              {description && <p className="text-sm text-gray-500 mt-1 leading-relaxed">{description}</p>}
               {impact && (
                 <div className="flex items-center gap-1.5 mt-2">
-                  <Info className="h-3 w-3 text-amber-500 flex-shrink-0" />
-                  <span className="text-xs text-amber-700">{impact}</span>
+                  <Info className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                  <span className="text-sm text-amber-700">{impact}</span>
                 </div>
               )}
             </div>
             <button
               type="button"
               onClick={() => onChange(!enabled)}
-              className="flex-shrink-0 focus:outline-none"
+              className="hidden sm:block flex-shrink-0 focus:outline-none"
               aria-label={`Toggle ${label}`}
             >
               {enabled ? (
@@ -52,8 +66,10 @@ function SettingToggle({ label, description, enabled, onChange, icon: Icon, icon
         </div>
       </div>
       {children && enabled && (
-        <div className="px-5 pb-5 pt-0 ml-14">
-          {children}
+        <div className="px-4 sm:px-5 pb-4 sm:pb-5 pt-0 sm:ml-14">
+          <div className="pt-4 border-t border-gray-100">
+            {children}
+          </div>
         </div>
       )}
     </div>
@@ -68,19 +84,18 @@ export default function LocationSettingsPage() {
     live_tracking_enabled: true,
     radius_monitoring_enabled: true,
     work_event_notifications_enabled: true,
+    work_event_notifications_enabled: true,
     violation_notifications_enabled: true,
-    google_maps_enabled: false,
-    google_maps_api_key: '' as string,
     journey_tracking_interval_mins: 5,
     work_radius_tracking_interval_mins: 15,
     allow_add_new_location: false,
     field_work_integration_enabled: false,
     field_work_component_id: null as string | null,
+    travel_allowance_method: 'manual' as 'manual' | 'distance' | 'fixed',
+    travel_allowance_rate: 0,
   });
 
   const [isDirty, setIsDirty] = useState(false);
-  const [apiKeyVisible, setApiKeyVisible] = useState(false);
-  const [apiKeyValidation, setApiKeyValidation] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle');
 
   const [connectedComponent, setConnectedComponent] = useState<{
     name: string;
@@ -132,69 +147,27 @@ export default function LocationSettingsPage() {
       radius_monitoring_enabled: settings.radius_monitoring_enabled,
       work_event_notifications_enabled: settings.work_event_notifications_enabled,
       violation_notifications_enabled: settings.violation_notifications_enabled,
-      google_maps_enabled: settings.google_maps_enabled,
-      google_maps_api_key: settings.google_maps_api_key || '',
       journey_tracking_interval_mins: settings.journey_tracking_interval_mins ?? 5,
+      minimum_movement_threshold_meters: settings.minimum_movement_threshold_meters ?? 10,
       work_radius_tracking_interval_mins: settings.work_radius_tracking_interval_mins ?? 15,
+      work_radius_minimum_movement_threshold_meters: settings.work_radius_minimum_movement_threshold_meters ?? 10,
       allow_add_new_location: settings.allow_add_new_location ?? false,
       field_work_integration_enabled: settings.field_work_integration_enabled ?? false,
       field_work_component_id: settings.field_work_component_id ?? null,
+      travel_allowance_method: settings.travel_allowance_method ?? 'manual',
+      travel_allowance_rate: settings.travel_allowance_rate ?? 0,
     });
     setIsDirty(false);
-    if (settings.google_maps_api_key && settings.google_maps_enabled) {
-      setApiKeyValidation('valid');
-    } else {
-      setApiKeyValidation('idle');
-    }
   }, [settings]);
 
   const handleToggle = (key: keyof typeof localSettings, value: boolean) => {
     setLocalSettings(prev => {
-      const updated = { ...prev, [key]: value };
-      if (key === 'google_maps_enabled' && !value) {
-        setApiKeyValidation('idle');
-      }
-      return updated;
+      return { ...prev, [key]: value };
     });
     setIsDirty(true);
   };
 
-  const handleApiKeyChange = (value: string) => {
-    setLocalSettings(prev => ({ ...prev, google_maps_api_key: value }));
-    setIsDirty(true);
-    setApiKeyValidation('idle');
-  };
 
-  const validateApiKey = useCallback(async () => {
-    const key = localSettings.google_maps_api_key.trim();
-    if (!key) {
-      setApiKeyValidation('invalid');
-      toast.error('Please enter an API key');
-      return false;
-    }
-
-    setApiKeyValidation('validating');
-    try {
-      const response = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?address=test&key=${key}`
-      );
-      const data = await response.json();
-
-      if (data.status === 'REQUEST_DENIED') {
-        setApiKeyValidation('invalid');
-        toast.error('Invalid Google Maps API key. Please check and try again.');
-        return false;
-      }
-
-      setApiKeyValidation('valid');
-      toast.success('Google Maps API key is valid');
-      return true;
-    } catch {
-      setApiKeyValidation('invalid');
-      toast.error('Failed to validate API key. Check your network connection.');
-      return false;
-    }
-  }, [localSettings.google_maps_api_key]);
 
   const handleSave = async () => {
     if (!currentTenant?.id) return;
@@ -211,15 +184,24 @@ export default function LocationSettingsPage() {
       return;
     }
 
-    if (localSettings.google_maps_enabled) {
-      if (!localSettings.google_maps_api_key.trim()) {
-        toast.error('Please enter a Google Maps API key before enabling Google Maps');
-        return;
-      }
-      if (apiKeyValidation !== 'valid') {
-        const isValid = await validateApiKey();
-        if (!isValid) return;
-      }
+    if (Number(localSettings.journey_tracking_interval_mins) < 5) {
+      toast.error('Journey Tracking Interval must be at least 5 minutes.');
+      return;
+    }
+
+    if (Number(localSettings.minimum_movement_threshold_meters) < 20) {
+      toast.error('Minimum Movement Threshold must be at least 20 meters.');
+      return;
+    }
+
+    if (Number(localSettings.work_radius_tracking_interval_mins) < 5) {
+      toast.error('Work Area Tracking Interval must be at least 5 minutes.');
+      return;
+    }
+
+    if (Number(localSettings.work_radius_minimum_movement_threshold_meters) < 20) {
+      toast.error('Work Area Minimum Movement Threshold must be at least 20 meters.');
+      return;
     }
 
     try {
@@ -228,13 +210,15 @@ export default function LocationSettingsPage() {
         radius_monitoring_enabled: localSettings.radius_monitoring_enabled,
         work_event_notifications_enabled: localSettings.work_event_notifications_enabled,
         violation_notifications_enabled: localSettings.violation_notifications_enabled,
-        google_maps_enabled: localSettings.google_maps_enabled,
-        google_maps_api_key: localSettings.google_maps_enabled ? localSettings.google_maps_api_key.trim() : null,
-        journey_tracking_interval_mins: localSettings.journey_tracking_interval_mins,
-        work_radius_tracking_interval_mins: localSettings.work_radius_tracking_interval_mins,
+        journey_tracking_interval_mins: Number(localSettings.journey_tracking_interval_mins) || 5,
+        minimum_movement_threshold_meters: Number(localSettings.minimum_movement_threshold_meters) || 10,
+        work_radius_tracking_interval_mins: Number(localSettings.work_radius_tracking_interval_mins) || 15,
+        work_radius_minimum_movement_threshold_meters: Number(localSettings.work_radius_minimum_movement_threshold_meters) || 10,
         allow_add_new_location: localSettings.allow_add_new_location,
         field_work_integration_enabled: localSettings.field_work_integration_enabled,
         field_work_component_id: localSettings.field_work_component_id,
+        travel_allowance_method: localSettings.travel_allowance_method,
+        travel_allowance_rate: Number(localSettings.travel_allowance_rate) || 0,
       };
       await saveSettings(currentTenant.id, payload);
       toast.success('Location settings saved successfully');
@@ -247,7 +231,7 @@ export default function LocationSettingsPage() {
   if (loading) {
     return (
       <div className="p-6">
-        <div className="max-w-2xl mx-auto space-y-4">
+        <div className="max-w-4xl mx-auto space-y-4">
           {[1, 2, 3, 4, 5].map(i => (
             <div key={i} className="h-24 bg-gray-100 rounded-xl animate-pulse" />
           ))}
@@ -257,98 +241,27 @@ export default function LocationSettingsPage() {
   }
 
   return (
-    <div className="p-6 max-w-2xl mx-auto">
+    <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-1">
           <div className="p-2 bg-blue-100 rounded-lg">
-            <MapPin className="h-5 w-5 text-blue-600" />
+            <MapPin className="h-6 w-6 text-blue-600" />
           </div>
-          <h1 className="text-xl font-bold text-gray-900">Location Settings</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Location Settings</h1>
         </div>
-        <p className="text-sm text-gray-500 ml-12">
+        <p className="text-base text-gray-500 ml-14">
           Control how work location tracking behaves across the platform. Changes take effect immediately.
         </p>
       </div>
 
       <div className="space-y-3">
-        <div className="mb-2">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Map Provider</p>
-        </div>
-
-        <SettingToggle
-          label="Enable Google Maps"
-          description="Switch from OpenStreetMap to Google Maps for all location features. Requires a valid Google Maps API key with Maps JavaScript API, Geocoding API, and Places API enabled."
-          enabled={localSettings.google_maps_enabled}
-          onChange={(v) => handleToggle('google_maps_enabled', v)}
-          icon={Map}
-          iconBg="bg-teal-50"
-          iconColor="text-teal-600"
-          impact={!localSettings.google_maps_enabled ? 'Using OpenStreetMap (free, no API key required).' : undefined}
-        >
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1.5">Google Maps API Key</label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <input
-                    type={apiKeyVisible ? 'text' : 'password'}
-                    value={localSettings.google_maps_api_key}
-                    onChange={(e) => handleApiKeyChange(e.target.value)}
-                    placeholder="AIzaSy..."
-                    className="w-full pl-9 pr-10 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setApiKeyVisible(!apiKeyVisible)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  >
-                    {apiKeyVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={validateApiKey}
-                  disabled={apiKeyValidation === 'validating' || !localSettings.google_maps_api_key.trim()}
-                  className="px-4 py-2 text-sm font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap"
-                >
-                  {apiKeyValidation === 'validating' ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <CheckCircle className="h-3.5 w-3.5" />
-                  )}
-                  Validate
-                </button>
-              </div>
-              {apiKeyValidation === 'valid' && (
-                <div className="flex items-center gap-1.5 mt-2 text-green-700">
-                  <CheckCircle className="h-3.5 w-3.5" />
-                  <span className="text-xs font-medium">API key validated successfully</span>
-                </div>
-              )}
-              {apiKeyValidation === 'invalid' && (
-                <div className="flex items-center gap-1.5 mt-2 text-red-600">
-                  <XCircle className="h-3.5 w-3.5" />
-                  <span className="text-xs font-medium">Invalid API key. Please check and try again.</span>
-                </div>
-              )}
-            </div>
-            <div className="bg-teal-50 border border-teal-100 rounded-lg p-3">
-              <p className="text-xs text-teal-800 leading-relaxed">
-                Your API key must have the following APIs enabled: <strong>Maps JavaScript API</strong>, <strong>Geocoding API</strong>, and <strong>Places API</strong>. You can manage your APIs at{' '}
-                <a href="https://console.cloud.google.com/apis/library" target="_blank" rel="noopener noreferrer" className="underline font-medium">Google Cloud Console</a>.
-              </p>
-            </div>
-          </div>
-        </SettingToggle>
-
         <div className="mt-5 mb-2">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Tracking</p>
         </div>
 
         <SettingToggle
           label="Live GPS Tracking"
-          description="When enabled, employees must share their GPS location before starting work. The Location Tracking dashboard becomes available to admins."
+          description="When enabled, employees must share their GPS location before starting work."
           enabled={localSettings.live_tracking_enabled}
           onChange={(v) => handleToggle('live_tracking_enabled', v)}
           icon={Radio}
@@ -356,28 +269,43 @@ export default function LocationSettingsPage() {
           iconColor="text-blue-600"
           impact={!localSettings.live_tracking_enabled ? 'Live Tracking screen will be hidden from the sidebar. Only timestamps will be recorded on Start Work.' : undefined}
         >
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1.5">Journey Tracking Interval (Minutes)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Journey Tracking Interval (Minutes)</label>
               <input
                 type="number"
-                min="1"
+                min="5"
                 max="60"
-                value={localSettings.journey_tracking_interval_mins}
+                value={localSettings.journey_tracking_interval_mins || ''}
                 onChange={(e) => {
-                  setLocalSettings(prev => ({ ...prev, journey_tracking_interval_mins: parseInt(e.target.value) || 1 }));
+                  const val = e.target.value === '' ? ('' as unknown as number) : parseInt(e.target.value);
+                  setLocalSettings(prev => ({ ...prev, journey_tracking_interval_mins: val }));
                   setIsDirty(true);
                 }}
-                className="w-1/3 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-4 py-2.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow"
               />
-              <p className="text-xs text-gray-500 mt-1">How often the app will ping the employee's location while they are traveling to the work site or returning.</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Minimum Movement Threshold (meters)</label>
+              <input
+                type="number"
+                min="20"
+                max="1000"
+                value={localSettings.minimum_movement_threshold_meters || ''}
+                onChange={(e) => {
+                  const val = e.target.value === '' ? ('' as unknown as number) : parseInt(e.target.value);
+                  setLocalSettings(prev => ({ ...prev, minimum_movement_threshold_meters: val }));
+                  setIsDirty(true);
+                }}
+                className="w-full px-4 py-2.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow"
+              />
             </div>
           </div>
         </SettingToggle>
 
         <SettingToggle
           label="Radius Monitoring"
-          description="When enabled, a configurable radius boundary is set for each work location. The system monitors when employees leave the designated area."
+          description="When enabled, a configurable radius boundary is set for each work location."
           enabled={localSettings.radius_monitoring_enabled}
           onChange={(v) => handleToggle('radius_monitoring_enabled', v)}
           icon={Shield}
@@ -385,21 +313,36 @@ export default function LocationSettingsPage() {
           iconColor="text-green-600"
           impact={!localSettings.radius_monitoring_enabled ? 'Radius configuration will be hidden in the assignment UI. No boundary violations will be tracked.' : undefined}
         >
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1.5">Work Area Tracking Interval (Minutes)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Work Area Tracking Interval (Minutes)</label>
               <input
                 type="number"
-                min="1"
+                min="5"
                 max="60"
-                value={localSettings.work_radius_tracking_interval_mins}
+                value={localSettings.work_radius_tracking_interval_mins || ''}
                 onChange={(e) => {
-                  setLocalSettings(prev => ({ ...prev, work_radius_tracking_interval_mins: parseInt(e.target.value) || 1 }));
+                  const val = e.target.value === '' ? ('' as unknown as number) : parseInt(e.target.value);
+                  setLocalSettings(prev => ({ ...prev, work_radius_tracking_interval_mins: val }));
                   setIsDirty(true);
                 }}
-                className="w-1/3 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className="w-full px-4 py-2.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-shadow"
               />
-              <p className="text-xs text-gray-500 mt-1">How often the app will check the employee's location against the allowed radius while they are actively working.</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Minimum Movement Threshold (meters)</label>
+              <input
+                type="number"
+                min="20"
+                max="1000"
+                value={localSettings.work_radius_minimum_movement_threshold_meters || ''}
+                onChange={(e) => {
+                  const val = e.target.value === '' ? ('' as unknown as number) : parseInt(e.target.value);
+                  setLocalSettings(prev => ({ ...prev, work_radius_minimum_movement_threshold_meters: val }));
+                  setIsDirty(true);
+                }}
+                className="w-full px-4 py-2.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-shadow"
+              />
             </div>
           </div>
         </SettingToggle>
@@ -426,10 +369,10 @@ export default function LocationSettingsPage() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h3 className={`text-sm font-semibold ${localSettings.field_work_integration_enabled ? 'text-gray-900' : 'text-gray-500'}`}>
+                  <h3 className={`text-base font-semibold ${localSettings.field_work_integration_enabled ? 'text-gray-900' : 'text-gray-500'}`}>
                     Travel Allowance linked with payroll
                   </h3>
-                  <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">
+                  <p className="text-sm text-gray-500 mt-0.5 leading-relaxed">
                     If enabled, Travel Allowance will be added to the employee's payroll.
                   </p>
                 </div>
@@ -537,7 +480,7 @@ export default function LocationSettingsPage() {
                           <span>Fetching component details...</span>
                         </div>
                       ) : connectedComponent ? (
-                        <div className="space-y-1">
+                        <div className="space-y-4">
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-700 font-medium">Mapped Component:</span>
                             <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded">
@@ -547,11 +490,59 @@ export default function LocationSettingsPage() {
                               {connectedComponent.is_active ? 'Active' : 'Inactive'}
                             </span>
                           </div>
-                          <div className="flex items-center gap-1.5 mt-2 bg-blue-50/70 border border-blue-100 rounded px-2.5 py-1">
+                          <div className="flex items-center gap-1.5 bg-blue-50/70 border border-blue-100 rounded px-2.5 py-1">
                             <Info className="h-3.5 w-3.5 text-blue-600 flex-shrink-0" />
                             <span className="text-[10px] text-blue-700 leading-snug">
-                             Once enabled, the component will be automatically created if it is not available in the <strong>Component Master</strong>, After that, go to the Salary Structure and add the component to the structure.
+                             Once enabled, the component will be automatically created if it is not available in the <strong>Component Master</strong>. After that, go to the Salary Structure and add the component to the structure.
                             </span>
+                          </div>
+                          
+                          <div className="pt-3 border-t border-blue-100/50">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1.5">Calculation Method</label>
+                                <select
+                                  value={localSettings.travel_allowance_method}
+                                  onChange={(e) => {
+                                    setLocalSettings(prev => ({ 
+                                      ...prev, 
+                                      travel_allowance_method: e.target.value as 'manual' | 'distance' | 'fixed' 
+                                    }));
+                                    setIsDirty(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                >
+                                  <option value="manual">Manual Entry (Receipt-Based)</option>
+                                  <option value="distance">Distance-Based (Per km)</option>
+                                  <option value="fixed">Fixed Amount (Per journey)</option>
+                                </select>
+                                <p className="text-[10px] text-gray-500 mt-1">
+                                  {localSettings.travel_allowance_method === 'manual' && 'Admin enters exact amount based on receipts.'}
+                                  {localSettings.travel_allowance_method === 'distance' && 'Calculated as Total km × Rate.'}
+                                  {localSettings.travel_allowance_method === 'fixed' && 'Flat amount granted per journey.'}
+                                </p>
+                              </div>
+                              
+                              {localSettings.travel_allowance_method !== 'manual' && (
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                                    {localSettings.travel_allowance_method === 'distance' ? 'Rate (₹ per km)' : 'Flat Amount (₹ per journey)'}
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={localSettings.travel_allowance_rate || ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value === '' ? ('' as unknown as number) : parseFloat(e.target.value);
+                                      setLocalSettings(prev => ({ ...prev, travel_allowance_rate: val }));
+                                      setIsDirty(true);
+                                    }}
+                                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                  />
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                       ) : (

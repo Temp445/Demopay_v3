@@ -42,6 +42,7 @@ export interface CreateTimestampRequest {
   distance_from_branch?: number;
   office_location_status?: 'Office' | 'Outside Office';
   location_address?: string;
+  captured_image?: string;
 }
 
 interface AttendanceTimestampStore extends StoreState<AttendanceTimestamp> {
@@ -49,7 +50,7 @@ interface AttendanceTimestampStore extends StoreState<AttendanceTimestamp> {
   fetchTimestampsByEmployee: (employeeId: string, date: string) => Promise<void>;
   fetchTimestampsByDateRange: (employeeId: string, startDate: string, endDate: string) => Promise<void>;
   getTodayTimestamps: (employeeId: string) => Promise<AttendanceTimestamp[]>;
-  getLatestEntryType: (employeeId: string, date: string) => Promise<'IN' | 'OUT' | null>;
+  getLatestEntryType: (employeeId: string, date: string) => Promise<{ type: 'IN' | 'OUT', timestamp: string } | null>;
   reset: () => void;
 }
 
@@ -77,6 +78,7 @@ export const useAttendanceTimestampStore = create<AttendanceTimestampStore>((set
         distance_from_branch: request.distance_from_branch,
         office_location_status: request.office_location_status,
         location_address: request.location_address,
+        captured_image: request.captured_image,
       };
 
       const { data, error } = await supabase
@@ -349,7 +351,7 @@ export const useAttendanceTimestampStore = create<AttendanceTimestampStore>((set
 
       if (error) throw error;
 
-      return data ? data.entry : null;
+      return data ? { type: data.entry, timestamp: data.timestamp } : null;
     } catch (error) {
       console.error('Failed to get latest entry type:', error);
       return null;

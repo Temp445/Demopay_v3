@@ -2,7 +2,7 @@ import { useCallback, useRef, useMemo } from 'react';
 import { GoogleMap, Marker, Polyline, Circle, useJsApiLoader } from '@react-google-maps/api';
 import type { WorkSitePin, PathSegment } from './JourneyLeafletMap';
 
-const libraries: ('geocoding' | 'places')[] = ['geocoding', 'places'];
+const libraries: ('places' | 'geocoding')[] = ['places', 'geocoding'];
 
 export interface JourneyPoint {
   lat: number;

@@ -1,4 +1,4 @@
-import { useLocationSettingsStore } from '../../../stores/locationSettingsStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import LocationMapViewer from './LocationMapViewer';
 import GoogleMapsMapViewer from './GoogleMapsMapViewer';
 
@@ -16,10 +16,10 @@ interface MapViewerSwitchProps {
 }
 
 export default function MapViewerSwitch(props: MapViewerSwitchProps) {
-  const { settings } = useLocationSettingsStore();
+  const { companySettings } = useSettingsStore();
 
-  if (settings.google_maps_enabled && settings.google_maps_api_key) {
-    return <GoogleMapsMapViewer apiKey={settings.google_maps_api_key} {...props} />;
+  if (companySettings?.google_maps_enabled && companySettings?.google_maps_api_key) {
+    return <GoogleMapsMapViewer apiKey={companySettings.google_maps_api_key} {...props} />;
   }
 
   return <LocationMapViewer {...props} />;

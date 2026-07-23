@@ -92,6 +92,7 @@ export const restrictedEmployeeRoutes = [
   '/dashboard/work-location-assignment',
   '/dashboard/location-tracking',
   '/dashboard/work-location-approval',
+  '/dashboard/outside-office-approval',
   '/dashboard/location-settings',
   '/dashboard/settings/user-management',
   '/dashboard/settings/smtp-configuration',

@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Building2, MapPin,ScanFace , CreditCard, Calendar, Users, FileText, Workflow, Shield, Loader2, AlertCircle } from 'lucide-react';
+import { Building2, MapPin,ScanFace , CreditCard, Calendar, Users, FileText, Workflow, Shield, Loader2, AlertCircle, ToggleRight, ToggleLeft } from 'lucide-react';
 import { useSettingsStore, type CompanySettings as CompanySettingsType, type CompanyStatutorySettings } from '../../../stores/settingsStore';
 import toast from 'react-hot-toast';
 import CompanyLocations from './CompanyLocations';
 
 
 export default function CompanySettings() {
-  const [activeSubTab, setActiveSubTab] = useState<'general' | 'locations'>('general');
+  const [activeSubTab, setActiveSubTab] = useState<'general' | 'locations' | 'integrations'>('general');
   const {
     companySettings,
     companyStatutorySettings,
@@ -61,6 +61,10 @@ export default function CompanySettings() {
     // Biometric Settings
     biometricCooldownMinutes: 5,
     enableSendPayslipOnMarkPaid: false,
+
+    // Map Settings
+    googleMapsEnabled: false,
+    googleMapsApiKey: '',
   });
 
   // Statutory Elements state
@@ -117,6 +121,8 @@ export default function CompanySettings() {
         ],
         biometricCooldownMinutes: (companySettings as any).biometric_cooldown_minutes ?? 15,
         enableSendPayslipOnMarkPaid: (companySettings as any).enable_send_payslip_on_mark_paid ?? false,
+        googleMapsEnabled: companySettings.google_maps_enabled ?? false,
+        googleMapsApiKey: companySettings.google_maps_api_key ?? '',
       });
     }
   }, [companySettings]);
@@ -237,7 +243,9 @@ export default function CompanySettings() {
         approver_roles: formData.approverRoles,
         department_structure: formData.departmentStructure,
         biometric_cooldown_minutes: formData.biometricCooldownMinutes,
-        enable_send_payslip_on_mark_paid: formData.enableSendPayslipOnMarkPaid
+        enable_send_payslip_on_mark_paid: formData.enableSendPayslipOnMarkPaid,
+        google_maps_enabled: formData.googleMapsEnabled,
+        google_maps_api_key: formData.googleMapsApiKey ? formData.googleMapsApiKey.trim() : null
       };
 
       await saveCompanySettings(settingsToSave);
@@ -318,6 +326,17 @@ export default function CompanySettings() {
             }`}
           >
             Branch Locations
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('integrations')}
+            className={`whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm ${
+              activeSubTab === 'integrations'
+                ? 'border-indigo-500 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Integrations & Maps
           </button>
         </nav>
       </div>
@@ -1166,9 +1185,76 @@ export default function CompanySettings() {
         </div>
       </form>
         </>
-      ) : (
+      ) : activeSubTab === 'locations' ? (
         <CompanyLocations />
-      )}
+      ) : activeSubTab === 'integrations' ? (
+        <>
+          <h2 className="text-lg font-medium text-gray-900">Integrations & Maps</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Configure third-party integrations and mapping services.
+          </p>
+
+          <form onSubmit={handleSubmit} className="mt-6 space-y-8">
+            <div>
+              <h3 className="text-md font-medium text-gray-900 flex items-center">
+                <MapPin className="h-5 w-5 mr-2 text-indigo-500" />
+                Map Provider
+              </h3>
+              <p className="mt-1 text-sm text-gray-500 mb-4">
+                Switch between OpenStreetMap and Google Maps for location features.
+              </p>
+
+              <div className="bg-white border rounded-lg p-5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-900">Enable Google Maps</h4>
+                    <p className="text-xs text-gray-500 mt-1">Requires a valid Google Maps API Key.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, googleMapsEnabled: !formData.googleMapsEnabled })}
+                    className="focus:outline-none"
+                  >
+                    {formData.googleMapsEnabled ? (
+                      <ToggleRight className="h-9 w-9 text-blue-600" />
+                    ) : (
+                      <ToggleLeft className="h-9 w-9 text-gray-300" />
+                    )}
+                  </button>
+                </div>
+                
+                {formData.googleMapsEnabled && (
+                  <div className="mt-4 pt-4 border-t border-gray-100">
+                    <label htmlFor="api-key" className="block text-sm font-medium text-gray-700">
+                      Google Maps API Key
+                    </label>
+                    <input
+                      type="text"
+                      id="api-key"
+                      className="mt-1 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                      value={formData.googleMapsApiKey}
+                      onChange={(e) => setFormData({ ...formData, googleMapsApiKey: e.target.value })}
+                      placeholder="AIzaSy..."
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="pt-5 border-t border-gray-200">
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={isSubmitting || loading}
+                  className="ml-3 inline-flex justify-center items-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {isSubmitting || loading ? 'Saving...' : 'Save Settings'}
+                </button>
+              </div>
+            </div>
+          </form>
+        </>
+      ) : null}
     </div>
   );
 }

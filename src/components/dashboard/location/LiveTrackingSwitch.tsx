@@ -1,12 +1,12 @@
-import { useLocationSettingsStore } from '../../../stores/locationSettingsStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import LiveTrackingDashboard from './LiveTrackingDashboard';
 import GoogleMapsLiveTracking from './GoogleMapsLiveTracking';
 
 export default function LiveTrackingSwitch() {
-  const { settings } = useLocationSettingsStore();
+  const { companySettings } = useSettingsStore();
 
-  if (settings.google_maps_enabled && settings.google_maps_api_key) {
-    return <GoogleMapsLiveTracking apiKey={settings.google_maps_api_key} />;
+  if (companySettings?.google_maps_enabled && companySettings?.google_maps_api_key) {
+    return <GoogleMapsLiveTracking apiKey={companySettings.google_maps_api_key} />;
   }
 
   return <LiveTrackingDashboard />;

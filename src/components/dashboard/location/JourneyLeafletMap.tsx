@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Polyline, Marker, Circle, useMap, Tooltip, Zoo
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { JourneyPoint } from './JourneyGoogleMap';
+import MapLibre3DViewer, { Map3DMarker, Map3DRoute, Map3DCircle } from './MapLibre3DViewer';
 
 export interface WorkSitePin {
   id?: string; // Added to uniquely identify sites
@@ -177,7 +178,7 @@ export default function JourneyLeafletMap({
     : [workLat, workLng];
   const hasMultiSite = workSites && workSites.length > 0;
 
-  const [mapType, setMapType] = useState<'street' | 'satellite'>('street');
+  const [mapType, setMapType] = useState<'street' | 'satellite' | '3d'>('street');
 
   // Dynamic Circle Style Logic
   const getCircleStyle = (lat: number, lng: number, radius: number | undefined, siteId?: string) => {
@@ -268,8 +269,70 @@ export default function JourneyLeafletMap({
         >
           Satellite
         </button>
+        <button 
+          onClick={() => setMapType('3d')}
+          className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === '3d' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+        >
+          3D
+        </button>
       </div>
 
+      {mapType === '3d' ? (
+        <MapLibre3DViewer
+          center={center}
+          routes={processedSegments && processedSegments.length > 0 
+            ? processedSegments.filter(s => s.points.length >= 2).map(s => ({
+                coordinates: s.points.map(p => [p.lat, p.lng] as [number, number]),
+                color: s.color || '#6366f1',
+                weight: 4
+              }))
+            : timelinePathCoords.length > 1 ? [{ coordinates: timelinePathCoords, color: '#6366f1', weight: 4 }] : []
+          }
+          markers={[
+            ...displayPoints.map((p, i) => {
+              const MATCH_RADIUS = 200; 
+              const matchedWorkSite = workSites?.find(ws => getDistanceInMeters(ws.lat, ws.lng, p.lat, p.lng) <= MATCH_RADIUS);
+              const isMainWorkSite = getDistanceInMeters(workLat, workLng, p.lat, p.lng) <= MATCH_RADIUS;
+              const locationText = (p as any).locationName || (matchedWorkSite ? matchedWorkSite.name : (isMainWorkSite ? workName : null));
+              let color = '#3b82f6';
+              if (i === 0) color = '#16a34a';
+              else if (i === displayPoints.length - 1) color = '#8b5cf6';
+              
+              return {
+                lat: p.lat,
+                lng: p.lng,
+                color,
+                popupHTML: `<div class="font-semibold">${locationText ? `${locationText} - ${p.type}` : p.type}</div><div class="text-xs">${p.time}</div>`
+              };
+            }),
+            ...(hasMultiSite ? (workSites || []).map(ws => ({
+              lat: ws.lat,
+              lng: ws.lng,
+              color: '#ef4444',
+              popupHTML: `<div class="font-bold">${ws.name}</div><div class="text-xs text-gray-500">Work Site</div>`
+            })) : [{
+              lat: workLat,
+              lng: workLng,
+              color: '#ef4444',
+              popupHTML: `<div class="font-bold">${workName}</div><div class="text-xs text-gray-500">Assigned Site</div>`
+            }])
+          ]}
+          circles={[
+            ...(hasMultiSite ? (workSites || []).filter(ws => ws.radiusMeters && ws.radiusMeters > 0).map(ws => ({
+              lat: ws.lat,
+              lng: ws.lng,
+              radius: ws.radiusMeters!,
+              color: getCircleStyle(ws.lat, ws.lng, ws.radiusMeters, ws.id).color
+            })) : radiusMeters && radiusMeters > 0 ? [{
+              lat: workLat,
+              lng: workLng,
+              radius: radiusMeters,
+              color: getCircleStyle(workLat, workLng, radiusMeters).color
+            }] : [])
+          ]}
+          height="100%"
+        />
+      ) : (
       <MapContainer
         center={center}
         zoom={13}
@@ -401,6 +464,7 @@ export default function JourneyLeafletMap({
           </>
         )}
       </MapContainer>
+      )}
     </div>
   );
 }

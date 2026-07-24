@@ -125,7 +125,7 @@ export default function DeviceController() {
       .from('hik_device_settings')
       .select('*')
       .eq('tenant_id', tenantId)
-      .order('created_at', { ascending: true });
+      .order('device_name', { ascending: true });
 
     setIsLoadingDevices(false);
     if (error) { console.error(error); return; }

@@ -2,15 +2,16 @@
  * travelTrackingService.ts
  *
  * Manages outside-office attendance travel tracking.
- * Uses the browser's watchPosition API with a hybrid threshold:
- *   - Store if >= 5 minutes since last breadcrumb  (time threshold)
- *   - OR store if >= 100 meters moved (distance threshold)
+ * Uses the browser's watchPosition API with a strict interval + stationary filter:
+ *   - Wakes up exactly every X minutes (time threshold).
+ *   - ONLY stores the point if distance moved is >= Y meters (distance threshold).
  *
- * This mimics what Uber/Google Maps use to balance accuracy vs battery/data.
+ * This completely prevents database spam and battery drain while driving or stationary.
  */
 
 import { supabase } from './supabase';
 import { calculateDistance } from './locationService';
+import { useSettingsStore } from '../stores/settingsStore';
 
 // Default Thresholds (if not provided by config)
 const DEFAULT_TIME_THRESHOLD_MS   = 5 * 60 * 1000; // 5 minutes
@@ -205,8 +206,39 @@ export async function stopTravelTracking(
   }
 
   const durationSeconds = Math.round((Date.now() - sessionStartTime) / 1000);
+  
+  // --- Distance Matrix API (Payroll Accuracy) ---
+  let finalDistanceMeters = Math.round(cumulativeDistance);
+  
+  try {
+    const settings = useSettingsStore.getState().companySettings;
+    if (settings?.google_maps_enabled && settings?.google_maps_api_key && settings?.enable_distance_matrix_api) {
+      const logs = await getTravelLogs(activeSession.timestampId);
+      
+      // If we have at least a start and end point
+      if (logs.length >= 2) {
+        const origin = `${logs[0].latitude},${logs[0].longitude}`;
+        const destination = `${logs[logs.length - 1].latitude},${logs[logs.length - 1].longitude}`;
+        
+        console.log(`[TravelTracking] Requesting exact road distance from Distance Matrix API...`);
+        const res = await fetch(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${settings.google_maps_api_key}`);
+        const data = await res.json();
+        
+        if (data.status === 'OK' && data.rows?.[0]?.elements?.[0]?.status === 'OK') {
+           const exactRoadDistance = data.rows[0].elements[0].distance.value;
+           console.log(`[TravelTracking] Distance Matrix returned ${exactRoadDistance}m (Haversine was ${finalDistanceMeters}m). Using exact distance for payroll.`);
+           finalDistanceMeters = exactRoadDistance;
+        } else {
+           console.warn(`[TravelTracking] Distance Matrix API returned non-OK status:`, data.status, data.rows?.[0]?.elements?.[0]?.status);
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`[TravelTracking] Failed to fetch Distance Matrix API, falling back to Haversine distance:`, err);
+  }
+
   const summary: TravelSummary = {
-    totalDistanceMeters: Math.round(cumulativeDistance),
+    totalDistanceMeters: finalDistanceMeters,
     totalDurationSeconds: durationSeconds,
     breadcrumbCount: 0, // informational only
   };
@@ -312,19 +344,28 @@ async function handlePositionUpdate(position: GeolocationPosition): Promise<void
     return;
   }
 
-  // To prevent rapid-fire database spam from GPS drift on very low distance thresholds 
-  // (e.g. if the user sets distance threshold to 1 meter), we enforce an absolute 
-  // minimum throttle of 15 seconds between any two breadcrumbs.
-  const ABSOLUTE_MIN_TIME_MS = 15000;
-  
+  // --- Strict Interval + Stationary Filter ---
+  // We ONLY consider storing a point if the strict time interval has passed.
   const isTimeThresholdMet = timeSinceLast >= activeTimeThresholdMs;
-  const isDistThresholdMet = distanceMoved >= activeDistThresholdM && timeSinceLast >= ABSOLUTE_MIN_TIME_MS;
 
-  // Hybrid threshold: store if enough time OR enough distance has passed
-  const shouldStore =
-    lastStoredLat === null || // Always store the very first fix
-    isTimeThresholdMet ||
-    isDistThresholdMet;
+  let shouldStore = false;
+
+  if (lastStoredLat === null) {
+    // Always store the very first fix
+    shouldStore = true;
+  } else if (isTimeThresholdMet) {
+    // Time interval has passed. Apply the stationary filter.
+    if (distanceMoved >= activeDistThresholdM) {
+      // User has moved enough since the last stored point. Store it.
+      shouldStore = true;
+    } else {
+      // User is stationary (or GPS drift). Do NOT store a database row.
+      // But we MUST reset the timer so it waits another interval before checking again.
+      lastStoredTime = now;
+      saveState();
+      console.log(`[TravelTracking] Stationary filter: skipped point (only moved ${distanceMoved.toFixed(1)}m in ${activeTimeThresholdMs / 60000} mins). Timer reset.`);
+    }
+  }
 
   // Always broadcast current movement state to UI (even if we won't store the fix)
   const currentState = classifySpeed(speedMs);

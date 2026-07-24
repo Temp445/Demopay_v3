@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleMap, Marker, Circle, Polyline, InfoWindow, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, MarkerF, CircleF, PolylineF, InfoWindowF, useJsApiLoader } from '@react-google-maps/api';
 import { Activity, RefreshCw, Users, MapPin, Clock, Target, AlertTriangle, PauseCircle } from 'lucide-react';
 import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -229,7 +229,7 @@ export default function GoogleMapsLiveTracking({ apiKey }: GoogleMapsLiveTrackin
                 center={calculateMapCenter()}
                 zoom={selectedWork ? 15 : 12}
                 onLoad={onMapLoad}
-                options={{ streetViewControl: false, fullscreenControl: false }}
+                options={{ mapTypeControl: true, mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_LEFT }, streetViewControl: false, fullscreenControl: true }}
               >
                 {activeWorks.map((work) => {
                   const tracking = latestTracking.get(work.id);
@@ -240,20 +240,20 @@ export default function GoogleMapsLiveTracking({ apiKey }: GoogleMapsLiveTrackin
 
                   return (
                     <div key={work.id}>
-                      <Marker position={workPos} onClick={() => setActiveInfo(work.id)} icon={{
+                      <MarkerF position={workPos} onClick={() => setActiveInfo(work.id)} icon={{
                         url: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
                         scaledSize: new google.maps.Size(25, 41),
                         anchor: new google.maps.Point(12, 41),
                       }} />
                       {activeInfo === work.id && (
-                        <InfoWindow position={workPos} onCloseClick={() => setActiveInfo(null)}>
+                        <InfoWindowF position={workPos} onCloseClick={() => setActiveInfo(null)}>
                           <div className="text-sm">
                             <div className="font-semibold mb-1">{work.location_name}</div>
                             <div className="text-gray-600">Employee: {work.employee_name}</div>
                           </div>
-                        </InfoWindow>
+                        </InfoWindowF>
                       )}
-                      <Circle center={workPos} radius={radiusMeters} options={{
+                      <CircleF center={workPos} radius={radiusMeters} options={{
                         strokeColor: lost ? 'gray' : within ? 'green' : 'red',
                         fillColor: lost ? 'gray' : within ? 'green' : 'red',
                         fillOpacity: 0.1,
@@ -261,12 +261,12 @@ export default function GoogleMapsLiveTracking({ apiKey }: GoogleMapsLiveTrackin
                       }} />
                       {tracking && tracking.latitude && tracking.longitude && (
                         <>
-                          <Marker position={{ lat: Number(tracking.latitude), lng: Number(tracking.longitude) }} icon={{
+                          <MarkerF position={{ lat: Number(tracking.latitude), lng: Number(tracking.longitude) }} icon={{
                             url: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
                             scaledSize: new google.maps.Size(25, 41),
                             anchor: new google.maps.Point(12, 41),
                           }} />
-                          <Polyline path={[workPos, { lat: Number(tracking.latitude), lng: Number(tracking.longitude) }]} options={{
+                          <PolylineF path={[workPos, { lat: Number(tracking.latitude), lng: Number(tracking.longitude) }]} options={{
                             strokeColor: lost ? '#9ca3af' : within ? '#4ade80' : '#ef4444',
                             strokeWeight: 2,
                             strokeOpacity: 0.7,

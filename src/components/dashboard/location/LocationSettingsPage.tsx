@@ -84,7 +84,6 @@ export default function LocationSettingsPage() {
     live_tracking_enabled: true,
     radius_monitoring_enabled: true,
     work_event_notifications_enabled: true,
-    work_event_notifications_enabled: true,
     violation_notifications_enabled: true,
     journey_tracking_interval_mins: 5,
     work_radius_tracking_interval_mins: 15,

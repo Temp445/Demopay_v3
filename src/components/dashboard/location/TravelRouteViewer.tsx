@@ -16,28 +16,35 @@ import {
 } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { X, Navigation, Clock, Ruler, Gauge, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Navigation, Clock, Ruler, Gauge, Maximize2, Minimize2, MapPin } from 'lucide-react';
 import { getTravelLogs, TravelBreadcrumb, classifySpeed } from '../../../lib/travelTrackingService';
 import { useSettingsStore } from '../../../stores/settingsStore';
-import { GoogleMap, Marker as GoogleMarker, Polyline as GooglePolyline, useJsApiLoader } from '@react-google-maps/api';
+import { supabase } from '../../../lib/supabase';
+import { GoogleMap, MarkerF as GoogleMarker, PolylineF as GooglePolyline, DirectionsRenderer, useJsApiLoader } from '@react-google-maps/api';
 import MapLibre3DViewer, { Map3DMarker, Map3DRoute } from './MapLibre3DViewer';
 
 const libraries: ('places' | 'geocoding')[] = ['places', 'geocoding'];
 
-// --- Custom icons ---
-const startIcon = L.divIcon({
-  className: '',
-  html: `<div style="background:#16a34a;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>`,
-  iconSize: [14, 14],
-  iconAnchor: [7, 7],
+// Helper to generate modern SVG map pins for Google Maps
+const getPinIcon = (color: string, googleObj: any) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="${color}"><path d="M12 0C7.58 0 4 3.58 4 8c0 5.25 8 16 8 16s8-10.75 8-16c0-4.42-3.58-8-8-8z"></path><circle cx="12" cy="8" r="3" fill="white"></circle></svg>`;
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: googleObj ? new googleObj.maps.Size(32, 32) : null,
+    anchor: googleObj ? new googleObj.maps.Point(16, 32) : null
+  };
+};
+
+const getLeafletPinIcon = (color: string) => L.divIcon({
+  className: 'bg-transparent border-none',
+  html: `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="${color}"><path d="M12 0C7.58 0 4 3.58 4 8c0 5.25 8 16 8 16s8-10.75 8-16c0-4.42-3.58-8-8-8z"></path><circle cx="12" cy="8" r="3" fill="white"></circle></svg>`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 32],
+  tooltipAnchor: [0, -32],
 });
 
-const endIcon = L.divIcon({
-  className: '',
-  html: `<div style="background:#dc2626;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>`,
-  iconSize: [14, 14],
-  iconAnchor: [7, 7],
-});
+const startIcon = getLeafletPinIcon('#16a34a');
+const endIcon = getLeafletPinIcon('#dc2626');
 
 // Fit map to all breadcrumb bounds
 function FitBounds({ coords }: { coords: [number, number][] }) {
@@ -56,6 +63,10 @@ interface TravelRouteViewerProps {
   employeeName: string;
   clockInTime: string;
   clockOutTime?: string;
+  clockInLat?: number | null;
+  clockInLng?: number | null;
+  clockOutLat?: number | null;
+  clockOutLng?: number | null;
   totalDistanceMeters?: number;
   totalDurationSeconds?: number;
   onClose: () => void;
@@ -78,6 +89,10 @@ export default function TravelRouteViewer({
   employeeName,
   clockInTime,
   clockOutTime,
+  clockInLat,
+  clockInLng,
+  clockOutLat,
+  clockOutLng,
   totalDistanceMeters = 0,
   totalDurationSeconds = 0,
   onClose,
@@ -87,6 +102,7 @@ export default function TravelRouteViewer({
   const [showLabels, setShowLabels] = useState(true);
   const [mapType, setMapType] = useState<'map' | 'satellite' | '3d'>('map');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [directionsResponse, setDirectionsResponse] = useState<google.maps.DirectionsResult | null>(null);
   const { companySettings } = useSettingsStore();
 
   const isGoogleEnabled = companySettings?.google_maps_enabled && companySettings?.google_maps_api_key;
@@ -96,16 +112,165 @@ export default function TravelRouteViewer({
   });
 
   useEffect(() => {
-    getTravelLogs(timestampId).then(data => {
-      setLogs(data);
-      setLoading(false);
-    });
-  }, [timestampId]);
+    let active = true;
+    
+    async function loadData() {
+      try {
+        const data = await getTravelLogs(timestampId);
+        if (!active) return;
+        
+        let finalLogs = [...data];
+        let finalClockInLat = clockInLat;
+        let finalClockInLng = clockInLng;
+        let finalClockOutLat = clockOutLat;
+        let finalClockOutLng = clockOutLng;
+        let empId: string | null = null;
+
+        // Fallback: fetch Clock In coordinates if missing
+        if (finalClockInLat == null || finalClockInLng == null) {
+          const { data: tsData } = await supabase
+            .from('attendance_timestamp')
+            .select('latitude, longitude, employee_id')
+            .eq('id', timestampId)
+            .single();
+            
+          if (tsData) {
+            if (tsData.latitude != null) finalClockInLat = tsData.latitude;
+            if (tsData.longitude != null) finalClockInLng = tsData.longitude;
+            empId = tsData.employee_id;
+          }
+        }
+
+        // Fallback: fetch Clock Out coordinates if missing
+        if (clockOutTime && (finalClockOutLat == null || finalClockOutLng == null) && empId) {
+          const { data: outTsData } = await supabase
+            .from('attendance_timestamp')
+            .select('latitude, longitude')
+            .eq('employee_id', empId)
+            .eq('entry', 'OUT')
+            .eq('timestamp', clockOutTime)
+            .single();
+            
+          if (outTsData) {
+            if (outTsData.latitude != null) finalClockOutLat = outTsData.latitude;
+            if (outTsData.longitude != null) finalClockOutLng = outTsData.longitude;
+          }
+        }
+
+        if (finalClockInLat != null && finalClockInLng != null) {
+          const hasStart = finalLogs.length > 0 && Math.abs(new Date(finalLogs[0].recorded_at).getTime() - new Date(clockInTime).getTime()) < 60000;
+          if (!hasStart) {
+            finalLogs.unshift({
+              id: 'synthetic-in',
+              start_timestamp_id: timestampId,
+              latitude: finalClockInLat,
+              longitude: finalClockInLng,
+              cumulative_distance_meters: 0,
+              recorded_at: clockInTime,
+              speed_ms: null,
+              accuracy: null,
+              created_at: clockInTime
+            } as any);
+          }
+        }
+
+        if (clockOutTime && finalClockOutLat != null && finalClockOutLng != null) {
+          const hasEnd = finalLogs.length > 0 && Math.abs(new Date(finalLogs[finalLogs.length - 1].recorded_at).getTime() - new Date(clockOutTime).getTime()) < 60000;
+          if (!hasEnd) {
+            finalLogs.push({
+              id: 'synthetic-out',
+              start_timestamp_id: timestampId,
+              latitude: finalClockOutLat,
+              longitude: finalClockOutLng,
+              cumulative_distance_meters: totalDistanceMeters || 0,
+              recorded_at: clockOutTime,
+              speed_ms: null,
+              accuracy: null,
+              created_at: clockOutTime
+            } as any);
+          }
+        }
+
+        setLogs(finalLogs);
+        setLoading(false);
+      } catch (err) {
+        console.error('Failed to load travel route:', err);
+        if (active) setLoading(false);
+      }
+    }
+    
+    loadData();
+    return () => { active = false; };
+  }, [timestampId, clockInTime, clockOutTime, clockInLat, clockInLng, clockOutLat, clockOutLng, totalDistanceMeters]);
 
   const coords: [number, number][] = logs.map(l => [l.latitude, l.longitude]);
 
-  const avgSpeedKmh = totalDurationSeconds > 0
-    ? ((totalDistanceMeters / 1000) / (totalDurationSeconds / 3600)).toFixed(1)
+  const getLogLabel = (index: number) => {
+    if (logs.length === 1) {
+      const logTime = new Date(logs[0].recorded_at).getTime();
+      const inTime = new Date(clockInTime).getTime();
+      if (clockOutTime) {
+        const outTime = new Date(clockOutTime).getTime();
+        // If it's closer to clockOut time than clockIn time
+        if (Math.abs(logTime - outTime) < Math.abs(logTime - inTime)) {
+          return 'Clock Out';
+        }
+      }
+      return 'Clock In';
+    }
+    if (index === 0) return 'Clock In';
+    if (index === logs.length - 1) return clockOutTime ? 'Clock Out' : 'Current Location';
+    return 'Checkpoint';
+  };
+
+  useEffect(() => {
+    if (isGoogleEnabled && companySettings?.enable_directions_api && isLoaded && coords.length >= 2) {
+      const directionsService = new window.google.maps.DirectionsService();
+      
+      const origin = { lat: coords[0][0], lng: coords[0][1] };
+      const destination = { lat: coords[coords.length - 1][0], lng: coords[coords.length - 1][1] };
+      
+      // Google Directions allows max 25 waypoints (including origin/destination).
+      // We downsample the middle breadcrumbs to max 23 waypoints.
+      let waypointsCoords = coords.slice(1, coords.length - 1);
+      if (waypointsCoords.length > 23) {
+        const step = Math.ceil(waypointsCoords.length / 23);
+        waypointsCoords = waypointsCoords.filter((_, index) => index % step === 0).slice(0, 23);
+      }
+      
+      const waypoints = waypointsCoords.map(c => ({
+        location: { lat: c[0], lng: c[1] },
+        stopover: false
+      }));
+
+      directionsService.route(
+        {
+          origin,
+          destination,
+          waypoints,
+          travelMode: window.google.maps.TravelMode.DRIVING,
+        },
+        (result, status) => {
+          if (status === window.google.maps.DirectionsStatus.OK) {
+            setDirectionsResponse(result);
+          } else {
+            console.error('[Directions API] Error fetching route:', status);
+          }
+        }
+      );
+    }
+  }, [isLoaded, coords.length, companySettings?.enable_directions_api, isGoogleEnabled]);
+
+  const effectiveDurationSeconds = totalDurationSeconds > 0 
+    ? totalDurationSeconds 
+    : (clockOutTime ? Math.floor((new Date(clockOutTime).getTime() - new Date(clockInTime).getTime()) / 1000) : 0);
+
+  const effectiveDistanceMeters = totalDistanceMeters > 0 
+    ? totalDistanceMeters 
+    : (logs.length > 0 ? logs[logs.length - 1].cumulative_distance_meters || 0 : 0);
+
+  const avgSpeedKmh = effectiveDurationSeconds > 0
+    ? ((effectiveDistanceMeters / 1000) / (effectiveDurationSeconds / 3600)).toFixed(1)
     : '0.0';
 
   const maxSpeedKmh = logs.length > 0
@@ -154,14 +319,14 @@ export default function TravelRouteViewer({
             <Ruler className="h-4 w-4 text-indigo-500 flex-shrink-0" />
             <div>
               <p className="text-[10px] text-gray-500 uppercase tracking-wide">Total Distance</p>
-              <p className="text-sm font-bold text-gray-900">{formatDistance(totalDistanceMeters)}</p>
+              <p className="text-sm font-bold text-gray-900">{formatDistance(effectiveDistanceMeters)}</p>
             </div>
           </div>
           <div className="bg-white px-4 py-3 flex items-center gap-3">
             <Clock className="h-4 w-4 text-indigo-500 flex-shrink-0" />
             <div>
               <p className="text-[10px] text-gray-500 uppercase tracking-wide">Duration</p>
-              <p className="text-sm font-bold text-gray-900">{formatDuration(totalDurationSeconds)}</p>
+              <p className="text-sm font-bold text-gray-900">{formatDuration(effectiveDurationSeconds)}</p>
             </div>
           </div>
           <div className="bg-white px-4 py-3 flex items-center gap-3">
@@ -186,29 +351,31 @@ export default function TravelRouteViewer({
         <div className={`flex flex-col md:flex-row ${isFullscreen ? 'flex-1 min-h-0' : 'h-[500px]'}`}>
           {/* Map */}
           <div className="w-full md:flex-1 h-[300px] md:h-full relative bg-gray-50 border-b md:border-b-0 md:border-r border-gray-100 flex flex-col">
-            <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-[1000] flex bg-white rounded-md shadow-md border border-gray-300 overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setMapType('map')}
-                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === 'map' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-              >
-                Map
-              </button>
-              <button
-                type="button"
-                onClick={() => setMapType('satellite')}
-                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === 'satellite' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-              >
-                Satellite
-              </button>
-              <button
-                type="button"
-                onClick={() => setMapType('3d')}
-                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === '3d' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-              >
-                3D
-              </button>
-            </div>
+            {!isGoogleEnabled && (
+              <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-[1000] flex bg-white rounded-md shadow-md border border-gray-300 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setMapType('map')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === 'map' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                >
+                  Map
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMapType('satellite')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === 'satellite' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                >
+                  Satellite
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMapType('3d')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors ${mapType === '3d' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                >
+                  3D
+                </button>
+              </div>
+            )}
 
             <div className="flex-1 w-full h-full relative">
             {loading ? (
@@ -227,14 +394,14 @@ export default function TravelRouteViewer({
                   ...(coords.length > 0 ? [{
                     lat: coords[0][0],
                     lng: coords[0][1],
-                    color: '#16a34a',
-                    popupHTML: `<div class="font-bold text-green-700">Clock In</div><div class="text-xs">${new Date(logs[0].recorded_at).toLocaleString()}</div>`
+                    color: getLogLabel(0) === 'Clock Out' ? '#dc2626' : '#16a34a',
+                    popupHTML: `<div class="font-bold ${getLogLabel(0) === 'Clock Out' ? 'text-red-700' : 'text-green-700'}">${getLogLabel(0)}</div><div class="text-xs">${new Date(logs[0].recorded_at).toLocaleString()}</div>`
                   }] : []),
                   ...(coords.length > 1 ? [{
                     lat: coords[coords.length - 1][0],
                     lng: coords[coords.length - 1][1],
                     color: '#dc2626',
-                    popupHTML: `<div class="font-bold text-red-700">${clockOutTime ? 'Clock Out' : 'Current Location'}</div><div class="text-xs">${new Date(logs[logs.length - 1].recorded_at).toLocaleString()}</div>`
+                    popupHTML: `<div class="font-bold text-red-700">${getLogLabel(coords.length - 1)}</div><div class="text-xs">${new Date(logs[logs.length - 1].recorded_at).toLocaleString()}</div>`
                   }] : [])
                 ]}
                 height="100%"
@@ -244,10 +411,10 @@ export default function TravelRouteViewer({
                 mapContainerStyle={{ width: '100%', height: '100%' }}
                 options={{
                   disableDefaultUI: false,
-                  mapTypeControl: false,
+                  mapTypeControl: true,
+                  mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
                   streetViewControl: false,
-                  fullscreenControl: false,
-                  mapTypeId: mapType === 'satellite' ? 'satellite' : 'roadmap',
+                  fullscreenControl: true,
                 }}
                 onLoad={(map) => {
                   if (coords.length > 0) {
@@ -262,10 +429,18 @@ export default function TravelRouteViewer({
                   options={{ strokeColor: '#4f46e5', strokeWeight: 4, strokeOpacity: 0.85 }}
                 />
                 
-                <GoogleMarker position={{ lat: coords[0][0], lng: coords[0][1] }} />
+                <GoogleMarker 
+                  position={{ lat: coords[0][0], lng: coords[0][1] }} 
+                  icon={getPinIcon(getLogLabel(0) === 'Clock Out' ? '#dc2626' : '#16a34a', window.google)}
+                  title={showLabels ? `${getLogLabel(0)} · ${new Date(logs[0].recorded_at).toLocaleString()}` : getLogLabel(0)}
+                />
                 
                 {coords.length > 1 && (
-                  <GoogleMarker position={{ lat: coords[coords.length - 1][0], lng: coords[coords.length - 1][1] }} />
+                  <GoogleMarker 
+                    position={{ lat: coords[coords.length - 1][0], lng: coords[coords.length - 1][1] }} 
+                    icon={getPinIcon('#dc2626', window.google)}
+                    title={showLabels ? `${getLogLabel(coords.length - 1)} · ${new Date(logs[logs.length - 1].recorded_at).toLocaleString()}` : getLogLabel(coords.length - 1)}
+                  />
                 )}
               </GoogleMap>
             ) : (
@@ -299,26 +474,22 @@ export default function TravelRouteViewer({
                 />
 
                 {/* Start marker */}
-                <Marker position={coords[0]} icon={startIcon}>
-                  {showLabels && (
-                    <Tooltip permanent direction="top" offset={[0, -10]}>
-                      <span className="text-xs font-semibold text-green-700">
-                        Clock In · {new Date(logs[0].recorded_at).toLocaleString()}
-                      </span>
-                    </Tooltip>
-                  )}
+                <Marker position={coords[0]} icon={getLogLabel(0) === 'Clock Out' ? endIcon : startIcon}>
+                  <Tooltip direction="top" offset={[0, -10]}>
+                    <span className={`text-xs font-semibold ${getLogLabel(0) === 'Clock Out' ? 'text-red-700' : 'text-green-700'}`}>
+                      {getLogLabel(0)} · {new Date(logs[0].recorded_at).toLocaleString()}
+                    </span>
+                  </Tooltip>
                 </Marker>
 
                 {/* End marker */}
                 {coords.length > 1 && (
                   <Marker position={coords[coords.length - 1]} icon={endIcon}>
-                    {showLabels && (
-                      <Tooltip permanent direction="top" offset={[0, -10]}>
-                        <span className="text-xs font-semibold text-red-700">
-                          {clockOutTime ? 'Clock Out' : 'Current Location'} · {new Date(logs[logs.length - 1].recorded_at).toLocaleString()}
-                        </span>
-                      </Tooltip>
-                    )}
+                    <Tooltip direction="top" offset={[0, -10]}>
+                      <span className="text-xs font-semibold text-red-700">
+                        {getLogLabel(coords.length - 1)} · {new Date(logs[logs.length - 1].recorded_at).toLocaleString()}
+                      </span>
+                    </Tooltip>
                   </Marker>
                 )}
               </MapContainer>
@@ -336,10 +507,11 @@ export default function TravelRouteViewer({
             </div>
             <div className="p-4 overflow-y-auto flex-1 space-y-4">
               {logs.map((log, index) => {
+                const label = getLogLabel(index);
                 const state = classifySpeed(log.speed_ms);
                 const dotColor =
-                  index === 0 ? 'bg-green-500' :
-                  index === logs.length - 1 ? 'bg-red-500' :
+                  label === 'Clock In' ? 'bg-green-500' :
+                  label === 'Clock Out' || label === 'Current Location' ? 'bg-red-500' :
                   state === 'driving' ? 'bg-blue-500' :
                   state === 'walking' ? 'bg-yellow-400' :
                   'bg-indigo-400';
@@ -352,12 +524,18 @@ export default function TravelRouteViewer({
                 return (
                   <div key={index} className="flex gap-3">
                     <div className="flex flex-col items-center mt-1">
-                      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotColor}`}></div>
+                      {label === 'Clock In' || label === 'Clock Out' || label === 'Current Location' ? (
+                        <div className={`p-1 rounded-full shrink-0 ${label === 'Clock In' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                          <MapPin className="w-3 h-3" />
+                        </div>
+                      ) : (
+                        <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotColor}`}></div>
+                      )}
                       {index !== logs.length - 1 && <div className="w-0.5 h-full bg-gray-200 my-1"></div>}
                     </div>
                     <div className="pb-2">
                       <p className="text-xs font-medium text-gray-900 leading-tight">
-                        {index === 0 ? 'Clock In' : index === logs.length - 1 ? (clockOutTime ? 'Clock Out' : 'Current Location') : 'Checkpoint'}
+                        {label}
                       </p>
                       <p className="text-[10px] text-gray-500 mt-0.5">{new Date(log.recorded_at).toLocaleString()}</p>
                       <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
@@ -382,16 +560,7 @@ export default function TravelRouteViewer({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-gray-100 text-xs text-gray-500 flex justify-between items-center bg-gray-50">
-          <label className="flex items-center space-x-2 cursor-pointer">
-            <input 
-              type="checkbox" 
-              checked={showLabels}
-              onChange={(e) => setShowLabels(e.target.checked)}
-              className="rounded text-indigo-600 focus:ring-indigo-500 border-gray-300 h-4 w-4"
-            />
-            <span className="font-medium text-gray-700">Show Map Labels</span>
-          </label>
+        <div className="px-5 py-3 border-t border-gray-100 text-xs text-gray-500 flex justify-end items-center bg-gray-50">
           <span>Route shown on Google Maps</span>
         </div>
       </div>

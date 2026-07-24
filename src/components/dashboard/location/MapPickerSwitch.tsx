@@ -26,7 +26,11 @@ export default function MapPickerSwitch(props: MapPickerSwitchProps) {
   const { companySettings } = useSettingsStore();
 
   if (companySettings?.google_maps_enabled && companySettings?.google_maps_api_key) {
-    return <GoogleMapsMapPicker apiKey={companySettings.google_maps_api_key} {...props} />;
+    return <GoogleMapsMapPicker 
+      apiKey={companySettings.google_maps_api_key} 
+      {...props} 
+      showSearch={props.showSearch !== false && !!companySettings.enable_places_api}
+    />;
   }
 
   return <LocationMapPicker {...props} />;

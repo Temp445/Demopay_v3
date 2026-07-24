@@ -141,13 +141,13 @@ export default function LocationMapViewer({
             {latitude.toFixed(6)}, {longitude.toFixed(6)}
           </p>
         </div>
-        <button
+        {/* <button
           onClick={openInGoogleMaps}
           className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 text-sm"
         >
           <NavigationIcon className="h-4 w-4" />
           {showNavigation ? 'Get Directions' : 'Open in Maps'}
-        </button>
+        </button> */}
       </div>
 
       <div className="relative border border-gray-300 rounded-lg overflow-hidden" style={{ height }}>

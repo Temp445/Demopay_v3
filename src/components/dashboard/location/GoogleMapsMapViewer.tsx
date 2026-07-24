@@ -1,5 +1,5 @@
 import { useRef, useCallback } from 'react';
-import { GoogleMap, Marker, Polyline, Circle, useJsApiLoader, InfoWindow } from '@react-google-maps/api';
+import { GoogleMap, MarkerF, PolylineF, CircleF, useJsApiLoader, InfoWindowF } from '@react-google-maps/api';
 import { MapPin, Navigation as NavigationIcon } from 'lucide-react';
 import { useState } from 'react';
 
@@ -85,13 +85,13 @@ export default function GoogleMapsMapViewer({
             {latitude.toFixed(6)}, {longitude.toFixed(6)}
           </p>
         </div>
-        <button
+        {/* <button
           onClick={openInGoogleMaps}
           className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 text-sm"
         >
           <NavigationIcon className="h-4 w-4" />
           {showNavigation ? 'Get Directions' : 'Open in Maps'}
-        </button>
+        </button> */}
       </div>
 
       <div className="border border-gray-300 rounded-lg overflow-hidden" style={{ height }}>
@@ -102,11 +102,12 @@ export default function GoogleMapsMapViewer({
           onLoad={onMapLoad}
           options={{
             streetViewControl: false,
-            fullscreenControl: false,
+            fullscreenControl: true,
             mapTypeControl: true,
+            mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
           }}
         >
-          <Marker
+          <MarkerF
             position={center}
             onClick={() => setShowInfo(true)}
             icon={{
@@ -117,7 +118,7 @@ export default function GoogleMapsMapViewer({
           />
 
           {showInfo && (
-            <InfoWindow position={center} onCloseClick={() => setShowInfo(false)}>
+            <InfoWindowF position={center} onCloseClick={() => setShowInfo(false)}>
               <div className="text-sm">
                 <div className="font-semibold mb-1">{locationName}</div>
                 {address && <div className="text-gray-600 mb-1">{address}</div>}
@@ -125,11 +126,11 @@ export default function GoogleMapsMapViewer({
                   Destination: {latitude.toFixed(6)}, {longitude.toFixed(6)}
                 </div>
               </div>
-            </InfoWindow>
+            </InfoWindowF>
           )}
 
           {radius && (
-            <Circle
+            <CircleF
               center={center}
               radius={radius}
               options={{
@@ -143,7 +144,7 @@ export default function GoogleMapsMapViewer({
 
           {showNavigation && currentPosition && (
             <>
-              <Marker
+              <MarkerF
                 position={currentPosition}
                 icon={{
                   url: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
@@ -151,7 +152,7 @@ export default function GoogleMapsMapViewer({
                   anchor: new google.maps.Point(12, 41),
                 }}
               />
-              <Polyline
+              <PolylineF
                 path={[currentPosition, center]}
                 options={{
                   strokeColor: '#3B82F6',

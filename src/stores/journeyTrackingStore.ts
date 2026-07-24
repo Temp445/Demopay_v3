@@ -173,9 +173,33 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
         }
         
         const position = manualPosition || await gpsTrackingService.getCurrentPosition();
+        
+        // --- STATIONARY FILTER (Time AND Distance) ---
+        const lsStore = useLocationSettingsStore.getState();
+        const settings = lsStore.settings;
+        
+        const threshold = (step === 'WORKING' || step === 'PAUSED') 
+               ? settings.work_radius_minimum_movement_threshold_meters 
+               : settings.minimum_movement_threshold_meters;
+               
+        const lastPos = get().lastKnownPosition;
+        if (lastPos) {
+           const distanceMoved = gpsTrackingService.calculateDistance(
+               lastPos.latitude, lastPos.longitude, position.latitude, position.longitude
+           );
+           
+           // If they haven't moved enough, we abort the ping to save DB space and battery.
+           // The timer (lastLogTime) was already reset by the caller, so we'll check again next interval.
+           if (distanceMoved < threshold) {
+               console.log(`[JourneyTracking] Stationary filter: skipped point (moved ${distanceMoved.toFixed(1)}m < threshold ${threshold}m).`);
+               return; 
+           }
+        }
+        // ---------------------------------------------
+
         const battery = await gpsTrackingService.getBatteryLevel();
         
-        // Cache the last known position for offline fallback
+        // Cache the last known position for offline fallback (and future distance calculations)
         set({ lastKnownPosition: position });
         
         await workLocationLib.logJourneyEvent(
@@ -210,7 +234,7 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
 
                 if (pEvent === 'LIVE_TRACK_WORK') {
                     const distance = gpsTrackingService.calculateDistance(position.latitude, position.longitude, loc.latitude, loc.longitude);
-                    if (distance > loc.allowed_radius_meters) {
+                    if (distance > loc.radius) {
                         toast.error('Warning: You have left the assigned work area!', { duration: 8000 });
                     }
                 }

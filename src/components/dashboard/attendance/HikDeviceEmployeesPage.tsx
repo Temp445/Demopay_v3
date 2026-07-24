@@ -32,7 +32,7 @@ export default function HikDeviceEmployeesPage() {
         .from('hik_device_settings')
         .select('id, device_name, is_enabled')
         .eq('tenant_id', tenantId)
-        .order('updated_at', { ascending: true });
+        .order('device_name', { ascending: true });
       
       if (data && data.length > 0) {
         setDevices(data);

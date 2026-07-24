@@ -17,6 +17,9 @@ export interface OutsideOfficeApproval {
   reject_reason?: string | null;
   created_at: string;
   updated_at: string;
+  distance_meters?: number | null;
+  travel_allowance_amount?: number | null;
+  travel_allowance_unit?: string | null;
   // Joined fields
   employee_name?: string;
   employee_code?: string;
@@ -38,7 +41,7 @@ interface OutsideOfficeApprovalsStore {
     attendanceLocation?: string;
   }) => Promise<OutsideOfficeApproval | null>;
   submitReason: (id: string, reason: string) => Promise<void>;
-  approve: (id: string, userId: string) => Promise<void>;
+  approve: (id: string, userId: string, distanceMeters?: number, allowanceAmount?: number, allowanceUnit?: string) => Promise<void>;
   reject: (id: string, userId: string, rejectReason?: string) => Promise<void>;
   updateClockOut: (employeeId: string, date: string, clockOutTime: string) => Promise<void>;
   updateInsideOfficeClockIn: (employeeId: string, date: string, time: string) => Promise<void>;
@@ -136,7 +139,7 @@ export const useOutsideOfficeApprovalsStore = create<OutsideOfficeApprovalsStore
     if (error) throw error;
   },
 
-  approve: async (id, userId) => {
+  approve: async (id, userId, distanceMeters, allowanceAmount, allowanceUnit) => {
     const { error } = await supabase
       .from('outside_office_approvals')
       .update({
@@ -144,12 +147,22 @@ export const useOutsideOfficeApprovalsStore = create<OutsideOfficeApprovalsStore
         reviewed_by: userId,
         reviewed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        ...(distanceMeters !== undefined && { distance_meters: distanceMeters }),
+        ...(allowanceAmount !== undefined && { travel_allowance_amount: allowanceAmount }),
+        ...(allowanceUnit !== undefined && { travel_allowance_unit: allowanceUnit }),
       })
       .eq('id', id);
     if (error) throw error;
     set(state => ({
       items: state.items.map(item =>
-        item.id === id ? { ...item, status: 'approved', reviewed_at: new Date().toISOString() } : item
+        item.id === id ? { 
+          ...item, 
+          status: 'approved', 
+          reviewed_at: new Date().toISOString(),
+          distance_meters: distanceMeters,
+          travel_allowance_amount: allowanceAmount,
+          travel_allowance_unit: allowanceUnit 
+        } : item
       ),
     }));
   },

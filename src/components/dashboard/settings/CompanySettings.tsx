@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Building2, MapPin,ScanFace , CreditCard, Calendar, Users, FileText, Workflow, Shield, Loader2, AlertCircle, ToggleRight, ToggleLeft } from 'lucide-react';
+import { Building2, MapPin,ScanFace , CreditCard, Calendar, Users, FileText, Workflow, Shield, Loader2, AlertCircle, ToggleRight, ToggleLeft, Eye, EyeOff, CheckCircle2, Play } from 'lucide-react';
 import { useSettingsStore, type CompanySettings as CompanySettingsType, type CompanyStatutorySettings } from '../../../stores/settingsStore';
 import toast from 'react-hot-toast';
 import CompanyLocations from './CompanyLocations';
@@ -7,6 +7,10 @@ import CompanyLocations from './CompanyLocations';
 
 export default function CompanySettings() {
   const [activeSubTab, setActiveSubTab] = useState<'general' | 'locations' | 'integrations'>('general');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [isTestingApiKey, setIsTestingApiKey] = useState(false);
+  const [apiKeyTestResult, setApiKeyTestResult] = useState<'success' | 'error' | null>(null);
+  const [apiKeyErrorMessage, setApiKeyErrorMessage] = useState('');
   const {
     companySettings,
     companyStatutorySettings,
@@ -65,6 +69,10 @@ export default function CompanySettings() {
     // Map Settings
     googleMapsEnabled: false,
     googleMapsApiKey: '',
+    enableDirectionsApi: false,
+    enableDistanceMatrixApi: false,
+    enablePlacesApi: false,
+    enableRouteOptimizationApi: false,
   });
 
   // Statutory Elements state
@@ -123,6 +131,9 @@ export default function CompanySettings() {
         enableSendPayslipOnMarkPaid: (companySettings as any).enable_send_payslip_on_mark_paid ?? false,
         googleMapsEnabled: companySettings.google_maps_enabled ?? false,
         googleMapsApiKey: companySettings.google_maps_api_key ?? '',
+        enableDirectionsApi: companySettings.enable_directions_api ?? false,
+        enableDistanceMatrixApi: companySettings.enable_distance_matrix_api ?? false,
+        enablePlacesApi: companySettings.enable_places_api ?? false,
       });
     }
   }, [companySettings]);
@@ -211,6 +222,38 @@ export default function CompanySettings() {
     return Object.keys(errors).length === 0;
   };
 
+  const handleTestApiKey = async () => {
+    if (!formData.googleMapsApiKey) {
+      toast.error("Please enter an API key first");
+      return;
+    }
+    
+    setIsTestingApiKey(true);
+    setApiKeyTestResult(null);
+    setApiKeyErrorMessage('');
+
+    try {
+      const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=New+York&key=${formData.googleMapsApiKey}`);
+      const data = await response.json();
+      
+      if (data.status === 'OK' || data.status === 'ZERO_RESULTS') {
+        setApiKeyTestResult('success');
+        toast.success("API Key is valid and working!");
+      } else if (data.status === 'REQUEST_DENIED') {
+        setApiKeyTestResult('error');
+        setApiKeyErrorMessage(data.error_message || "Request Denied. Check billing or restrictions.");
+      } else {
+        setApiKeyTestResult('error');
+        setApiKeyErrorMessage(`Status: ${data.status}. ${data.error_message || ''}`);
+      }
+    } catch (err: any) {
+      setApiKeyTestResult('error');
+      setApiKeyErrorMessage(err.message || "Network error while testing API key");
+    } finally {
+      setIsTestingApiKey(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -245,7 +288,10 @@ export default function CompanySettings() {
         biometric_cooldown_minutes: formData.biometricCooldownMinutes,
         enable_send_payslip_on_mark_paid: formData.enableSendPayslipOnMarkPaid,
         google_maps_enabled: formData.googleMapsEnabled,
-        google_maps_api_key: formData.googleMapsApiKey ? formData.googleMapsApiKey.trim() : null
+        google_maps_api_key: formData.googleMapsApiKey ? formData.googleMapsApiKey.trim() : null,
+        enable_directions_api: formData.enableDirectionsApi,
+        enable_distance_matrix_api: formData.enableDistanceMatrixApi,
+        enable_places_api: formData.enablePlacesApi,
       };
 
       await saveCompanySettings(settingsToSave);
@@ -303,8 +349,8 @@ export default function CompanySettings() {
 
   return (
     <div className='bg-white p-6 rounded-lg shadow'>
-      <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex space-x-8">
+      <div className="border-b border-gray-200 mb-6 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+        <nav className="-mb-px flex space-x-4 sm:space-x-8 min-w-max px-1">
           <button
             type="button"
             onClick={() => setActiveSubTab('general')}
@@ -1188,12 +1234,6 @@ export default function CompanySettings() {
       ) : activeSubTab === 'locations' ? (
         <CompanyLocations />
       ) : activeSubTab === 'integrations' ? (
-        <>
-          <h2 className="text-lg font-medium text-gray-900">Integrations & Maps</h2>
-          <p className="mt-1 text-sm text-gray-500">
-            Configure third-party integrations and mapping services.
-          </p>
-
           <form onSubmit={handleSubmit} className="mt-6 space-y-8">
             <div>
               <h3 className="text-md font-medium text-gray-900 flex items-center">
@@ -1204,7 +1244,7 @@ export default function CompanySettings() {
                 Switch between OpenStreetMap and Google Maps for location features.
               </p>
 
-              <div className="bg-white border rounded-lg p-5">
+              <div className="bg-white rounded-lg md:p-5">
                 <div className="flex items-center justify-between">
                   <div>
                     <h4 className="text-sm font-medium text-gray-900">Enable Google Maps</h4>
@@ -1228,19 +1268,153 @@ export default function CompanySettings() {
                     <label htmlFor="api-key" className="block text-sm font-medium text-gray-700">
                       Google Maps API Key
                     </label>
-                    <input
-                      type="text"
-                      id="api-key"
-                      className="mt-1 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
-                      value={formData.googleMapsApiKey}
-                      onChange={(e) => setFormData({ ...formData, googleMapsApiKey: e.target.value })}
-                      placeholder="AIzaSy..."
-                    />
-                  </div>
-                )}
-              </div>
+                    <div className="relative mt-1">
+                      <input
+                        type={showApiKey ? "text" : "password"}
+                        id="api-key"
+                        className="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md p-2 border pr-10"
+                        value={formData.googleMapsApiKey}
+                        onChange={(e) => setFormData({ ...formData, googleMapsApiKey: e.target.value })}
+                        placeholder="AIzaSy..."
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 focus:outline-none"
+                      >
+                        {showApiKey ? (
+                          <EyeOff className="h-5 w-5" aria-hidden="true" />
+                        ) : (
+                          <Eye className="h-5 w-5" aria-hidden="true" />
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="mt-4 p-3 bg-blue-50/50 border border-blue-100 rounded-md">
+                      <p className="text-xs text-blue-800 mb-2">
+                        <strong>Need an API Key?</strong> Get one from the <a href="https://console.cloud.google.com/google/maps-apis/credentials" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 underline">Google Cloud Console</a>.
+                      </p>
+                      <div className="text-xs text-blue-700">
+                        <p className="font-semibold mb-1">Make sure to enable these 5 APIs for your project:</p>
+                        <ul className="list-disc pl-4 space-y-0.5 ml-1">
+                          <li><strong>Maps JavaScript API</strong> (Required)</li>
+                          <li><strong>Geocoding API</strong> (Required)</li>
+                          <li><strong>Directions API</strong> (Optional - for curved roads & multi-stop routing)</li>
+                          <li><strong>Distance Matrix API</strong> (Optional - for exact travel allowance distances)</li>
+                          <li><strong>Places API (New)</strong> (Optional - for address auto-complete)</li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    {/* Test API Key Button */}
+                    <div className="mt-4 flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={handleTestApiKey}
+                        disabled={!formData.googleMapsApiKey || isTestingApiKey}
+                        className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 transition-colors"
+                      >
+                        {isTestingApiKey ? (
+                          <Loader2 className="h-4 w-4 mr-1.5 animate-spin text-gray-400" />
+                        ) : (
+                          <Play className="h-4 w-4 mr-1.5 text-indigo-500" />
+                        )}
+                        Test API Key
+                      </button>
+                      
+                      {apiKeyTestResult === 'success' && (
+                        <div className="flex items-center text-sm text-green-600 bg-green-50 px-2.5 py-1 rounded-md border border-green-100">
+                          <CheckCircle2 className="h-4 w-4 mr-1" />
+                          Valid & Working
+                        </div>
+                      )}
+                      
+                      {apiKeyTestResult === 'error' && (
+                        <div className="flex items-center text-sm text-red-600 bg-red-50 px-2.5 py-1 rounded-md border border-red-100 max-w-md">
+                          <AlertCircle className="h-4 w-4 mr-1 flex-shrink-0" />
+                          <span className="truncate" title={apiKeyErrorMessage}>{apiKeyErrorMessage}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {formData.googleMapsApiKey && (
+                      <div className="mt-8">
+                        <h4 className="text-sm font-medium text-gray-900 border-b border-gray-200 pb-2">API Cost Control & Fallbacks</h4>
+                        
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                          <div>
+                            <label className="text-sm font-medium text-gray-900">Directions API</label>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {formData.enableDirectionsApi 
+                                ? "Enabled: Draws exact road curves and powers the Multi-Stop Route Optimizer."
+                                : "Disabled: Falls back to straight-line drawing and manual routing."}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, enableDirectionsApi: !formData.enableDirectionsApi })}
+                            className="ml-4 flex-shrink-0 focus:outline-none"
+                          >
+                            {formData.enableDirectionsApi ? (
+                              <ToggleRight className="h-8 w-8 text-blue-600" />
+                            ) : (
+                              <ToggleLeft className="h-8 w-8 text-gray-400" />
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                          <div>
+                            <label className="text-sm font-medium text-gray-900">Distance Matrix API</label>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {formData.enableDistanceMatrixApi 
+                                ? "Enabled: Calculates exact road distance and traffic for Travel Allowance."
+                                : "Disabled: Falls back to Haversine straight-line distance."}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, enableDistanceMatrixApi: !formData.enableDistanceMatrixApi })}
+                            className="ml-4 flex-shrink-0 focus:outline-none"
+                          >
+                            {formData.enableDistanceMatrixApi ? (
+                              <ToggleRight className="h-8 w-8 text-blue-600" />
+                            ) : (
+                              <ToggleLeft className="h-8 w-8 text-gray-400" />
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                          <div>
+                            <label className="text-sm font-medium text-gray-900">Places API (New)</label>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {formData.enablePlacesApi 
+                                ? "Enabled: Uses Google Places for highly accurate Worksite creation."
+                                : "Disabled: Manual pin dropping on OSM map."}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, enablePlacesApi: !formData.enablePlacesApi })}
+                            className="ml-4 flex-shrink-0 focus:outline-none"
+                          >
+                            {formData.enablePlacesApi ? (
+                              <ToggleRight className="h-8 w-8 text-blue-600" />
+                            ) : (
+                              <ToggleLeft className="h-8 w-8 text-gray-400" />
+                            )}
+                          </button>
+                        </div>
+
+                        </div>
+                      </div>
+                  )}
+                </div>
+              )}
             </div>
-            
+          </div>  
             <div className="pt-5 border-t border-gray-200">
               <div className="flex justify-end">
                 <button
@@ -1253,7 +1427,6 @@ export default function CompanySettings() {
               </div>
             </div>
           </form>
-        </>
       ) : null}
     </div>
   );

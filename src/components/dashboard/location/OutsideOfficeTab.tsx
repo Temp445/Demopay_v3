@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
   CheckCircle, XCircle, Clock, MapPin, User, Calendar, Loader2, X,
-  FileText, CheckCircle2, AlertCircle, Building2, BadgeCheck, Ban, Search
+  FileText, CheckCircle2, AlertCircle, Building2, BadgeCheck, Ban, Search, Navigation
 } from 'lucide-react';
 import { useOutsideOfficeApprovalsStore, type OutsideOfficeApproval } from '../../../stores/outsideOfficeApprovalsStore';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -9,6 +9,8 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { supabase } from '../../../lib/supabase';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
+import OutsideOfficeApprovalModal from './OutsideOfficeApprovalModal';
+import TravelRouteViewer from './TravelRouteViewer';
 
 type TabType = 'pending' | 'approved' | 'rejected';
 
@@ -30,7 +32,7 @@ function StatusBadge({ status }: { status: OutsideOfficeApproval['status'] }) {
   );
 }
 
-export default function OutsideOfficeApprovalPage() {
+export default function OutsideOfficeTab() {
   const { currentTenant } = useTenant();
   const { user } = useAuth();
   const { items, loading, fetchAll, approve, reject } = useOutsideOfficeApprovalsStore();
@@ -38,11 +40,16 @@ export default function OutsideOfficeApprovalPage() {
   const [activeTab, setActiveTab] = useState<TabType>('pending');
   const [search, setSearch] = useState('');
   const [submitting, setSubmitting] = useState<string | null>(null);
+  const [viewingRoute, setViewingRoute] = useState<OutsideOfficeApproval | null>(null);
 
   // Reject modal state
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectTarget, setRejectTarget] = useState<OutsideOfficeApproval | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+
+  // Approve modal state
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [approvalTarget, setApprovalTarget] = useState<OutsideOfficeApproval | null>(null);
 
   useEffect(() => {
     if (currentTenant?.id) {
@@ -69,14 +76,22 @@ export default function OutsideOfficeApprovalPage() {
     rejected: items.filter(i => i.status === 'rejected').length,
   }), [items]);
 
-  const handleApprove = async (item: OutsideOfficeApproval) => {
+  const handleOpenApprove = (item: OutsideOfficeApproval) => {
+    setApprovalTarget(item);
+    setShowApprovalModal(true);
+  };
+
+  const handleApprove = async (id: string, distanceMeters: number, allowanceAmount: number, allowanceUnit: string) => {
     if (!user?.id) return;
-    setSubmitting(item.id);
+    setSubmitting(id);
     try {
-      await approve(item.id, user.id);
-      toast.success(`Approved ${item.employee_name}'s outside office request.`);
+      await approve(id, user.id, distanceMeters, allowanceAmount, allowanceUnit);
+      toast.success(`Outside office request approved successfully with travel allowance.`);
+      setShowApprovalModal(false);
+      setApprovalTarget(null);
     } catch (err: any) {
       toast.error(err.message || 'Failed to approve');
+      throw err;
     } finally {
       setSubmitting(null);
     }
@@ -110,11 +125,11 @@ export default function OutsideOfficeApprovalPage() {
   ];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Outside Office Approvals</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Remote Check-In Approvals</h1>
           <p className="text-sm text-gray-500 mt-0.5">Review and approve travel slips for employees who clocked in outside the office</p>
         </div>
         <div className="flex items-center gap-3">
@@ -135,13 +150,11 @@ export default function OutsideOfficeApprovalPage() {
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
-            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
-              activeTab === tab.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-            }`}
+            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${activeTab === tab.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+              }`}
           >
-            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
-              activeTab === tab.key ? 'bg-gray-100 text-gray-700' : 'bg-gray-200 text-gray-500'
-            }`}>{counts[tab.key]}</span>
+            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${activeTab === tab.key ? 'bg-gray-100 text-gray-700' : 'bg-gray-200 text-gray-500'
+              }`}>{counts[tab.key]}</span>
             {tab.label}
           </button>
         ))}
@@ -224,13 +237,7 @@ export default function OutsideOfficeApprovalPage() {
                             <span>{format(new Date(item.inside_office_clock_in_time), 'hh:mm a')}</span>
                           </div>
                         )}
-                        {item.attendance_location && (
-                          <div className="flex items-start gap-1.5 text-gray-600 sm:col-span-2 lg:col-span-3">
-                            <MapPin className="h-3.5 w-3.5 text-gray-400 flex-shrink-0 mt-0.5" />
-                            <span className="font-medium flex-shrink-0">Location:</span>
-                            <span className="truncate">{item.attendance_location}</span>
-                          </div>
-                        )}
+
                       </div>
 
                       {/* Reason */}
@@ -249,6 +256,24 @@ export default function OutsideOfficeApprovalPage() {
                         </div>
                       )}
 
+                      {/* Display Allowance if approved */}
+                      {item.status === 'approved' && (item.travel_allowance_amount != null || item.distance_meters != null) && (
+                        <div className="flex items-center gap-4 mt-2">
+                          {item.distance_meters != null && (
+                            <div className="flex items-center gap-1.5 text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full text-xs font-semibold">
+                              <MapPin className="h-3 w-3" />
+                              {(item.distance_meters / 1000).toFixed(2)} km Traveled
+                            </div>
+                          )}
+                          {item.travel_allowance_amount != null && item.travel_allowance_amount > 0 && (
+                            <div className="flex items-center gap-1.5 text-green-700 bg-green-50 px-2.5 py-1 rounded-full text-xs font-semibold">
+                              <CheckCircle className="h-3 w-3" />
+                              ₹{item.travel_allowance_amount.toFixed(2)} Allowance
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Reject reason if rejected */}
                       {item.status === 'rejected' && item.reject_reason && (
                         <div className="flex items-start gap-2 p-2.5 bg-red-50 border border-red-100 rounded-lg">
@@ -263,30 +288,39 @@ export default function OutsideOfficeApprovalPage() {
                   </div>
 
                   {/* Action Buttons */}
-                  {activeTab === 'pending' && (
-                    <div className="flex items-center gap-2 shrink-0 lg:self-start lg:pt-2">
-                      <button
-                        onClick={() => handleApprove(item)}
-                        disabled={submitting === item.id}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        {submitting === item.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <CheckCircle className="h-3.5 w-3.5" />
-                        )}
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => handleOpenReject(item)}
-                        disabled={submitting === item.id}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        <XCircle className="h-3.5 w-3.5" />
-                        Reject
-                      </button>
-                    </div>
-                  )}
+                  <div className="flex flex-wrap items-center gap-2 mt-4 shrink-0 lg:mt-0 lg:self-start lg:pt-2">
+                    <button
+                      onClick={() => setViewingRoute(item)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg transition-colors"
+                    >
+                      <Navigation className="h-3.5 w-3.5" />
+                      View Route
+                    </button>
+                    {activeTab === 'pending' && (
+                      <>
+                        <button
+                          onClick={() => handleOpenApprove(item)}
+                          disabled={submitting === item.id}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {submitting === item.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <CheckCircle className="h-3.5 w-3.5" />
+                          )}
+                          Review & Approve
+                        </button>
+                        <button
+                          onClick={() => handleOpenReject(item)}
+                          disabled={submitting === item.id}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                          Reject
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -340,6 +374,30 @@ export default function OutsideOfficeApprovalPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Approval & Allowance Modal */}
+      {showApprovalModal && approvalTarget && (
+        <OutsideOfficeApprovalModal
+          item={approvalTarget}
+          onClose={() => {
+            setShowApprovalModal(false);
+            setApprovalTarget(null);
+          }}
+          onApprove={handleApprove}
+        />
+      )}
+
+      {/* Travel Route Viewer Modal */}
+      {viewingRoute && (
+        <TravelRouteViewer
+          timestampId={viewingRoute.timestamp_id}
+          employeeName={viewingRoute.employee_name || 'Employee'}
+          clockInTime={viewingRoute.clock_in_time}
+          clockOutTime={viewingRoute.clock_out_time || undefined}
+          totalDistanceMeters={viewingRoute.distance_meters || 0}
+          onClose={() => setViewingRoute(null)}
+        />
       )}
     </div>
   );

@@ -46,6 +46,9 @@ export interface CompanySettings {
   enable_send_payslip_on_mark_paid?: boolean;
   google_maps_enabled?: boolean;
   google_maps_api_key?: string | null;
+  enable_directions_api?: boolean;
+  enable_distance_matrix_api?: boolean;
+  enable_places_api?: boolean;
   created_at?: string;
   updated_at?: string;
 }

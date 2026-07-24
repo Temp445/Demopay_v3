@@ -21,11 +21,11 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-// Custom Indigo Marker Icon
-const indigoIcon = L.divIcon({
+// Custom Marker Icon Generator
+const getMarkerIcon = (color: string = '#4f46e5') => L.divIcon({
   className: 'custom-indigo-marker',
   html: `<div style="display: flex; justify-content: center; align-items: flex-end; width: 100%; height: 100%; drop-shadow(0 4px 6px rgba(0,0,0,0.3));">
-           <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="#4f46e5" stroke="none">
+           <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="${color}" stroke="none">
              <path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/>
              <circle cx="12" cy="10" r="3" fill="#ffffff" />
            </svg>
@@ -56,6 +56,7 @@ interface LocationMapPickerProps {
   height?: string;
   readOnly?: boolean;
   radius?: number;
+  markerColor?: string;
 }
 
 function MapClickHandler({ onClick }: { onClick: (lat: number, lng: number) => void }) {
@@ -89,6 +90,7 @@ export default function LocationMapPicker({
   height = '400px',
   readOnly = false,
   radius,
+  markerColor = '#4f46e5',
 }: LocationMapPickerProps) {
   const [position, setPosition] = useState<[number, number]>([
     lat !== undefined && !isNaN(lat) ? lat : initialLat,
@@ -506,7 +508,7 @@ export default function LocationMapPicker({
             <Marker
               position={position}
               draggable={!readOnly}
-              icon={indigoIcon}
+              icon={getMarkerIcon(markerColor)}
               eventHandlers={{
                 dragend: (e) => {
                   const marker = e.target;

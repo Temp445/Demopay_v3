@@ -4,14 +4,17 @@ import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
 import { useEmployeesStore } from '../../../stores/employeesStore';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useLocationSettingsStore } from '../../../stores/locationSettingsStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import { supabase } from '../../../lib/supabase';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import MapViewerSwitch from './MapViewerSwitch';
+import RouteOptimizerModal from './RouteOptimizerModal';
 import type { WorkLocation } from '../../../types/workLocation';
 
 export default function WorkLocationAssignmentPage() {
   const { currentTenant } = useTenant();
+  const { companySettings } = useSettingsStore();
   const { items: employees, loading: employeesLoading, fetchEmployees } = useEmployeesStore();
   const { workLocations, loading, fetchWorkLocations, deleteWorkLocation } = useWorkLocationsStore();
   const { settings: locationSettings, fetchSettings: fetchLocationSettings, initialized: locationSettingsInitialized } = useLocationSettingsStore();
@@ -20,6 +23,7 @@ export default function WorkLocationAssignmentPage() {
   const [journeyPoints, setJourneyPoints] = useState<any[]>([]);
   const [journeyLoading, setJourneyLoading] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showOptimizerModal, setShowOptimizerModal] = useState(false);
   
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
@@ -203,14 +207,16 @@ export default function WorkLocationAssignmentPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <MapPin className="h-6 w-6 text-blue-600" />
-          Assigned Work Locations
-        </h1>
-        <p className="text-sm text-gray-600 mt-1">
-          View work locations assigned to employees with GPS tracking and radius monitoring
-        </p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <MapPin className="h-6 w-6 text-blue-600" />
+            Assigned Work Locations
+          </h1>
+          <p className="text-sm text-gray-600 mt-1">
+            View work locations assigned to employees with GPS tracking and radius monitoring
+          </p>
+        </div>
       </div>
 
       <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4 flex gap-3 text-blue-800">
@@ -498,12 +504,19 @@ export default function WorkLocationAssignmentPage() {
                   address={selectedLocation.formatted_address || ''}
                   radius={selectedLocation.allowed_radius_meters}
                   height="460px"
-                  journeyLogs={journeyPoints}
                 />
               )}
             </div>
           </div>
         </div>
+      )}
+
+      {/* Route Optimizer Modal */}
+      {showOptimizerModal && companySettings?.google_maps_api_key && (
+        <RouteOptimizerModal 
+          isOpen={showOptimizerModal} 
+          onClose={() => setShowOptimizerModal(false)} 
+        />
       )}
     </div>
   );

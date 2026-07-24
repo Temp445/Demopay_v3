@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleMap, Marker, Circle, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, MarkerF, CircleF, useJsApiLoader } from '@react-google-maps/api';
 import { Search, MapPin, LocateFixed, X, Lightbulb } from 'lucide-react';
 import type { LocationSearchResult } from '../../../types/workLocation';
 
@@ -117,7 +117,9 @@ export default function GoogleMapsMapPicker({
           postal_code: getComponent('postal_code'),
           formatted_address: r.formatted_address || '',
         };
-        setSelectedAddress(r.formatted_address || '');
+        const formatted = r.formatted_address || '';
+        setSelectedAddress(formatted);
+        setSearchQuery(formatted);
         onLocationSelect(addressData);
       } else {
         onLocationSelect({ latitude: lat, longitude: lng });
@@ -152,14 +154,36 @@ export default function GoogleMapsMapPicker({
     if (placeId) {
       geocoderRef.current.geocode({ placeId }, (results, status) => {
         if (status === 'OK' && results && results[0]) {
-          const loc = results[0].geometry.location;
+          const r = results[0];
+          const loc = r.geometry.location;
           const lat = loc.lat();
           const lng = loc.lng();
+
           setPosition({ lat, lng });
-          setSearchQuery(result.display_name);
-          setSelectedAddress(result.display_name);
+
+          // Prefer the autocomplete display name because it contains the actual Company/POI name
+          const formatted = result.display_name || r.formatted_address || '';
+          // Set both exactly the same to prevent the useEffect from triggering a new search
+          setSearchQuery(formatted);
+          setSelectedAddress(formatted);
           setShowResults(false);
-          reverseGeocode(lat, lng);
+
+          const getComponent = (type: string) =>
+            r.address_components?.find(c => c.types.includes(type))?.long_name || '';
+
+          const addressData = {
+            latitude: lat,
+            longitude: lng,
+            address: getComponent('route'),
+            city: getComponent('locality') || getComponent('sublocality') || getComponent('administrative_area_level_2'),
+            state: getComponent('administrative_area_level_1'),
+            country: getComponent('country'),
+            postal_code: getComponent('postal_code'),
+            formatted_address: formatted,
+          };
+
+          onLocationSelect(addressData);
+
           mapRef.current?.panTo({ lat, lng });
           mapRef.current?.setZoom(16);
         }
@@ -214,7 +238,7 @@ export default function GoogleMapsMapPicker({
   }
 
   return (
-    <div className="flex flex-col space-y-3 w-full max-w-4xl mx-auto">
+    <div className="flex flex-col space-y-3 w-full mx-auto">
       {showSearch && (
         <div className="flex flex-col space-y-2 relative z-10">
           <div className="bg-white rounded-lg shadow-sm border border-gray-300 flex items-center px-4 py-2.5 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 transition-all">
@@ -305,24 +329,24 @@ export default function GoogleMapsMapPicker({
           options={{
             mapTypeControl: true,
             mapTypeControlOptions: {
-              position: google.maps.ControlPosition.BOTTOM_LEFT,
+              position: google.maps.ControlPosition.TOP_LEFT,
               style: google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
             },
             streetViewControl: false,
-            fullscreenControl: false,
+            fullscreenControl: true,
             zoomControl: true,
             zoomControlOptions: {
               position: google.maps.ControlPosition.RIGHT_BOTTOM,
             },
           }}
         >
-          <Marker
+          <MarkerF
             position={position}
             draggable
             onDragEnd={handleMarkerDragEnd}
           />
           {radius && (
-            <Circle
+            <CircleF
               center={lat !== undefined && lng !== undefined ? { lat, lng } : position}
               radius={radius}
               options={{

@@ -4,7 +4,7 @@ import {
   ExternalLink, Map as MapIcon, History, PlayCircle, PauseCircle, 
   CheckCircle2, CreditCard as Edit, AlignLeft, AlertTriangle, AlertCircle, 
   ShieldCheck, Navigation, WifiOff, Wifi, Maximize2, Minimize2, Ruler, Gauge,
-  Square, CheckSquare, ListChecks
+  Square, CheckSquare, ListChecks, Search
 } from 'lucide-react';
 import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -21,6 +21,7 @@ import { useLocationSettingsStore } from '../../../stores/locationSettingsStore'
 export interface JourneyGroup {
   id: string;
   employeeName: string;
+  employeeCode?: string;
   employeeEmail: string;
   date: string;
   startTime?: string;
@@ -138,8 +139,9 @@ function ReverseGeocodeAddress({ lat, lng }: { lat: number; lng: number }) {
   );
 }
 
-export default function WorkLocationApprovalPage() {
+export default function TravelAllowanceTab() {
   const { currentTenant } = useTenant();
+
   const { 
     workLocations, 
     loading, 
@@ -159,6 +161,7 @@ export default function WorkLocationApprovalPage() {
   const [showDenyModal, setShowDenyModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showViolationsModal, setShowViolationsModal] = useState(false);
+  const [showTimelinePings, setShowTimelinePings] = useState(false);
   
   const [selectedWork, setSelectedWork] = useState<WorkLocation | null>(null);
   const [journeyLogs, setJourneyLogs] = useState<any[]>([]);
@@ -167,9 +170,10 @@ export default function WorkLocationApprovalPage() {
   const [denyReason, setDenyReason] = useState('');
   const [updateReason, setUpdateReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'pending' | 'approved'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'rejected'>('pending');
   const [pendingPage, setPendingPage] = useState(1);
   const [approvedPage, setApprovedPage] = useState(1);
+  const [rejectedPage, setRejectedPage] = useState(1);
   const ITEMS_PER_PAGE = 5;
 
   const [allJourneyLogs, setAllJourneyLogs] = useState<any[]>([]);
@@ -178,6 +182,7 @@ export default function WorkLocationApprovalPage() {
   const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set());
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkAmount, setBulkAmount] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const { user } = useAuth();
   const { items: employees, fetchEmployees } = useEmployeesStore();
@@ -294,9 +299,9 @@ export default function WorkLocationApprovalPage() {
     };
   }, [currentTenant?.id, fetchWorkLocations]);
 
-  // Fetch pauses and journey logs for Timeline, Details, AND MAP modals
+  // Fetch pauses and journey logs for Timeline, Details, MAP, and APPROVAL modals
   useEffect(() => {
-    if ((showTimelineModal || showDetailsModal || showMapModal) && selectedWork) {
+    if ((showTimelineModal || showDetailsModal || showMapModal || showApprovalModal) && selectedWork) {
       fetchWorkPauses(selectedWork.id);
       
       const fetchJourneyLogs = async () => {
@@ -345,7 +350,7 @@ export default function WorkLocationApprovalPage() {
       
       fetchJourneyLogs();
     }
-  }, [showTimelineModal, showDetailsModal, showMapModal, selectedWork, fetchWorkPauses]);
+  }, [showTimelineModal, showDetailsModal, showMapModal, showApprovalModal, selectedWork, fetchWorkPauses]);
 
   useEffect(() => {
     if (showViolationsModal && selectedWork && currentTenant) {
@@ -355,6 +360,7 @@ export default function WorkLocationApprovalPage() {
 
   const completedWorks = visibleWorkLocations.filter((wl) => wl.status === 'completed');
   const approvedWorks = visibleWorkLocations.filter((wl) => wl.status === 'approved');
+  const rejectedWorks = visibleWorkLocations.filter((wl) => wl.status === 'denied' || wl.status === 'rejected');
 
   const groupWorksByJourney = (works: WorkLocation[], logs: any[]): JourneyGroup[] => {
     const groupedByEmpDate: Record<string, WorkLocation[]> = {};
@@ -409,6 +415,7 @@ export default function WorkLocationApprovalPage() {
           journeyGroups.push({
             id: `group_${key}_${bIdx}`,
             employeeName: worksInBlock[0].employee_name,
+            employeeCode: employees.find(e => e.id === worksInBlock[0].employee_id)?.employee_code,
             employeeEmail: worksInBlock[0].employee_email,
             date: date,
             startTime: startLog?.timestamp,
@@ -423,6 +430,7 @@ export default function WorkLocationApprovalPage() {
         journeyGroups.push({
           id: `single_${w.id}`,
           employeeName: w.employee_name,
+          employeeCode: employees.find(e => e.id === w.employee_id)?.employee_code,
           employeeEmail: w.employee_email,
           date: date,
           startTime: w.started_at || undefined,
@@ -443,6 +451,7 @@ export default function WorkLocationApprovalPage() {
 
   const pendingGroups = useMemo(() => groupWorksByJourney(completedWorks, allJourneyLogs), [completedWorks, allJourneyLogs]);
   const approvedGroups = useMemo(() => groupWorksByJourney(approvedWorks, allJourneyLogs), [approvedWorks, allJourneyLogs]);
+  const rejectedGroups = useMemo(() => groupWorksByJourney(rejectedWorks, allJourneyLogs), [rejectedWorks, allJourneyLogs]);
 
   const handleOpenApproval = (work: WorkLocation) => {
     setSelectedWork(work);
@@ -628,10 +637,12 @@ export default function WorkLocationApprovalPage() {
     const logs: Array<{ status: string, timestamp: string, message: string, lat?: number, lng?: number, locationId?: string, speed_ms?: number | null }> = [];
 
     if (journeyLogs && journeyLogs.length > 0) {
-      // For timeline, show all events but skip pure LIVE_TRACK noise
-      const filteredLogs = journeyLogs.filter(log =>
-        !['LIVE_TRACK_JOURNEY', 'LIVE_TRACK_WORK'].includes(log.event_type)
-      );
+      // For timeline, skip pure LIVE_TRACK noise unless showTimelinePings is true. Always show the last log.
+      const filteredLogs = journeyLogs.filter((log, idx, arr) => {
+        if (idx === arr.length - 1) return true;
+        if (showTimelinePings) return true;
+        return !['LIVE_TRACK_JOURNEY', 'LIVE_TRACK_WORK'].includes(log.event_type);
+      });
       filteredLogs.forEach((log) => {
         let statusStr = log.event_type;
         let msg = '';
@@ -649,6 +660,8 @@ export default function WorkLocationApprovalPage() {
           case 'COMPLETE_WORK': statusStr = 'Complete Work'; msg = `Work session completed${locSuffix}`; break;
           case 'START_RETURN_JOURNEY': statusStr = 'Return Journey'; msg = 'Started return trip'; break;
           case 'REACHED_ENDPOINT': statusStr = 'End Point'; msg = 'Workflow completed for the day'; break;
+          case 'LIVE_TRACK_JOURNEY':
+          case 'LIVE_TRACK_WORK': statusStr = 'Location Ping'; msg = 'Live location update'; break;
           default: statusStr = log.event_type.replace(/_/g, ' '); msg = 'Status logged';
         }
 
@@ -789,16 +802,38 @@ export default function WorkLocationApprovalPage() {
     return { workSites, segments, allPoints };
   }, [journeyLogs, selectedWork, workLocations]);
 
-  const getTimelineIcon = (status: string) => {
+  // Global Journey Stats
+  const journeyCoords = useMemo(() => {
+    return journeyLogs.filter(log => log.latitude != null && log.longitude != null).map(log => [Number(log.latitude), Number(log.longitude)] as [number, number]);
+  }, [journeyLogs]);
+
+  const totalDistanceMeters = useMemo(() => calculateTotalDistance(journeyCoords), [journeyCoords]);
+
+  const totalDurationSeconds = useMemo(() => {
+    if (journeyLogs.length === 0) return 0;
+    const firstLogTime = new Date(journeyLogs[0].timestamp).getTime();
+    const lastLogTime = new Date(journeyLogs[journeyLogs.length - 1].timestamp).getTime();
+    return (lastLogTime - firstLogTime) / 1000;
+  }, [journeyLogs]);
+
+  const avgSpeedKmh = useMemo(() => {
+    return totalDurationSeconds > 0 ? ((totalDistanceMeters / 1000) / (totalDurationSeconds / 3600)).toFixed(1) : '0.0';
+  }, [totalDistanceMeters, totalDurationSeconds]);
+
+  const maxSpeedKmh = useMemo(() => {
+    return journeyLogs.length > 0 ? Math.max(...journeyLogs.map(l => (l.speed_ms != null ? l.speed_ms : 0))) * 3.6 : 0;
+  }, [journeyLogs]);
+
+  const getTimelineIcon = (status: string, isFirst: boolean, isLast: boolean) => {
+    const iconClass = "h-4 w-4 drop-shadow-sm mt-0.5";
+    if (isFirst) return <MapPin className={`${iconClass} text-green-500`} fill="currentColor" stroke="white" strokeWidth={1.5} />;
+    if (isLast) return <MapPin className={`${iconClass} text-violet-500`} fill="currentColor" stroke="white" strokeWidth={1.5} />;
+    
     const s = status.toLowerCase();
-    if (s.includes('offline') || s.includes('lost')) return <WifiOff className="h-5 w-5 text-red-500" />;
-    if (s.includes('online') || s.includes('restored')) return <Wifi className="h-5 w-5 text-green-500" />;
-    if (s.includes('journey')) return <Navigation className="h-5 w-5 text-indigo-500" />;
-    if (s.includes('reached') || s.includes('end point')) return <MapPin className="h-5 w-5 text-teal-500" />;
-    if (s.includes('start') || s.includes('resume')) return <PlayCircle className="h-5 w-5 text-blue-500" />;
-    if (s.includes('pause')) return <PauseCircle className="h-5 w-5 text-amber-500" />;
-    if (s.includes('complete')) return <CheckCircle className="h-5 w-5 text-green-500" />;
-    return <Clock className="h-5 w-5 text-gray-500" />;
+    if (s.includes('ping') || s.includes('track')) return <div className="h-2.5 w-2.5 mt-1.5 ml-[3px] rounded-full bg-blue-500 ring-2 ring-white shadow-sm" />;
+    
+    if (s.includes('offline') || s.includes('lost')) return <MapPin className={`${iconClass} text-red-500`} fill="currentColor" stroke="white" strokeWidth={1.5} />;
+    return <MapPin className={`${iconClass} text-blue-500`} fill="currentColor" stroke="white" strokeWidth={1.5} />;
   };
 
   if (loading && workLocations.length === 0) {
@@ -809,13 +844,35 @@ export default function WorkLocationApprovalPage() {
     );
   }
 
-  // Paginated slices
-  const pendingTotalPages = Math.max(1, Math.ceil(pendingGroups.length / ITEMS_PER_PAGE));
-  const approvedTotalPages = Math.max(1, Math.ceil(approvedGroups.length / ITEMS_PER_PAGE));
-  const paginatedPendingGroups = pendingGroups.slice((pendingPage - 1) * ITEMS_PER_PAGE, pendingPage * ITEMS_PER_PAGE);
-  const paginatedApprovedGroups = approvedGroups.slice((approvedPage - 1) * ITEMS_PER_PAGE, approvedPage * ITEMS_PER_PAGE);
+  // Search filter helper
+  const filterGroups = (groups: JourneyGroup[]) => {
+    if (!searchQuery.trim()) return groups;
+    const q = searchQuery.trim().toLowerCase();
+    return groups.filter(g =>
+      g.employeeName.toLowerCase().includes(q) ||
+      g.employeeEmail.toLowerCase().includes(q) ||
+      (g.employeeCode?.toLowerCase() || '').includes(q) ||
+      g.works.some(w =>
+        w.location_name.toLowerCase().includes(q) ||
+        (w.formatted_address?.toLowerCase() || '').includes(q)
+      )
+    );
+  };
 
-  const handleTabChange = (tab: 'pending' | 'approved') => {
+  // Paginated slices
+  const filteredPendingGroups = filterGroups(pendingGroups);
+  const filteredApprovedGroups = filterGroups(approvedGroups);
+  const filteredRejectedGroups = filterGroups(rejectedGroups);
+
+  const pendingTotalPages = Math.max(1, Math.ceil(filteredPendingGroups.length / ITEMS_PER_PAGE));
+  const approvedTotalPages = Math.max(1, Math.ceil(filteredApprovedGroups.length / ITEMS_PER_PAGE));
+  const rejectedTotalPages = Math.max(1, Math.ceil(filteredRejectedGroups.length / ITEMS_PER_PAGE));
+  
+  const paginatedPendingGroups = filteredPendingGroups.slice((pendingPage - 1) * ITEMS_PER_PAGE, pendingPage * ITEMS_PER_PAGE);
+  const paginatedApprovedGroups = filteredApprovedGroups.slice((approvedPage - 1) * ITEMS_PER_PAGE, approvedPage * ITEMS_PER_PAGE);
+  const paginatedRejectedGroups = filteredRejectedGroups.slice((rejectedPage - 1) * ITEMS_PER_PAGE, rejectedPage * ITEMS_PER_PAGE);
+
+  const handleTabChange = (tab: 'pending' | 'approved' | 'rejected') => {
     setActiveTab(tab);
   };
 
@@ -867,19 +924,31 @@ export default function WorkLocationApprovalPage() {
     );
   };
 
-  const renderJourneyGroup = (group: JourneyGroup, isPending: boolean) => (
-    <div key={group.id} className="p-6 hover:bg-gray-50/70 transition-colors border-b border-gray-100 last:border-b-0">
-      <div className="flex flex-col gap-5">
-        {/* Group Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center font-bold text-sm ${
-              isPending ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'
-            }`}>
-              {group.employeeName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-            </div>
+  const renderJourneyGroup = (group: JourneyGroup, tabType: 'pending' | 'approved' | 'rejected') => {
+    const isPending = tabType === 'pending';
+    const isRejected = tabType === 'rejected';
+    const isApproved = tabType === 'approved';
+
+    return (
+      <div key={group.id} className="p-6 hover:bg-gray-50/70 transition-colors border-b border-gray-100 last:border-b-0">
+        <div className="flex flex-col gap-5">
+          {/* Group Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center font-bold text-sm ${
+                isPending ? 'bg-amber-100 text-amber-700' : isRejected ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+              }`}>
+                {group.employeeName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+              </div>
             <div>
-              <h3 className="text-base font-bold text-gray-900">{group.employeeName}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-gray-900">{group.employeeName}</h3>
+                {group.employeeCode && (
+                  <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-bold border border-gray-200">
+                    {group.employeeCode}
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-gray-500">{group.employeeEmail}</p>
             </div>
           </div>
@@ -910,11 +979,13 @@ export default function WorkLocationApprovalPage() {
                   ? selectedWorkIds.has(work.id)
                     ? 'bg-amber-50 border-amber-400 shadow-sm ring-1 ring-amber-300'
                     : 'bg-white border-amber-100 shadow-sm'
-                  : 'bg-emerald-50/40 border-emerald-100 shadow-sm'
+                  : isRejected
+                    ? 'bg-red-50 border-red-100 shadow-sm'
+                    : 'bg-emerald-50/40 border-emerald-100 shadow-sm'
               }`}
             >
               <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${
-                isPending ? 'bg-amber-400' : 'bg-emerald-400'
+                isPending ? 'bg-amber-400' : isRejected ? 'bg-red-400' : 'bg-emerald-400'
               }`} />
 
               <div className="flex-1 pl-3">
@@ -930,7 +1001,7 @@ export default function WorkLocationApprovalPage() {
                         : <Square className="h-4 w-4" />}
                     </button>
                   )}
-                  <MapPin className={`h-4 w-4 mt-0.5 shrink-0 ${isPending ? 'text-amber-500' : 'text-emerald-500'}`} />
+                  <MapPin className={`h-4 w-4 mt-0.5 shrink-0 ${isPending ? 'text-amber-500' : isRejected ? 'text-red-500' : 'text-emerald-500'}`} />
                   <div>
                     <div className="font-semibold text-gray-900 text-sm">{work.location_name}</div>
                     {work.formatted_address && (
@@ -964,13 +1035,22 @@ export default function WorkLocationApprovalPage() {
                     <CheckCircle className="h-3.5 w-3.5" /> Approve
                   </button>
                 )}
-                {!isPending && (
+                {!isPending && !isRejected && (
                   <button
                     onClick={() => handleOpenDetails(work)}
                     className="p-1.5 text-blue-600 hover:bg-blue-50 border border-blue-100 rounded-lg transition-colors"
                     title="Edit Amount"
                   >
                     <Edit className="h-4 w-4" />
+                  </button>
+                )}
+                {isRejected && (
+                  <button
+                    onClick={() => handleOpenDetails(work)}
+                    className="p-1.5 text-gray-600 hover:bg-gray-50 border border-gray-100 rounded-lg transition-colors"
+                    title="View Details"
+                  >
+                    <AlignLeft className="h-4 w-4" />
                   </button>
                 )}
                 <button
@@ -1012,9 +1092,10 @@ export default function WorkLocationApprovalPage() {
       </div>
     </div>
   );
+};
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="space-y-6">
 
       {/* ─── Page Header ─── */}
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -1031,11 +1112,16 @@ export default function WorkLocationApprovalPage() {
             <CheckCircle className="h-3.5 w-3.5" />
             {approvedWorks.length} Approved
           </span>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 border border-red-200 text-red-700 rounded-full font-semibold">
+            <XCircle className="h-3.5 w-3.5" />
+            {rejectedWorks.length} Rejected
+          </span>
         </div>
       </div>
 
-      {/* ─── Tab Bar ─── */}
-      <div className="flex gap-1 p-1 bg-gray-100 rounded-xl w-fit mb-6">
+      {/* ─── Tab Bar + Search ─── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+        <div className="flex gap-1 p-1 bg-gray-100 rounded-xl w-fit">
         <button
           onClick={() => handleTabChange('pending')}
           className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
@@ -1062,6 +1148,39 @@ export default function WorkLocationApprovalPage() {
           }`}>{approvedWorks.length}</span>
           Approved
         </button>
+        <button
+          onClick={() => handleTabChange('rejected')}
+          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+            activeTab === 'rejected'
+              ? 'bg-white text-red-700 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+            activeTab === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-gray-200 text-gray-600'
+          }`}>{rejectedWorks.length}</span>
+          Rejected
+        </button>
+        </div>
+        {/* Search Bar */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => { setSearchQuery(e.target.value); setPendingPage(1); setApprovedPage(1); setRejectedPage(1); }}
+            placeholder="Search by employee, location..."
+            className="pl-9 pr-9 py-2 text-sm border border-gray-200 rounded-xl bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400 w-72 transition-all"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => { setSearchQuery(''); setPendingPage(1); setApprovedPage(1); setRejectedPage(1); }}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ─── Tab Content ─── */}
@@ -1099,7 +1218,7 @@ export default function WorkLocationApprovalPage() {
                     </span>
                   )}
                 </div>
-                {paginatedPendingGroups.map(group => renderJourneyGroup(group, true))}
+                {paginatedPendingGroups.map(group => renderJourneyGroup(group, 'pending'))}
                 {renderPagination(
                   pendingPage,
                   pendingTotalPages,
@@ -1112,24 +1231,81 @@ export default function WorkLocationApprovalPage() {
         )}
 
         {/* APPROVED TAB */}
-        {activeTab === 'approved' && (
+        {activeTab === 'approved' && (() => {
+          const totalApprovedAmount = approvedWorks.reduce((sum, w) => sum + (Number(w.work_amount) || 0), 0);
+          const uniqueApprovedEmployees = new Set(approvedWorks.map(w => w.employee_id)).size;
+          const approvedWithAmount = approvedWorks.filter(w => Number(w.work_amount) > 0).length;
+          return (
+            <>
+              {approvedWorks.length === 0 ? (
+                <div className="text-center py-20 px-6">
+                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <CheckCircle className="h-8 w-8 text-gray-400" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-1">No approved work yet</h3>
+                  <p className="text-gray-500 text-sm">Approved work assignments will appear here.</p>
+                </div>
+              ) : (
+                <>
+                  {/* ─── Stats Bar ─── */}
+                  <div className="grid grid-cols-3 gap-0 border-b border-gray-100 bg-gradient-to-r from-green-50/60 via-emerald-50/40 to-teal-50/60">
+                    <div className="flex flex-col items-center justify-center py-4 px-3 border-r border-green-100">
+                      <div className="text-2xl font-bold text-gray-900">{uniqueApprovedEmployees}</div>
+                      <div className="text-xs font-medium text-gray-500 mt-0.5 flex items-center gap-1">
+                        <User className="h-3 w-3" /> Employees
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-center justify-center py-4 px-3 border-r border-green-100">
+                      <div className="text-2xl font-bold text-gray-900">{approvedWorks.length}</div>
+                      <div className="text-xs font-medium text-gray-500 mt-0.5 flex items-center gap-1">
+                        <CheckCircle className="h-3 w-3 text-green-500" /> Approvals
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-center justify-center py-4 px-3">
+                      <div className="text-2xl font-bold text-emerald-700">
+                        ₹{totalApprovedAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-xs font-medium text-gray-500 mt-0.5 flex items-center gap-1">
+                        <span className="text-emerald-500 font-bold text-xs">₹</span> Total Allowance
+                        {approvedWithAmount < approvedWorks.length && (
+                          <span className="text-gray-400">({approvedWorks.length - approvedWithAmount} without amount)</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {paginatedApprovedGroups.map(group => renderJourneyGroup(group, 'approved'))}
+                  {renderPagination(
+                    approvedPage,
+                    approvedTotalPages,
+                    () => setApprovedPage(p => Math.max(1, p - 1)),
+                    () => setApprovedPage(p => Math.min(approvedTotalPages, p + 1))
+                  )}
+                </>
+              )}
+            </>
+          );
+        })()}
+
+
+        {/* REJECTED TAB */}
+        {activeTab === 'rejected' && (
           <>
-            {approvedWorks.length === 0 ? (
+            {rejectedWorks.length === 0 ? (
               <div className="text-center py-20 px-6">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <CheckCircle className="h-8 w-8 text-gray-400" />
+                  <XCircle className="h-8 w-8 text-gray-400" />
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-1">No approved work yet</h3>
-                <p className="text-gray-500 text-sm">Approved work assignments will appear here.</p>
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">No rejected work</h3>
+                <p className="text-gray-500 text-sm">Rejected work assignments will appear here.</p>
               </div>
             ) : (
               <>
-                {paginatedApprovedGroups.map(group => renderJourneyGroup(group, false))}
+                {paginatedRejectedGroups.map(group => renderJourneyGroup(group, 'rejected'))}
                 {renderPagination(
-                  approvedPage,
-                  approvedTotalPages,
-                  () => setApprovedPage(p => Math.max(1, p - 1)),
-                  () => setApprovedPage(p => Math.min(approvedTotalPages, p + 1))
+                  rejectedPage,
+                  rejectedTotalPages,
+                  () => setRejectedPage(p => Math.max(1, p - 1)),
+                  () => setRejectedPage(p => Math.min(rejectedTotalPages, p + 1))
                 )}
               </>
             )}
@@ -1247,28 +1423,37 @@ export default function WorkLocationApprovalPage() {
             <div className="p-6 space-y-4">
               <div>
                 <div className="text-sm font-medium text-gray-700 mb-2">Employee</div>
-                <div className="text-base text-gray-900">{selectedWork.employee_name}</div>
+                <div className="text-base text-gray-900 flex items-center gap-2">
+                  {selectedWork.employee_name}
+                  {employees.find(e => e.id === selectedWork.employee_id)?.employee_code && (
+                    <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-bold border border-gray-200">
+                      {employees.find(e => e.id === selectedWork.employee_id)?.employee_code}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div>
-                <div className="text-sm font-medium text-gray-700 mb-2">Location</div>
+                <div className="text-sm font-medium text-gray-700 mb-2">Company Name</div>
                 <div className="text-base text-gray-900">{selectedWork.location_name}</div>
                 {selectedWork.formatted_address && (
-                  <div className="text-sm text-gray-600 mt-1">{selectedWork.formatted_address}</div>
+                  <div className="mt-3">
+                    <div className="text-sm font-medium text-gray-700 mb-1">Address</div>
+                    <div className="text-sm text-gray-600">{selectedWork.formatted_address}</div>
+                  </div>
                 )}
               </div>
 
-              {selectedWork.started_at && selectedWork.completed_at && (
-                <div>
-                  <div className="text-sm font-medium text-gray-700 mb-2">Work Duration</div>
-                  <div className="text-base text-gray-900">
-                    {calculateDuration(selectedWork.started_at, selectedWork.completed_at)}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {format(new Date(selectedWork.started_at), 'hh:mm a')} - {format(new Date(selectedWork.completed_at), 'hh:mm a')}
-                  </div>
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                  <p className="text-xs font-semibold text-blue-700 mb-1">Distance Traveled</p>
+                  <p className="text-lg font-bold text-gray-900">{formatDistance(totalDistanceMeters)}</p>
                 </div>
-              )}
+                <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                  <p className="text-xs font-semibold text-blue-700 mb-1">Duration</p>
+                  <p className="text-lg font-bold text-gray-900">{formatDuration(totalDurationSeconds)}</p>
+                </div>
+              </div>
 
               <div className="pt-4 border-t border-gray-200">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1338,15 +1523,25 @@ export default function WorkLocationApprovalPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-gray-50 p-5 rounded-lg border border-gray-100">
                 <div>
                   <div className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-1"><User className="h-4 w-4"/> Employee</div>
-                  <div className="text-base text-gray-900 font-medium">{selectedWork.employee_name}</div>
+                  <div className="text-base text-gray-900 font-medium flex items-center gap-2">
+                    {selectedWork.employee_name}
+                    {employees.find(e => e.id === selectedWork.employee_id)?.employee_code && (
+                      <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-bold border border-gray-200">
+                        {employees.find(e => e.id === selectedWork.employee_id)?.employee_code}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-sm text-gray-600">{selectedWork.employee_email}</div>
                 </div>
 
                 <div>
-                  <div className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-1"><MapPin className="h-4 w-4"/> Location</div>
+                  <div className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-1"><MapPin className="h-4 w-4"/> Company Name</div>
                   <div className="text-base text-gray-900 font-medium">{selectedWork.location_name}</div>
                   {selectedWork.formatted_address && (
-                    <div className="text-sm text-gray-600 line-clamp-2">{selectedWork.formatted_address}</div>
+                    <div className="mt-2">
+                      <div className="text-xs font-medium text-gray-500 mb-0.5">Address</div>
+                      <div className="text-sm text-gray-600 line-clamp-2">{selectedWork.formatted_address}</div>
+                    </div>
                   )}
                 </div>
 
@@ -1382,7 +1577,15 @@ export default function WorkLocationApprovalPage() {
 
               {/* Timeline Section */}
               <div>
-                <h3 className="text-md font-semibold text-gray-900 mb-4 flex items-center gap-2"><History className="h-4 w-4"/> Activity Timeline</h3>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-md font-semibold text-gray-900 flex items-center gap-2"><History className="h-4 w-4"/> Activity Timeline</h3>
+                  <button 
+                    onClick={() => setShowTimelinePings(!showTimelinePings)}
+                    className="text-xs font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    {showTimelinePings ? 'Hide Pings' : 'Show Pings'}
+                  </button>
+                </div>
                 {timelineEvents.length === 0 ? (
                   <div className="text-center py-4 text-gray-500 bg-gray-50 rounded-lg border border-gray-100">
                     <Clock className="h-5 w-5 mx-auto mb-1 opacity-50" />
@@ -1392,8 +1595,8 @@ export default function WorkLocationApprovalPage() {
                   <div className="relative border-l-2 border-gray-200 ml-3 space-y-6">
                     {timelineEvents.map((log, index) => (
                       <div key={index} className="relative pl-6">
-                        <span className="absolute -left-3.5 top-0.5 bg-white ring-4 ring-white rounded-full">
-                          {getTimelineIcon(log.status)}
+                        <span className="absolute -left-[5px] top-1">
+                          {getTimelineIcon(log.status, index === 0, index === timelineEvents.length - 1)}
                         </span>
                         <div className="flex flex-col">
                           <span className="text-sm font-semibold text-gray-900 capitalize">
@@ -1500,7 +1703,14 @@ export default function WorkLocationApprovalPage() {
 
             <div className="p-6 space-y-4">
               <p className="text-sm text-gray-600">
-                You are about to deny the work submitted by <strong>{selectedWork.employee_name}</strong>. Please provide a reason below.
+                You are about to deny the work submitted by <strong className="inline-flex items-center gap-1.5">
+                  {selectedWork.employee_name}
+                  {employees.find(e => e.id === selectedWork.employee_id)?.employee_code && (
+                    <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-bold border border-gray-200">
+                      {employees.find(e => e.id === selectedWork.employee_id)?.employee_code}
+                    </span>
+                  )}
+                </strong>. Please provide a reason below.
               </p>
 
               <div>
@@ -1566,6 +1776,11 @@ export default function WorkLocationApprovalPage() {
                 <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                   <User className="h-4 w-4 text-blue-600"/> 
                   {selectedWork.employee_name}
+                  {employees.find(e => e.id === selectedWork.employee_id)?.employee_code && (
+                    <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-bold border border-gray-200">
+                      {employees.find(e => e.id === selectedWork.employee_id)?.employee_code}
+                    </span>
+                  )}
                 </h3>
                 <div className="mt-2 text-sm text-gray-600 grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div><span className="font-medium text-gray-500">Location:</span> {selectedWork.location_name}</div>
@@ -1627,20 +1842,9 @@ export default function WorkLocationApprovalPage() {
       )}
 
       {/* MAP MODAL — Journey Path View */}
-      {showMapModal && selectedWork && (() => {
-        const journeyCoords = journeyLogs.filter(log => log.latitude != null && log.longitude != null).map(log => [Number(log.latitude), Number(log.longitude)] as [number, number]);
-        const totalDistanceMeters = calculateTotalDistance(journeyCoords);
-        const firstLogTime = journeyLogs.length > 0 ? new Date(journeyLogs[0].timestamp).getTime() : 0;
-        const lastLogTime = journeyLogs.length > 0 ? new Date(journeyLogs[journeyLogs.length - 1].timestamp).getTime() : 0;
-        const totalDurationSeconds = journeyLogs.length > 0 ? (lastLogTime - firstLogTime) / 1000 : 0;
-        const avgSpeedKmh = totalDurationSeconds > 0 ? ((totalDistanceMeters / 1000) / (totalDurationSeconds / 3600)).toFixed(1) : '0.0';
-        const maxSpeedKmh = journeyLogs.length > 0
-          ? Math.max(...journeyLogs.map(l => (l.speed_ms != null ? l.speed_ms : 0))) * 3.6
-          : 0;
-
-        return (
-          <div className={`fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center ${isFullscreen ? 'p-0' : 'p-4'}`}>
-            <div className={`bg-white shadow-2xl w-full flex flex-col overflow-hidden ${isFullscreen ? 'h-full max-w-full rounded-none' : 'max-w-4xl max-h-[90vh] rounded-2xl'}`}>
+      {showMapModal && selectedWork && (
+        <div className={`fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center ${isFullscreen ? 'p-0' : 'p-4'}`}>
+          <div className={`bg-white shadow-2xl w-full flex flex-col overflow-hidden ${isFullscreen ? 'h-full max-w-full rounded-none' : 'max-w-4xl max-h-[90vh] rounded-2xl'}`}>
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
                 <div className="flex items-center gap-2">
@@ -1752,8 +1956,14 @@ export default function WorkLocationApprovalPage() {
                     {/* Event timeline */}
                     {journeyLogs.length > 0 ? (
                       <div className="border border-gray-200 rounded-lg overflow-hidden flex flex-col">
-                        <div className="bg-gray-50 px-3 py-2 text-[10px] font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200 shrink-0">
-                          Timeline ({timelineEvents.length})
+                        <div className="bg-gray-50 px-3 py-2 text-[10px] font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200 shrink-0 flex justify-between items-center">
+                          <span>Timeline ({timelineEvents.length})</span>
+                          <button 
+                            onClick={() => setShowTimelinePings(!showTimelinePings)}
+                            className="text-blue-600 hover:text-blue-800 capitalize font-medium px-1 rounded hover:bg-blue-50"
+                          >
+                            {showTimelinePings ? 'Hide Pings' : 'Show Pings'}
+                          </button>
                         </div>
                         <div className="divide-y divide-gray-100 overflow-y-auto">
                           {timelineEvents.map((evt, i) => {
@@ -1764,7 +1974,7 @@ export default function WorkLocationApprovalPage() {
                                state === 'stationary' ? 'bg-gray-100 text-gray-500' : '';
                              return (
                                <div key={i} className="flex items-start gap-2 px-3 py-2">
-                                 <span className="text-base shrink-0 mt-0.5">{getTimelineIcon(evt.status)}</span>
+                                 <span className="shrink-0 pt-0.5">{getTimelineIcon(evt.status, i === 0, i === timelineEvents.length - 1)}</span>
                                  <div className="flex-1 min-w-0">
                                    <div className="text-xs font-medium text-gray-800 capitalize truncate">{evt.status}</div>
                                    <div className="text-[10px] text-gray-500 truncate">{evt.message}</div>
@@ -1792,8 +2002,7 @@ export default function WorkLocationApprovalPage() {
               </div>
             </div>
           </div>
-        );
-      })()}
+      )}
 
       {/* PENDING WORKS TIMELINE MODAL */}
       {showTimelineModal && selectedWork && (
@@ -1804,9 +2013,17 @@ export default function WorkLocationApprovalPage() {
                 <History className="h-5 w-5 text-purple-600" />
                 Work Timeline
               </h2>
-              <button onClick={() => { setShowTimelineModal(false); setSelectedWork(null); }} className="text-gray-400 hover:text-gray-600">
-                <X className="h-5 w-5" />
-              </button>
+              <div className="flex items-center gap-4">
+                <button 
+                  onClick={() => setShowTimelinePings(!showTimelinePings)}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  {showTimelinePings ? 'Hide Pings' : 'Show Pings'}
+                </button>
+                <button onClick={() => { setShowTimelineModal(false); setSelectedWork(null); }} className="text-gray-400 hover:text-gray-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
 
             <div className="p-6 max-h-[70vh] overflow-y-auto">
@@ -1823,11 +2040,11 @@ export default function WorkLocationApprovalPage() {
               ) : (
                 <div className="relative border-l-2 border-gray-200 ml-3 space-y-8">
                   {timelineEvents.map((log, index) => (
-                    <div key={index} className="relative pl-6">
-                      <span className="absolute -left-3.5 top-0.5 bg-white ring-4 ring-white rounded-full">
-                        {getTimelineIcon(log.status)}
-                      </span>
-                      <div className="flex flex-col">
+                      <div key={index} className="relative pl-6">
+                        <span className="absolute -left-[5px] top-1">
+                          {getTimelineIcon(log.status, index === 0, index === timelineEvents.length - 1)}
+                        </span>
+                        <div className="flex flex-col">
                         <span className="text-sm font-semibold text-gray-900 capitalize">
                           {log.status}
                         </span>

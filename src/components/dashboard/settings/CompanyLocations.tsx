@@ -303,7 +303,7 @@ export default function CompanyLocations() {
             </div>
 
             {/* Map Picker */}
-            <div className="overflow-hidden rounded-xl border border-gray-200 shadow-sm flex flex-col">
+            <div className="overflow-hidden rounded-xl shadow-sm flex flex-col">
               <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
                 <label className="block text-sm font-semibold text-gray-800">Pin Location on Map</label>
               </div>

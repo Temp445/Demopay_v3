@@ -129,18 +129,8 @@ export default function OutsideOfficeTab() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Remote Check-In Approvals</h1>
+          <h1 className="text-xl font-bold text-gray-900">Remote Check-In Approvals</h1>
           <p className="text-sm text-gray-500 mt-0.5">Review and approve travel slips for employees who clocked in outside the office</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-full text-sm font-semibold">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            {counts.pending} Pending
-          </span>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full text-sm font-semibold">
-            <CheckCircle className="h-3.5 w-3.5" />
-            {counts.approved} Approved
-          </span>
         </div>
       </div>
 

@@ -661,7 +661,7 @@ export default function TravelAllowanceTab() {
           case 'START_RETURN_JOURNEY': statusStr = 'Return Journey'; msg = 'Started return trip'; break;
           case 'REACHED_ENDPOINT': statusStr = 'End Point'; msg = 'Workflow completed for the day'; break;
           case 'LIVE_TRACK_JOURNEY':
-          case 'LIVE_TRACK_WORK': statusStr = 'Location Ping'; msg = 'Live location update'; break;
+          case 'LIVE_TRACK_WORK': statusStr = 'Traveling'; msg = 'Live location update'; break;
           default: statusStr = log.event_type.replace(/_/g, ' '); msg = 'Status logged';
         }
 
@@ -691,7 +691,7 @@ export default function TravelAllowanceTab() {
     }
 
     return logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  }, [selectedWork, activeWorkPauses, journeyLogs, workLocations]);
+  }, [selectedWork, activeWorkPauses, journeyLogs, workLocations, showTimelinePings]);
 
   // Build multi-location map data from all-day logs
   const multiMapData = useMemo(() => {
@@ -790,17 +790,23 @@ export default function TravelAllowanceTab() {
       });
     }
 
-    // Flatten all points for markers
-    const allPoints = logsWithCoords.map(log => ({
-      lat: Number(log.latitude),
-      lng: Number(log.longitude),
-      type: labelMap[log.event_type] || log.event_type.replace(/_/g, ' '),
-      time: new Date(log.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
-      locationId: log.work_location_id
-    }));
+    // Flatten points for markers, filtering out LIVE_TRACK noise unless showTimelinePings is true
+    const allPoints = logsWithCoords
+      .filter((log, idx, arr) => {
+        if (idx === arr.length - 1) return true;
+        if (showTimelinePings) return true;
+        return !['LIVE_TRACK_JOURNEY', 'LIVE_TRACK_WORK'].includes(log.event_type);
+      })
+      .map(log => ({
+        lat: Number(log.latitude),
+        lng: Number(log.longitude),
+        type: labelMap[log.event_type] || log.event_type.replace(/_/g, ' '),
+        time: new Date(log.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
+        locationId: log.work_location_id
+      }));
 
-    return { workSites, segments, allPoints };
-  }, [journeyLogs, selectedWork, workLocations]);
+    return { allPoints, segments, workSites };
+  }, [selectedWork, journeyLogs, workLocations, showTimelinePings]);
 
   // Global Journey Stats
   const journeyCoords = useMemo(() => {
@@ -830,7 +836,7 @@ export default function TravelAllowanceTab() {
     if (isLast) return <MapPin className={`${iconClass} text-violet-500`} fill="currentColor" stroke="white" strokeWidth={1.5} />;
     
     const s = status.toLowerCase();
-    if (s.includes('ping') || s.includes('track')) return <div className="h-2.5 w-2.5 mt-1.5 ml-[3px] rounded-full bg-blue-500 ring-2 ring-white shadow-sm" />;
+    if (s.includes('traveling') || s.includes('travel')) return <div className="h-2 w-2 mt-1.5 ml-[3px] rounded-full bg-indigo-500 ring-2 ring-white shadow-sm" />;
     
     if (s.includes('offline') || s.includes('lost')) return <MapPin className={`${iconClass} text-red-500`} fill="currentColor" stroke="white" strokeWidth={1.5} />;
     return <MapPin className={`${iconClass} text-blue-500`} fill="currentColor" stroke="white" strokeWidth={1.5} />;
@@ -930,10 +936,10 @@ export default function TravelAllowanceTab() {
     const isApproved = tabType === 'approved';
 
     return (
-      <div key={group.id} className="p-6 hover:bg-gray-50/70 transition-colors border-b border-gray-100 last:border-b-0">
-        <div className="flex flex-col gap-5">
+      <div key={group.id} className="p-4 sm:p-6 hover:bg-gray-50/70 transition-colors border-b border-gray-100 last:border-b-0">
+        <div className="flex flex-col gap-4 sm:gap-5">
           {/* Group Header */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className={`flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center font-bold text-sm ${
                 isPending ? 'bg-amber-100 text-amber-700' : isRejected ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
@@ -952,17 +958,11 @@ export default function TravelAllowanceTab() {
               <p className="text-xs text-gray-500">{group.employeeEmail}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold whitespace-nowrap">
               <Calendar className="h-3 w-3" />
               {format(new Date(group.date), 'MMM d, yyyy')}
             </span>
-            {group.startTime && group.endTime && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold">
-                <Clock className="h-3 w-3" />
-                {calculateDuration(group.startTime, group.endTime)}
-              </span>
-            )}
             <span className="inline-flex items-center px-2.5 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-medium">
               {group.works.length} location{group.works.length !== 1 ? 's' : ''}
             </span>
@@ -970,7 +970,7 @@ export default function TravelAllowanceTab() {
         </div>
 
         {/* Location Cards */}
-        <div className="space-y-3 pl-2">
+        <div className="space-y-3 pl-0 sm:pl-2">
           {group.works.map(work => (
             <div
               key={work.id}
@@ -984,11 +984,8 @@ export default function TravelAllowanceTab() {
                     : 'bg-emerald-50/40 border-emerald-100 shadow-sm'
               }`}
             >
-              <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${
-                isPending ? 'bg-amber-400' : isRejected ? 'bg-red-400' : 'bg-emerald-400'
-              }`} />
 
-              <div className="flex-1 pl-3">
+              <div className="flex-1">
                 <div className="flex items-start gap-2 mb-2">
                   {isPending && (
                     <button
@@ -1001,32 +998,31 @@ export default function TravelAllowanceTab() {
                         : <Square className="h-4 w-4" />}
                     </button>
                   )}
-                  <MapPin className={`h-4 w-4 mt-0.5 shrink-0 ${isPending ? 'text-amber-500' : isRejected ? 'text-red-500' : 'text-emerald-500'}`} />
-                  <div>
-                    <div className="font-semibold text-gray-900 text-sm">{work.location_name}</div>
+                  <div className="flex flex-col gap-2">
+                    <div>
+                      <span className="text-[10px] uppercase tracking-wider font-bold text-gray-400">Company Name</span>
+                      <div className="font-semibold text-gray-900 text-sm">{work.location_name}</div>
+                    </div>
                     {work.formatted_address && (
-                      <div className="text-xs text-gray-500 mt-0.5 line-clamp-1">{work.formatted_address}</div>
+                      <div>
+                        <span className="text-[10px] uppercase tracking-wider font-bold text-gray-400">Location Name</span>
+                        <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{work.formatted_address}</div>
+                      </div>
                     )}
                   </div>
                 </div>
                 <div className="ml-6 flex flex-wrap items-center gap-3 text-xs">
-                  <div className="flex items-center gap-1 text-gray-600">
-                    <Clock className="h-3 w-3" />
-                    <span>{work.started_at && work.completed_at ? calculateDuration(work.started_at, work.completed_at) : 'N/A'}</span>
-                  </div>
+                
                   {work.work_amount != null && Number(work.work_amount) > 0 && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full font-semibold">
                       ₹{Number(work.work_amount).toLocaleString('en-IN')} Travel Allowance
                     </span>
                   )}
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${getStatusColor(work.status)}`}>
-                    {work.status.replace('_', ' ')}
-                  </span>
                 </div>
               </div>
 
               {/* Actions */}
-              <div className="flex flex-wrap items-center gap-2 shrink-0 border-t xl:border-t-0 pt-3 xl:pt-0 border-gray-100">
+              <div className="flex flex-wrap items-center gap-2 shrink-0 w-full xl:w-auto border-t xl:border-t-0 pt-3 xl:pt-0 border-gray-100 mt-2 xl:mt-0">
                 {isPending && (
                   <button
                     onClick={() => handleOpenApproval(work)}
@@ -1100,31 +1096,17 @@ export default function TravelAllowanceTab() {
       {/* ─── Page Header ─── */}
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Work Location Approvals</h1>
+          <h1 className="text-xl font-bold text-gray-900">Work Location Approvals</h1>
           <p className="text-sm text-gray-500 mt-0.5">Review and approve completed work assignments</p>
-        </div>
-        <div className="flex items-center gap-3 text-sm text-gray-500">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-full font-semibold">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            {completedWorks.length} Pending
-          </span>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full font-semibold">
-            <CheckCircle className="h-3.5 w-3.5" />
-            {approvedWorks.length} Approved
-          </span>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 border border-red-200 text-red-700 rounded-full font-semibold">
-            <XCircle className="h-3.5 w-3.5" />
-            {rejectedWorks.length} Rejected
-          </span>
         </div>
       </div>
 
       {/* ─── Tab Bar + Search ─── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-        <div className="flex gap-1 p-1 bg-gray-100 rounded-xl w-fit">
+      <div className="flex flex-col  sm:flex-row sm:items-center justify-between gap-3 mb-6">
+        <div className="flex gap-1 p-1 bg-gray-100 rounded-xl w-full sm:w-fit overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] scroll-smooth">
         <button
           onClick={() => handleTabChange('pending')}
-          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+          className={`flex-shrink-0 flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
             activeTab === 'pending'
               ? 'bg-white text-amber-700 shadow-sm'
               : 'text-gray-500 hover:text-gray-700'
@@ -1133,11 +1115,11 @@ export default function TravelAllowanceTab() {
           <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
             activeTab === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-gray-200 text-gray-600'
           }`}>{completedWorks.length}</span>
-          Pending Approval
+          Pending
         </button>
         <button
           onClick={() => handleTabChange('approved')}
-          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+          className={`flex-shrink-0 flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
             activeTab === 'approved'
               ? 'bg-white text-green-700 shadow-sm'
               : 'text-gray-500 hover:text-gray-700'
@@ -1150,7 +1132,7 @@ export default function TravelAllowanceTab() {
         </button>
         <button
           onClick={() => handleTabChange('rejected')}
-          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+          className={`flex-shrink-0 flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
             activeTab === 'rejected'
               ? 'bg-white text-red-700 shadow-sm'
               : 'text-gray-500 hover:text-gray-700'
@@ -1163,14 +1145,14 @@ export default function TravelAllowanceTab() {
         </button>
         </div>
         {/* Search Bar */}
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
           <input
             type="text"
             value={searchQuery}
             onChange={e => { setSearchQuery(e.target.value); setPendingPage(1); setApprovedPage(1); setRejectedPage(1); }}
             placeholder="Search by employee, location..."
-            className="pl-9 pr-9 py-2 text-sm border border-gray-200 rounded-xl bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400 w-72 transition-all"
+            className="pl-9 pr-9 py-2 text-sm border border-gray-200 rounded-xl bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400 w-full sm:w-72 transition-all"
           />
           {searchQuery && (
             <button
@@ -1184,7 +1166,7 @@ export default function TravelAllowanceTab() {
       </div>
 
       {/* ─── Tab Content ─── */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white md:rounded-2xl md:border border-gray-200 md:shadow-sm overflow-hidden">
 
         {/* PENDING TAB */}
         {activeTab === 'pending' && (
@@ -1200,7 +1182,7 @@ export default function TravelAllowanceTab() {
             ) : (
               <>
                 {/* Select All bar */}
-                <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-gray-50">
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-gray-100 bg-gray-50">
                   <button
                     onClick={handleSelectAll}
                     className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-amber-700 transition-colors"
@@ -1846,9 +1828,9 @@ export default function TravelAllowanceTab() {
         <div className={`fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center ${isFullscreen ? 'p-0' : 'p-4'}`}>
           <div className={`bg-white shadow-2xl w-full flex flex-col overflow-hidden ${isFullscreen ? 'h-full max-w-full rounded-none' : 'max-w-4xl max-h-[90vh] rounded-2xl'}`}>
               {/* Header */}
-              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+              <div className="flex items-center justify-between px-4 py-4 border-b border-gray-100 shrink-0">
                 <div className="flex items-center gap-2">
-                  <div className="h-9 w-9 rounded-full bg-blue-100 flex items-center justify-center">
+                  <div className="hidden sm:flex h-9 w-9 rounded-full bg-blue-100 items-center justify-center">
                     <MapIcon className="h-5 w-5 text-blue-600" />
                   </div>
                   <div>
@@ -1873,7 +1855,7 @@ export default function TravelAllowanceTab() {
               </div>
 
               {/* Summary Stats */}
-              <div className="grid grid-cols-4 gap-px bg-gray-100 border-b border-gray-100 shrink-0">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-gray-100 border-b border-gray-100 shrink-0">
                 <div className="bg-white px-4 py-3 flex items-center gap-3">
                   <Ruler className="h-4 w-4 text-blue-500 flex-shrink-0" />
                   <div>

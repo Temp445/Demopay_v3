@@ -32,7 +32,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   const { hasAccess, loading: permissionsLoading } = usePermissions();
-  const { isAdmin } = useRoleAccess();
+  const { isAdmin, employeeId } = useRoleAccess();
   const { currentTenant } = useTenant();
   const { settings, fetchSettings, initialized } = useLocationSettingsStore();
 
@@ -45,9 +45,9 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
   const locationSubItems: NavigationItem[] = [
     { name: 'Gate Pass', href: '/dashboard/gate-passes', icon: CreditCard },
     { name: 'Assigned Work Location', href: '/dashboard/work-location-assignment', icon: MapPin },
-    { name: 'Travel & Location Approvals', href: '/dashboard/travel-approvals', icon: CheckCircle },
+    { name: 'Travel Allowance Approvals', href: '/dashboard/travel-approvals', icon: CheckCircle },
     ...(settings.live_tracking_enabled ? [{ name: 'Location Tracking', href: '/dashboard/location-tracking', icon: MapPinned }] : []),
-    { name: 'Work Location', href: '/dashboard/work-location', icon: MapPin },
+    ...(employeeId ? [{ name: 'Work Location', href: '/dashboard/work-location', icon: MapPin }] : []),
     { name: 'Location Settings', href: '/dashboard/location-settings', icon: SlidersHorizontal },
   ];
 

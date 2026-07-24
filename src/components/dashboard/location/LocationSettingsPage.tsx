@@ -381,7 +381,7 @@ export default function LocationSettingsPage() {
                   onClick={async () => {
                     if (!currentTenant?.id) return;
                     const nextVal = !localSettings.field_work_integration_enabled;
-                    
+
                     if (nextVal) {
                       // Enabling
                       if (localSettings.field_work_component_id) {
@@ -392,12 +392,12 @@ export default function LocationSettingsPage() {
                             .update({ is_active: true, updated_at: new Date().toISOString() })
                             .eq('id', localSettings.field_work_component_id);
                           if (error) throw error;
-                          
+
                           await saveSettings(currentTenant.id, {
                             field_work_integration_enabled: true,
                             field_work_component_id: localSettings.field_work_component_id
                           });
-                          
+
                           toast.success('Travel Allowance integration enabled');
                         } catch (err) {
                           toast.error('Failed to activate connected component');
@@ -424,14 +424,14 @@ export default function LocationSettingsPage() {
                             })
                             .select()
                             .single();
-                          
+
                           if (createError) throw createError;
-                          
+
                           await saveSettings(currentTenant.id, {
                             field_work_integration_enabled: true,
                             field_work_component_id: newComp.id
                           });
-                          
+
                           toast.success("Auto-created and dynamically linked 'Travel Allowance' component!", { id: toastId });
                         } catch (err) {
                           console.error(err);
@@ -451,11 +451,11 @@ export default function LocationSettingsPage() {
                           console.error('Failed to make component inactive:', err);
                         }
                       }
-                      
+
                       await saveSettings(currentTenant.id, {
                         field_work_integration_enabled: false
                       });
-                      
+
                       toast.success('Integration disabled. Component set to inactive.');
                     }
                   }}
@@ -493,10 +493,10 @@ export default function LocationSettingsPage() {
                           <div className="flex items-center gap-1.5 bg-blue-50/70 border border-blue-100 rounded px-2.5 py-1">
                             <Info className="h-3.5 w-3.5 text-blue-600 flex-shrink-0" />
                             <span className="text-[10px] text-blue-700 leading-snug">
-                             Once enabled, the component will be automatically created if it is not available in the <strong>Component Master</strong>. After that, go to the Salary Structure and add the component to the structure.
+                              Once enabled, the component will be automatically created if it is not available in the <strong>Component Master</strong>. After that, go to the Salary Structure and add the component to the structure.
                             </span>
                           </div>
-                          
+
                           <div className="pt-3 border-t border-blue-100/50">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <div>
@@ -504,9 +504,9 @@ export default function LocationSettingsPage() {
                                 <select
                                   value={localSettings.travel_allowance_method}
                                   onChange={(e) => {
-                                    setLocalSettings(prev => ({ 
-                                      ...prev, 
-                                      travel_allowance_method: e.target.value as 'manual' | 'distance' | 'fixed' 
+                                    setLocalSettings(prev => ({
+                                      ...prev,
+                                      travel_allowance_method: e.target.value as 'manual' | 'distance' | 'fixed'
                                     }));
                                     setIsDirty(true);
                                   }}
@@ -522,7 +522,7 @@ export default function LocationSettingsPage() {
                                   {localSettings.travel_allowance_method === 'fixed' && 'Flat amount granted per journey.'}
                                 </p>
                               </div>
-                              
+
                               {localSettings.travel_allowance_method !== 'manual' && (
                                 <div>
                                   <label className="block text-xs font-medium text-gray-700 mb-1.5">

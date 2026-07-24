@@ -358,6 +358,7 @@ export async function recordTracking(
       latitude: position.latitude,
       longitude: position.longitude,
       accuracy: position.accuracy,
+      speed_ms: position.speed_ms ?? null,
       distance_from_center: radiusMonitoringEnabled ? distance : null,
       is_within_radius: radiusMonitoringEnabled ? distance <= workLocation.allowed_radius_meters : true,
       battery_level: batteryLevel,
@@ -384,6 +385,7 @@ export async function logJourneyEvent(
     latitude: position?.latitude || null,
     longitude: position?.longitude || null,
     accuracy: position?.accuracy || null,
+    speed_ms: position?.speed_ms ?? null,
     battery_level: batteryLevel,
   };
 

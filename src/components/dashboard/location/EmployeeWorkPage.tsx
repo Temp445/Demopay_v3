@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { MapPin, Play, StopCircle, Activity, AlertTriangle, CheckCircle, Clock, Target, Map, ExternalLink, PauseCircle, PlayCircle, History, Briefcase, Navigation, Plus, Home, ArrowRight, RotateCcw, X, WifiOff, Info } from 'lucide-react';
+import { MapPin, Play, StopCircle, Activity, AlertTriangle, CheckCircle, Clock, Target, Map, ExternalLink, PauseCircle, PlayCircle, History, Briefcase, Navigation, Plus, Home, ArrowRight, RotateCcw, X, WifiOff, Info, Gauge } from 'lucide-react';
 import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
 import { useJourneyTrackingStore } from '../../../stores/journeyTrackingStore';
 import { useGatePassesStore } from '../../../stores/gatePassesStore'; 
@@ -106,6 +106,7 @@ export default function EmployeeWorkPage() {
     : undefined;
 
   const [currentUIPosition, setCurrentUIPosition] = useState<{lat: number, lng: number} | null>(null);
+  const [currentSpeedMs, setCurrentSpeedMs] = useState<number | null>(null);
 
   // Actively watch the user's location to update the UI and Map
   useEffect(() => {
@@ -117,6 +118,8 @@ export default function EmployeeWorkPage() {
             lat: position.coords.latitude,
             lng: position.coords.longitude
           });
+          // Capture raw GPS speed (m/s) — null on desktop/WiFi
+          setCurrentSpeedMs(position.coords.speed);
         },
         (error) => {
           console.warn('UI Geolocation Error:', error);
@@ -736,9 +739,22 @@ export default function EmployeeWorkPage() {
                             {isWithinRadius ? 'Within Work Area' : 'Outside Work Area'}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1 bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
-                          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                          Live Tracking
+                        <div className="flex items-center gap-2">
+                          {/* Movement state badge */}
+                          {currentSpeedMs !== null && (
+                            <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                              currentSpeedMs >= 8 ? 'bg-blue-100 text-blue-700' :
+                              currentSpeedMs >= 0.5 ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-gray-100 text-gray-500'
+                            }`}>
+                              {currentSpeedMs >= 8 ? '🚗 Driving' : currentSpeedMs >= 0.5 ? '🚶 Walking' : '🔴 Idle'}
+                              &nbsp;·&nbsp;{(currentSpeedMs * 3.6).toFixed(1)} km/h
+                            </span>
+                          )}
+                          <div className="flex items-center gap-1 bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
+                            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                            Live Tracking
+                          </div>
                         </div>
                       </div>
                       {distanceFromCenter !== null && locationSettings.radius_monitoring_enabled && (

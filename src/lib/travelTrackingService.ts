@@ -38,6 +38,25 @@ export interface TravelBreadcrumb {
   longitude: number;
   cumulative_distance_meters: number;
   recorded_at: string;
+  speed_ms?: number | null; // Raw GPS speed in m/s; null if device cannot determine
+}
+
+/** Movement classification derived from GPS speed */
+export type MovementState = 'stationary' | 'walking' | 'driving' | 'unknown';
+
+/**
+ * Classify a raw GPS speed (m/s) into a human-readable movement state.
+ * Thresholds:
+ *   < 0.5 m/s  → stationary
+ *   < 8.0 m/s  → walking / cycling (up to ~28 km/h)
+ *   ≥ 8.0 m/s  → driving
+ *   null/undef → unknown (desktop/WiFi device, no speed available)
+ */
+export function classifySpeed(speedMs: number | null | undefined): MovementState {
+  if (speedMs === null || speedMs === undefined) return 'unknown';
+  if (speedMs < 0.5) return 'stationary';
+  if (speedMs < 8.0) return 'walking';
+  return 'driving';
 }
 
 const STORAGE_KEY = 'ace_payroll_travel_session';
@@ -71,8 +90,9 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-// Internal callback — use registerDistanceCallback() from outside the module
+// Internal callbacks — use register/unregister from outside the module
 let _distanceCallback: ((meters: number) => void) | null = null;
+let _movementCallback: ((state: MovementState) => void) | null = null;
 
 /**
  * Register a UI callback to receive live distance updates.
@@ -87,6 +107,21 @@ export function registerDistanceCallback(cb: (meters: number) => void): void {
  */
 export function unregisterDistanceCallback(): void {
   _distanceCallback = null;
+}
+
+/**
+ * Register a UI callback to receive live movement state updates.
+ * Fires on every accepted GPS fix with the current MovementState.
+ */
+export function registerMovementCallback(cb: (state: MovementState) => void): void {
+  _movementCallback = cb;
+}
+
+/**
+ * Unregister the live movement state callback.
+ */
+export function unregisterMovementCallback(): void {
+  _movementCallback = null;
 }
 
 /**
@@ -205,7 +240,7 @@ export async function getTravelLogs(
 ): Promise<TravelBreadcrumb[]> {
   const { data, error } = await supabase
     .from('attendance_travel_logs')
-    .select('id, latitude, longitude, cumulative_distance_meters, recorded_at')
+    .select('id, latitude, longitude, cumulative_distance_meters, recorded_at, speed_ms')
     .eq('start_timestamp_id', startTimestampId)
     .order('recorded_at', { ascending: true });
 
@@ -219,6 +254,7 @@ export async function getTravelLogs(
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
     cumulative_distance_meters: Number(row.cumulative_distance_meters),
+    speed_ms: row.speed_ms !== null && row.speed_ms !== undefined ? Number(row.speed_ms) : null,
   }));
 }
 
@@ -247,7 +283,7 @@ export function getActiveSession(): TravelSession | null {
 async function handlePositionUpdate(position: GeolocationPosition): Promise<void> {
   if (!activeSession) return;
 
-  const { latitude, longitude, accuracy } = position.coords;
+  const { latitude, longitude, accuracy, speed } = position.coords;
   const now = Date.now();
 
   // Ignore poor accuracy fixes
@@ -264,6 +300,18 @@ async function handlePositionUpdate(position: GeolocationPosition): Promise<void
     distanceMoved = calculateDistance(lastStoredLat, lastStoredLng, latitude, longitude);
   }
 
+  // --- GPS Drift Filter ---
+  // If speed is near-zero AND the device barely moved, this is likely GPS jitter.
+  // Skip it to avoid fake breadcrumbs while the employee is standing still.
+  const speedMs: number | null = (speed !== null && speed !== undefined) ? speed : null;
+  const isDrift = speedMs !== null && speedMs < 0.3 && distanceMoved < 5 && lastStoredLat !== null;
+  if (isDrift) {
+    console.log(`[TravelTracking] Skipping GPS drift (speed: ${speedMs.toFixed(2)} m/s, dist: ${distanceMoved.toFixed(1)}m).`);
+    // Still broadcast movement state so the UI badge updates to 'stationary'
+    if (_movementCallback) _movementCallback('stationary');
+    return;
+  }
+
   // To prevent rapid-fire database spam from GPS drift on very low distance thresholds 
   // (e.g. if the user sets distance threshold to 1 meter), we enforce an absolute 
   // minimum throttle of 15 seconds between any two breadcrumbs.
@@ -278,12 +326,18 @@ async function handlePositionUpdate(position: GeolocationPosition): Promise<void
     isTimeThresholdMet ||
     isDistThresholdMet;
 
+  // Always broadcast current movement state to UI (even if we won't store the fix)
+  const currentState = classifySpeed(speedMs);
+  if (_movementCallback) {
+    _movementCallback(currentState);
+  }
+
   if (!shouldStore) return;
 
   // Update running totals
   cumulativeDistance += distanceMoved;
 
-  // Notify UI for live badge update
+  // Notify UI for live distance badge update
   if (_distanceCallback) {
     _distanceCallback(cumulativeDistance);
   }
@@ -295,7 +349,7 @@ async function handlePositionUpdate(position: GeolocationPosition): Promise<void
 
   saveState();
 
-  // Insert breadcrumb into database
+  // Insert breadcrumb into database (including speed)
   const { error } = await supabase
     .from('attendance_travel_logs')
     .insert({
@@ -305,13 +359,15 @@ async function handlePositionUpdate(position: GeolocationPosition): Promise<void
       latitude,
       longitude,
       accuracy,
+      speed_ms: speedMs,
       cumulative_distance_meters: Math.round(cumulativeDistance),
     });
 
   if (error) {
     console.error('[TravelTracking] Failed to insert breadcrumb:', error.message);
   } else {
-    console.log(`[TravelTracking] Breadcrumb stored — cumulative: ${cumulativeDistance.toFixed(0)}m`);
+    const speedLabel = speedMs !== null ? `${(speedMs * 3.6).toFixed(1)} km/h` : 'speed unknown';
+    console.log(`[TravelTracking] Breadcrumb stored — cumulative: ${cumulativeDistance.toFixed(0)}m | ${speedLabel} (${currentState})`);
   }
 }
 

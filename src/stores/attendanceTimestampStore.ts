@@ -332,12 +332,15 @@ export const useAttendanceTimestampStore = create<AttendanceTimestampStore>((set
 
   getLatestEntryType: async (employeeId, date) => {
     try {
-      const startOfQuery = new Date(date);
-      startOfQuery.setHours(0, 0, 0, 0);
-      startOfQuery.setHours(startOfQuery.getHours() - 24); // Look back 24 hours to catch previous day's clock-in
+      // Parse 'date' as a LOCAL date (YYYY-MM-DD), not UTC
+      const [yyyy, mm, dd] = date.split('-').map(Number);
 
-      const endOfDay = new Date(date);
-      endOfDay.setHours(23, 59, 59, 999);
+      // End of local day
+      const endOfDay = new Date(yyyy, mm - 1, dd, 23, 59, 59, 999);
+
+      // Start = local midnight of that day minus 24 hours (to catch previous-day clock-ins, e.g. night shifts)
+      const startOfQuery = new Date(yyyy, mm - 1, dd, 0, 0, 0, 0);
+      startOfQuery.setTime(startOfQuery.getTime() - 24 * 60 * 60 * 1000);
 
       const { data, error } = await supabase
         .from('attendance_timestamp')

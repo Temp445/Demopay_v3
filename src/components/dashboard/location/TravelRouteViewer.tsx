@@ -17,7 +17,7 @@ import {
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { X, Navigation, Clock, Ruler, Gauge, Maximize2, Minimize2 } from 'lucide-react';
-import { getTravelLogs, TravelBreadcrumb } from '../../../lib/travelTrackingService';
+import { getTravelLogs, TravelBreadcrumb, classifySpeed } from '../../../lib/travelTrackingService';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { GoogleMap, Marker as GoogleMarker, Polyline as GooglePolyline, useJsApiLoader } from '@react-google-maps/api';
 import MapLibre3DViewer, { Map3DMarker, Map3DRoute } from './MapLibre3DViewer';
@@ -108,6 +108,10 @@ export default function TravelRouteViewer({
     ? ((totalDistanceMeters / 1000) / (totalDurationSeconds / 3600)).toFixed(1)
     : '0.0';
 
+  const maxSpeedKmh = logs.length > 0
+    ? Math.max(...logs.map(l => (l.speed_ms != null ? l.speed_ms : 0))) * 3.6
+    : 0;
+
   return (
     <div className={`fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center ${isFullscreen ? 'p-0' : 'p-4'}`}>
       <div className={`bg-white shadow-2xl w-full flex flex-col overflow-hidden ${isFullscreen ? 'h-full max-w-full rounded-none' : 'max-w-4xl max-h-[90vh] rounded-2xl'}`}>
@@ -145,7 +149,7 @@ export default function TravelRouteViewer({
         </div>
 
         {/* Summary Stats */}
-        <div className="grid grid-cols-3 gap-px bg-gray-100 border-b border-gray-100">
+        <div className="grid grid-cols-4 gap-px bg-gray-100 border-b border-gray-100">
           <div className="bg-white px-4 py-3 flex items-center gap-3">
             <Ruler className="h-4 w-4 text-indigo-500 flex-shrink-0" />
             <div>
@@ -165,6 +169,15 @@ export default function TravelRouteViewer({
             <div>
               <p className="text-[10px] text-gray-500 uppercase tracking-wide">Avg Speed</p>
               <p className="text-sm font-bold text-gray-900">{avgSpeedKmh} km/h</p>
+            </div>
+          </div>
+          <div className="bg-white px-4 py-3 flex items-center gap-3">
+            <Gauge className="h-4 w-4 text-orange-500 flex-shrink-0" />
+            <div>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wide">Max Speed</p>
+              <p className="text-sm font-bold text-gray-900">
+                {maxSpeedKmh > 0 ? `${maxSpeedKmh.toFixed(1)} km/h` : '—'}
+              </p>
             </div>
           </div>
         </div>
@@ -322,21 +335,43 @@ export default function TravelRouteViewer({
               </span>
             </div>
             <div className="p-4 overflow-y-auto flex-1 space-y-4">
-              {logs.map((log, index) => (
-                <div key={index} className="flex gap-3">
-                  <div className="flex flex-col items-center mt-1">
-                    <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${index === 0 ? 'bg-green-500' : index === logs.length - 1 ? 'bg-red-500' : 'bg-indigo-400'}`}></div>
-                    {index !== logs.length - 1 && <div className="w-0.5 h-full bg-gray-200 my-1"></div>}
+              {logs.map((log, index) => {
+                const state = classifySpeed(log.speed_ms);
+                const dotColor =
+                  index === 0 ? 'bg-green-500' :
+                  index === logs.length - 1 ? 'bg-red-500' :
+                  state === 'driving' ? 'bg-blue-500' :
+                  state === 'walking' ? 'bg-yellow-400' :
+                  'bg-indigo-400';
+
+                const speedBadgeColor =
+                  state === 'driving' ? 'bg-blue-50 text-blue-700' :
+                  state === 'walking' ? 'bg-yellow-50 text-yellow-700' :
+                  state === 'stationary' ? 'bg-gray-100 text-gray-500' : '';
+
+                return (
+                  <div key={index} className="flex gap-3">
+                    <div className="flex flex-col items-center mt-1">
+                      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotColor}`}></div>
+                      {index !== logs.length - 1 && <div className="w-0.5 h-full bg-gray-200 my-1"></div>}
+                    </div>
+                    <div className="pb-2">
+                      <p className="text-xs font-medium text-gray-900 leading-tight">
+                        {index === 0 ? 'Clock In' : index === logs.length - 1 ? (clockOutTime ? 'Clock Out' : 'Current Location') : 'Checkpoint'}
+                      </p>
+                      <p className="text-[10px] text-gray-500 mt-0.5">{new Date(log.recorded_at).toLocaleString()}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        {log.accuracy && <p className="text-[9px] text-gray-400">Acc: {Math.round(log.accuracy)}m</p>}
+                        {log.speed_ms != null && (
+                          <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${speedBadgeColor}`}>
+                            {state === 'driving' ? '🚗' : state === 'walking' ? '🚶' : '•'} {(log.speed_ms * 3.6).toFixed(1)} km/h
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="pb-2">
-                    <p className="text-xs font-medium text-gray-900 leading-tight">
-                      {index === 0 ? 'Clock In' : index === logs.length - 1 ? (clockOutTime ? 'Clock Out' : 'Current Location') : 'Checkpoint'}
-                    </p>
-                    <p className="text-[10px] text-gray-500 mt-0.5">{new Date(log.recorded_at).toLocaleString()}</p>
-                    {log.accuracy && <p className="text-[9px] text-gray-400 mt-0.5">Acc: {Math.round(log.accuracy)}m</p>}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {logs.length === 0 && (
                 <div className="text-center text-xs text-gray-400 mt-4">
                   No checkpoints found.

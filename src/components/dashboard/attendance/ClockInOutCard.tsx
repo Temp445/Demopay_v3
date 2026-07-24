@@ -18,7 +18,13 @@ import { supabase } from "../../../lib/supabase";
 import { useTenant } from '../../../contexts/TenantContext';
 import { validateLocationAgainstBranches } from '../../../lib/locationService';
 import * as travelService from '../../../lib/travelTrackingService';
-import { registerDistanceCallback, unregisterDistanceCallback } from '../../../lib/travelTrackingService';
+import {
+  registerDistanceCallback,
+  unregisterDistanceCallback,
+  registerMovementCallback,
+  unregisterMovementCallback,
+  type MovementState,
+} from '../../../lib/travelTrackingService';
 import { useOutsideOfficeApprovalsStore } from '../../../stores/outsideOfficeApprovalsStore';
 import OutsideOfficeReasonModal from './OutsideOfficeReasonModal';
 
@@ -101,19 +107,37 @@ export default function ClockInOutCard({
   // Travel tracking live badge state
   const [liveDistance, setLiveDistance] = useState<number>(0);
   const [isTracking, setIsTracking] = useState(false);
+  const [movementState, setMovementState] = useState<MovementState>('unknown');
 
   // Outside office approval state
-  const { createApproval, updateClockOut, updateInsideOfficeClockIn } = useOutsideOfficeApprovalsStore();
+  const { createApproval, updateClockOut, updateInsideOfficeClockIn, fetchByEmployee, cancelApproval } = useOutsideOfficeApprovalsStore();
   const [pendingApproval, setPendingApproval] = useState<{
     id: string;
     clockInTime: string;
     attendanceLocation?: string | null;
   } | null>(null);
+  
+  const [pendingActions, setPendingActions] = useState<any[]>([]);
+  const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
 
-  // Register live distance callback from service so UI badge updates in real-time
+  useEffect(() => {
+    if (selectedEmployee) {
+      fetchByEmployee(selectedEmployee.id).then((data) => {
+        const pending = data.filter(d => d.status === 'pending' && !d.reason);
+        setPendingActions(pending);
+      });
+    } else {
+      setPendingActions([]);
+    }
+  }, [selectedEmployee, pendingApproval, lastRefresh, fetchByEmployee]);
+
+  // Register live distance + movement callbacks from service so UI badge updates in real-time
   useEffect(() => {
     registerDistanceCallback((meters: number) => {
       setLiveDistance(meters);
+    });
+    registerMovementCallback((state: MovementState) => {
+      setMovementState(state);
     });
     // Restore badge if tracking was already active (e.g. user navigated away and came back)
     if (travelService.isTravelTrackingActive()) {
@@ -122,6 +146,7 @@ export default function ClockInOutCard({
     }
     return () => {
       unregisterDistanceCallback();
+      unregisterMovementCallback();
     };
   }, []);
 
@@ -270,10 +295,16 @@ export default function ClockInOutCard({
         setLoading(true);
         setError(null);
 
-        // 1. Fetch latest entry type
+        // 1. Fetch latest entry type — use local date, NOT UTC (UTC can be a day behind in IST)
+        const getLocalDateStr = (d: Date) => {
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          const dd = String(d.getDate()).padStart(2, '0');
+          return `${yyyy}-${mm}-${dd}`;
+        };
         const todayStrForEntry = manualMode
-          ? new Date(manualDateTime).toISOString().split("T")[0]
-          : new Date().toISOString().split("T")[0];
+          ? getLocalDateStr(new Date(manualDateTime))
+          : getLocalDateStr(new Date());
         const latestEntry = await getLatestEntryType(selectedEmployee.id, todayStrForEntry);
         setLatestEntryType(latestEntry?.type || null);
         setLatestEntryTime(latestEntry?.timestamp || null);
@@ -696,15 +727,32 @@ export default function ClockInOutCard({
             </h3>
           </div>
 
-          {/* Live Travel Tracking Badge */}
-          {isTracking && (
+          {/* Live Travel Tracking Badge — only show for the employee whose session is active */}
+          {isTracking && travelService.getActiveSession()?.employeeId === selectedEmployee?.id && (
             <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium px-3 py-1.5 rounded-full animate-pulse-badge">
               <span className="relative flex h-2.5 w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
               </span>
               <Navigation className="h-3.5 w-3.5" />
-              Tracking travel &mdash; {liveDistance >= 1000
+              {/* Movement state icon + label */}
+              {movementState === 'stationary' && (
+                <span className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-red-400 inline-block" />
+                  Idle
+                </span>
+              )}
+              {movementState === 'walking' && (
+                <span>🚶 Walking</span>
+              )}
+              {movementState === 'driving' && (
+                <span>🚗 Driving</span>
+              )}
+              {movementState === 'unknown' && (
+                <span>Tracking</span>
+              )}
+              &nbsp;&mdash;&nbsp;
+              {liveDistance >= 1000
                 ? `${(liveDistance / 1000).toFixed(2)} km`
                 : `${Math.round(liveDistance)} m`}
             </div>
@@ -785,6 +833,88 @@ export default function ClockInOutCard({
               <div className="mt-6 flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg border border-gray-200">
                 <AlertCircle className="h-10 w-10 text-gray-400 mb-2" />
                 <h4 className="text-lg font-medium text-gray-900">Clock-in/out via Hik device or physical device.</h4>
+              </div>
+            )}
+
+            {/* Pending Actions Section */}
+            {pendingActions.length > 0 && (
+              <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 overflow-hidden shadow-sm">
+                <div className="px-4 py-3 bg-amber-100/50 border-b border-amber-200 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-5 w-5 text-amber-600" />
+                    <h4 className="text-sm font-semibold text-amber-900">Pending Actions</h4>
+                  </div>
+                  <span className="bg-amber-200 text-amber-800 text-xs font-bold px-2 py-0.5 rounded-full">
+                    {pendingActions.length}
+                  </span>
+                </div>
+                <div className="divide-y divide-amber-100">
+                  {pendingActions.map(action => (
+                    <div key={action.id} className="flex flex-col">
+                      <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-amber-900">Outside Office Clock-In</p>
+                          <p className="text-xs text-amber-700 mt-1">
+                            {new Date(action.clock_in_time).toLocaleString()} • {action.attendance_location || 'Unknown Location'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setPendingApproval({
+                              id: action.id,
+                              clockInTime: action.clock_in_time,
+                              attendanceLocation: action.attendance_location
+                            })}
+                            className="whitespace-nowrap px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm"
+                          >
+                            Provide Reason
+                          </button>
+                          <button
+                            onClick={() => setCancelConfirmId(action.id)}
+                            className="whitespace-nowrap px-3 py-1.5 bg-white hover:bg-gray-100 text-gray-600 text-xs font-semibold rounded-lg border border-gray-300 transition-colors shadow-sm"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Inline cancel confirmation warning */}
+                      {cancelConfirmId === action.id && (
+                        <div className="mx-4 mb-4 p-3 rounded-lg bg-red-50 border border-red-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-xs font-semibold text-red-800">Are you sure you want to cancel this request?</p>
+                              <p className="text-xs text-red-600 mt-0.5">This will permanently delete the outside office approval record and cannot be undone.</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await cancelApproval(action.id);
+                                  setPendingActions(prev => prev.filter(a => a.id !== action.id));
+                                  setCancelConfirmId(null);
+                                } catch {
+                                  setCancelConfirmId(null);
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors"
+                            >
+                              Yes, Cancel
+                            </button>
+                            <button
+                              onClick={() => setCancelConfirmId(null)}
+                              className="px-3 py-1.5 bg-white hover:bg-gray-100 text-gray-700 text-xs font-semibold rounded-lg border border-gray-300 transition-colors"
+                            >
+                              Keep
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -936,7 +1066,24 @@ export default function ClockInOutCard({
           employeeName={selectedEmployee.name}
           clockInTime={pendingApproval.clockInTime}
           attendanceLocation={pendingApproval.attendanceLocation}
-          onSubmitted={() => setPendingApproval(null)}
+          onSubmitted={() => {
+            setPendingApproval(null);
+            // Re-fetch to remove from pending list once submitted
+            if (selectedEmployee) {
+              fetchByEmployee(selectedEmployee.id).then((data) => {
+                setPendingActions(data.filter(d => d.status === 'pending' && !d.reason));
+              });
+            }
+          }}
+          onLater={() => {
+            setPendingApproval(null);
+            // Re-fetch so the record appears in the Pending Actions section
+            if (selectedEmployee) {
+              fetchByEmployee(selectedEmployee.id).then((data) => {
+                setPendingActions(data.filter(d => d.status === 'pending' && !d.reason));
+              });
+            }
+          }}
         />
       )}
     </div>

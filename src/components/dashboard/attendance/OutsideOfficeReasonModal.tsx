@@ -10,6 +10,7 @@ interface OutsideOfficeReasonModalProps {
   clockInTime: string;
   attendanceLocation?: string | null;
   onSubmitted: () => void;
+  onLater?: () => void;
 }
 
 export default function OutsideOfficeReasonModal({
@@ -18,6 +19,7 @@ export default function OutsideOfficeReasonModal({
   clockInTime,
   attendanceLocation,
   onSubmitted,
+  onLater,
 }: OutsideOfficeReasonModalProps) {
   const { submitReason } = useOutsideOfficeApprovalsStore();
   const [reason, setReason] = useState('');
@@ -95,17 +97,26 @@ export default function OutsideOfficeReasonModal({
             <p className="text-xs text-gray-400 mt-1">{reason.length}/500 characters</p>
           </label>
 
-          <button
-            onClick={handleSubmit}
-            disabled={submitting || !reason.trim()}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-sm"
-          >
-            {submitting ? (
-              <><Loader2 className="h-4 w-4 animate-spin" /> Submitting...</>
-            ) : (
-              <><CheckCircle className="h-4 w-4" /> Submit Request</>
-            )}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => onLater ? onLater() : onSubmitted()}
+              disabled={submitting}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl transition-colors shadow-sm"
+            >
+              Later
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !reason.trim()}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-sm"
+            >
+              {submitting ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Submitting...</>
+              ) : (
+                <><CheckCircle className="h-4 w-4" /> Submit Request</>
+              )}
+            </button>
+          </div>
 
           <p className="text-xs text-center text-gray-400">
             This request will be reviewed by your administrator.

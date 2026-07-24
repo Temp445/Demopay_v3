@@ -64,6 +64,14 @@ function calculateTotalDistance(coords: [number, number][]): number {
   return total;
 }
 
+// Speed classification (same thresholds as travelTrackingService)
+function classifySpeed(speedMs: number | null | undefined): 'stationary' | 'walking' | 'driving' | 'unknown' {
+  if (speedMs == null) return 'unknown';
+  if (speedMs < 0.3) return 'stationary';
+  if (speedMs < 8) return 'walking';
+  return 'driving';
+}
+
 // --- REVERSE GEOCODING COMPONENT ---
 const geocodeCache: Record<string, string> = {};
 
@@ -617,7 +625,7 @@ export default function WorkLocationApprovalPage() {
   const timelineEvents = useMemo(() => {
     if (!selectedWork) return [];
     
-    const logs: Array<{ status: string, timestamp: string, message: string, lat?: number, lng?: number, locationId?: string }> = [];
+    const logs: Array<{ status: string, timestamp: string, message: string, lat?: number, lng?: number, locationId?: string, speed_ms?: number | null }> = [];
 
     if (journeyLogs && journeyLogs.length > 0) {
       // For timeline, show all events but skip pure LIVE_TRACK noise
@@ -651,6 +659,7 @@ export default function WorkLocationApprovalPage() {
           lat: log.latitude,
           lng: log.longitude,
           locationId: log.work_location_id,
+          speed_ms: log.speed_ms ?? null,
         });
       });
     } else {
@@ -1625,6 +1634,9 @@ export default function WorkLocationApprovalPage() {
         const lastLogTime = journeyLogs.length > 0 ? new Date(journeyLogs[journeyLogs.length - 1].timestamp).getTime() : 0;
         const totalDurationSeconds = journeyLogs.length > 0 ? (lastLogTime - firstLogTime) / 1000 : 0;
         const avgSpeedKmh = totalDurationSeconds > 0 ? ((totalDistanceMeters / 1000) / (totalDurationSeconds / 3600)).toFixed(1) : '0.0';
+        const maxSpeedKmh = journeyLogs.length > 0
+          ? Math.max(...journeyLogs.map(l => (l.speed_ms != null ? l.speed_ms : 0))) * 3.6
+          : 0;
 
         return (
           <div className={`fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center ${isFullscreen ? 'p-0' : 'p-4'}`}>
@@ -1657,7 +1669,7 @@ export default function WorkLocationApprovalPage() {
               </div>
 
               {/* Summary Stats */}
-              <div className="grid grid-cols-3 gap-px bg-gray-100 border-b border-gray-100 shrink-0">
+              <div className="grid grid-cols-4 gap-px bg-gray-100 border-b border-gray-100 shrink-0">
                 <div className="bg-white px-4 py-3 flex items-center gap-3">
                   <Ruler className="h-4 w-4 text-blue-500 flex-shrink-0" />
                   <div>
@@ -1677,6 +1689,15 @@ export default function WorkLocationApprovalPage() {
                   <div>
                     <p className="text-[10px] text-gray-500 uppercase tracking-wide">Avg Speed</p>
                     <p className="text-sm font-bold text-gray-900">{avgSpeedKmh} km/h</p>
+                  </div>
+                </div>
+                <div className="bg-white px-4 py-3 flex items-center gap-3">
+                  <Gauge className="h-4 w-4 text-orange-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wide">Max Speed</p>
+                    <p className="text-sm font-bold text-gray-900">
+                      {maxSpeedKmh > 0 ? `${maxSpeedKmh.toFixed(1)} km/h` : '—'}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1735,18 +1756,30 @@ export default function WorkLocationApprovalPage() {
                           Timeline ({timelineEvents.length})
                         </div>
                         <div className="divide-y divide-gray-100 overflow-y-auto">
-                          {timelineEvents.map((evt, i) => (
-                            <div key={i} className="flex items-center gap-2 px-3 py-2">
-                              <span className="text-base shrink-0">{getTimelineIcon(evt.status)}</span>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-xs font-medium text-gray-800 capitalize truncate">{evt.status}</div>
-                                <div className="text-[10px] text-gray-500 truncate">{evt.message}</div>
-                              </div>
-                              <div className="text-[10px] text-gray-500 font-medium whitespace-nowrap shrink-0">
-                                {format(new Date(evt.timestamp), 'hh:mm a')}
-                              </div>
-                            </div>
-                          ))}
+                          {timelineEvents.map((evt, i) => {
+                             const state = classifySpeed(evt.speed_ms);
+                             const speedBadgeColor =
+                               state === 'driving' ? 'bg-blue-50 text-blue-700' :
+                               state === 'walking' ? 'bg-yellow-50 text-yellow-700' :
+                               state === 'stationary' ? 'bg-gray-100 text-gray-500' : '';
+                             return (
+                               <div key={i} className="flex items-start gap-2 px-3 py-2">
+                                 <span className="text-base shrink-0 mt-0.5">{getTimelineIcon(evt.status)}</span>
+                                 <div className="flex-1 min-w-0">
+                                   <div className="text-xs font-medium text-gray-800 capitalize truncate">{evt.status}</div>
+                                   <div className="text-[10px] text-gray-500 truncate">{evt.message}</div>
+                                   {evt.speed_ms != null && (
+                                     <span className={`inline-flex items-center gap-0.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-full mt-0.5 ${speedBadgeColor}`}>
+                                       {state === 'driving' ? '🚗' : state === 'walking' ? '🚶' : '•'} {(evt.speed_ms * 3.6).toFixed(1)} km/h
+                                     </span>
+                                   )}
+                                 </div>
+                                 <div className="text-[10px] text-gray-500 font-medium whitespace-nowrap shrink-0">
+                                   {format(new Date(evt.timestamp), 'hh:mm a')}
+                                 </div>
+                               </div>
+                             );
+                           })}
                         </div>
                       </div>
                     ) : (

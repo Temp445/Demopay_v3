@@ -50,6 +50,7 @@ export interface WorkLocationTracking {
   latitude: number;
   longitude: number;
   accuracy?: number;
+  speed_ms?: number | null; // Raw GPS speed in m/s; null if device cannot determine
 
   distance_from_center?: number;
   is_within_radius: boolean;
@@ -83,6 +84,7 @@ export interface JourneyTrackingLog {
   latitude: number | null;
   longitude: number | null;
   accuracy?: number | null;
+  speed_ms?: number | null; // Raw GPS speed in m/s; null if device cannot determine
   battery_level?: number;
   timestamp: string;
   created_at: string;
@@ -131,6 +133,7 @@ export interface GPSCoordinates {
   latitude: number;
   longitude: number;
   accuracy?: number;
+  speed_ms?: number | null; // Raw GPS speed in m/s from navigator.geolocation; null if unavailable
 }
 
 export interface GPSTrackingState {

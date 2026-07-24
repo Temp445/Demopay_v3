@@ -42,6 +42,7 @@ interface OutsideOfficeApprovalsStore {
   reject: (id: string, userId: string, rejectReason?: string) => Promise<void>;
   updateClockOut: (employeeId: string, date: string, clockOutTime: string) => Promise<void>;
   updateInsideOfficeClockIn: (employeeId: string, date: string, time: string) => Promise<void>;
+  cancelApproval: (id: string) => Promise<void>;
   clearError: () => void;
 }
 
@@ -213,4 +214,31 @@ export const useOutsideOfficeApprovalsStore = create<OutsideOfficeApprovalsStore
   },
 
   clearError: () => set({ error: null }),
+
+  cancelApproval: async (id) => {
+    try {
+      // Use .select() so Supabase returns the deleted rows.
+      // If the result is empty the DELETE was silently blocked by RLS.
+      const { data, error } = await supabase
+        .from('outside_office_approvals')
+        .delete()
+        .eq('id', id)
+        .select('id');
+
+      if (error) throw error;
+
+      // If no rows came back the delete was blocked — fall back to
+      // stamping a sentinel reason so it no longer shows as "pending".
+      if (!data || data.length === 0) {
+        const { error: updateError } = await supabase
+          .from('outside_office_approvals')
+          .update({ reason: '(Cancelled)', updated_at: new Date().toISOString() })
+          .eq('id', id);
+        if (updateError) throw updateError;
+      }
+    } catch (err: any) {
+      console.error('Failed to cancel outside office approval:', err);
+      throw err;
+    }
+  },
 }));

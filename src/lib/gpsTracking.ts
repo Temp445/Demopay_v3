@@ -31,6 +31,7 @@ export class GPSTrackingService {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
           accuracy: position.coords.accuracy,
+          speed_ms: position.coords.speed !== null ? position.coords.speed : null,
         };
         this.onPositionUpdate?.(coords);
       },
@@ -75,6 +76,7 @@ export class GPSTrackingService {
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
             accuracy: position.coords.accuracy,
+            speed_ms: position.coords.speed !== null ? position.coords.speed : null,
           });
         },
         (error) => {

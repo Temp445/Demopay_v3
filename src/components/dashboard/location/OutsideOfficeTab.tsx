@@ -129,7 +129,7 @@ export default function OutsideOfficeTab() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Remote Check-In Approvals</h1>
+          <h1 className="text-xl font-bold text-gray-900">Remote Clock-In Approvals</h1>
           <p className="text-sm text-gray-500 mt-0.5">Review and approve travel slips for employees who clocked in outside the office</p>
         </div>
       </div>
@@ -213,7 +213,7 @@ export default function OutsideOfficeTab() {
                           <span className="font-medium">Clock-In:</span>
                           <span>{format(new Date(item.clock_in_time), 'hh:mm a')}</span>
                         </div>
-                        {item.clock_out_time && (
+                        {item.clock_out_time && !item.inside_office_clock_in_time && (
                           <div className="flex items-center gap-1.5 text-gray-600">
                             <Clock className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
                             <span className="font-medium">Clock-Out:</span>
@@ -384,9 +384,10 @@ export default function OutsideOfficeTab() {
           timestampId={viewingRoute.timestamp_id}
           employeeName={viewingRoute.employee_name || 'Employee'}
           clockInTime={viewingRoute.clock_in_time}
-          clockOutTime={viewingRoute.clock_out_time || undefined}
+          clockOutTime={viewingRoute.inside_office_clock_in_time || viewingRoute.clock_out_time || undefined}
           totalDistanceMeters={viewingRoute.distance_meters || 0}
           onClose={() => setViewingRoute(null)}
+          clockOutLabel={viewingRoute.inside_office_clock_in_time ? 'Clock In (Office)' : 'Clock Out'}
         />
       )}
     </div>

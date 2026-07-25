@@ -1,5 +1,8 @@
 import { useRef, useCallback } from 'react';
-import { GoogleMap, MarkerF, PolylineF, CircleF, InfoWindowF, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, PolylineF, CircleF, InfoWindowF } from '@react-google-maps/api';
+import AdvancedMarker from './AdvancedMarker';
+import { useGoogleMaps } from '../../../contexts/GoogleMapsContext';
+const MAP_ID = 'DEMO_MAP_ID';
 import { MapPin, Navigation as NavigationIcon } from 'lucide-react';
 import { useState } from 'react';
 
@@ -28,9 +31,10 @@ export default function GoogleMapsMapViewer({
   height = '400px',
   radius,
 }: GoogleMapsMapViewerProps) {
-  const { isLoaded } = useJsApiLoader({ googleMapsApiKey: apiKey });
+  const { isLoaded } = useGoogleMaps();
 
   const mapRef = useRef<google.maps.Map | null>(null);
+  const [map, setMap] = useState<google.maps.Map | null>(null);
   const [showInfo, setShowInfo] = useState(false);
 
   const center = { lat: latitude, lng: longitude };
@@ -38,13 +42,14 @@ export default function GoogleMapsMapViewer({
     ? { lat: currentLat, lng: currentLng }
     : undefined;
 
-  const onMapLoad = useCallback((map: google.maps.Map) => {
-    mapRef.current = map;
+  const onMapLoad = useCallback((mapInstance: google.maps.Map) => {
+    mapRef.current = mapInstance;
+    setMap(mapInstance);
     if (currentPosition) {
       const bounds = new google.maps.LatLngBounds();
       bounds.extend(center);
       bounds.extend(currentPosition);
-      map.fitBounds(bounds, 50);
+      mapInstance.fitBounds(bounds, 50);
     }
   }, [currentPosition]);
 
@@ -96,20 +101,20 @@ export default function GoogleMapsMapViewer({
           zoom={showNavigation && currentPosition ? 12 : 15}
           onLoad={onMapLoad}
           options={{
+            mapId: MAP_ID,
             streetViewControl: false,
             fullscreenControl: true,
             mapTypeControl: true,
             mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
           }}
         >
-          <MarkerF
+          <AdvancedMarker
+            map={map}
             position={center}
             onClick={() => setShowInfo(true)}
-            icon={{
-              url: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-              scaledSize: new google.maps.Size(25, 41),
-              anchor: new google.maps.Point(12, 41),
-            }}
+            iconUrl="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png"
+            iconSize={[25, 41]}
+            iconAnchor={[12, 41]}
           />
 
           {showInfo && (
@@ -139,13 +144,12 @@ export default function GoogleMapsMapViewer({
 
           {showNavigation && currentPosition && (
             <>
-              <MarkerF
+              <AdvancedMarker
+                map={map}
                 position={currentPosition}
-                icon={{
-                  url: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-                  scaledSize: new google.maps.Size(25, 41),
-                  anchor: new google.maps.Point(12, 41),
-                }}
+                iconUrl="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png"
+                iconSize={[25, 41]}
+                iconAnchor={[12, 41]}
               />
               <PolylineF
                 path={[currentPosition, center]}

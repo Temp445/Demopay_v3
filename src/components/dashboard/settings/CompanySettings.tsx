@@ -1299,7 +1299,7 @@ export default function CompanySettings() {
                         <ul className="list-disc pl-4 space-y-0.5 ml-1">
                           <li><strong>Maps JavaScript API</strong> (Required)</li>
                           <li><strong>Geocoding API</strong> (Required)</li>
-                          <li><strong>Directions API</strong> (Optional - for curved roads & multi-stop routing)</li>
+                          <li><strong>Routes API</strong> (Optional - for multi-stop routing optimization)</li>
                           <li><strong>Distance Matrix API</strong> (Optional - for exact travel allowance distances)</li>
                           <li><strong>Places API (New)</strong> (Optional - for address auto-complete)</li>
                         </ul>
@@ -1344,11 +1344,11 @@ export default function CompanySettings() {
                         <div className="space-y-4">
                             <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                           <div>
-                            <label className="text-sm font-medium text-gray-900">Directions API</label>
+                            <label className="text-sm font-medium text-gray-900">Routes API</label>
                             <p className="text-xs text-gray-500 mt-1">
                               {formData.enableDirectionsApi 
-                                ? "Enabled: Draws exact road curves and powers the Multi-Stop Route Optimizer."
-                                : "Disabled: Falls back to straight-line drawing and manual routing."}
+                                ? "Enabled: Powers the Multi-Stop Route Optimizer."
+                                : "Disabled: Route Optimizer is disabled."}
                             </p>
                           </div>
                           <button

@@ -24,9 +24,10 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
 
   // Calculate duration
   const totalDurationSeconds = useMemo(() => {
-    if (!item.clock_out_time) return 0;
-    return Math.floor((new Date(item.clock_out_time).getTime() - new Date(item.clock_in_time).getTime()) / 1000);
-  }, [item.clock_in_time, item.clock_out_time]);
+    const endTime = item.inside_office_clock_in_time || item.clock_out_time;
+    if (!endTime) return 0;
+    return Math.floor((new Date(endTime).getTime() - new Date(item.clock_in_time).getTime()) / 1000);
+  }, [item.clock_in_time, item.clock_out_time, item.inside_office_clock_in_time]);
 
   const formatDuration = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -69,14 +70,14 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
           if (tsData.longitude != null) finalClockInLng = tsData.longitude;
         }
 
-        if (item.clock_out_time) {
+        const endTime = item.inside_office_clock_in_time || item.clock_out_time;
+        if (endTime) {
           const { data: outTsData } = await supabase
             .from('attendance_timestamp')
             .select('latitude, longitude')
             .eq('employee_id', item.employee_id)
-            .eq('entry', 'OUT')
-            .eq('timestamp', item.clock_out_time)
-            .single();
+            .eq('timestamp', endTime)
+            .maybeSingle();
             
           if (outTsData) {
             if (outTsData.latitude != null) finalClockOutLat = outTsData.latitude;
@@ -97,8 +98,8 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
           }
         }
 
-        if (item.clock_out_time && finalClockOutLat != null && finalClockOutLng != null) {
-          const hasEnd = finalLogs.length > 0 && Math.abs(new Date(finalLogs[finalLogs.length - 1].recorded_at).getTime() - new Date(item.clock_out_time).getTime()) < 60000;
+        if (endTime && finalClockOutLat != null && finalClockOutLng != null) {
+          const hasEnd = finalLogs.length > 0 && Math.abs(new Date(finalLogs[finalLogs.length - 1].recorded_at).getTime() - new Date(endTime).getTime()) < 60000;
           if (!hasEnd) {
             let maxDist = finalLogs.length > 0 ? finalLogs[finalLogs.length - 1].cumulative_distance_meters : 0;
             
@@ -118,7 +119,7 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
               latitude: finalClockOutLat,
               longitude: finalClockOutLng,
               cumulative_distance_meters: maxDist,
-              recorded_at: item.clock_out_time,
+              recorded_at: endTime,
             } as any);
           }
         }

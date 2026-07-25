@@ -20,19 +20,17 @@ import { X, Navigation, Clock, Ruler, Gauge, Maximize2, Minimize2, MapPin } from
 import { getTravelLogs, TravelBreadcrumb, classifySpeed } from '../../../lib/travelTrackingService';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { supabase } from '../../../lib/supabase';
-import { GoogleMap, MarkerF as GoogleMarker, PolylineF as GooglePolyline, DirectionsRenderer, useJsApiLoader } from '@react-google-maps/api';
-import MapLibre3DViewer, { Map3DMarker, Map3DRoute } from './MapLibre3DViewer';
+import { GoogleMap, PolylineF as GooglePolyline } from '@react-google-maps/api';
+import AdvancedMarker from './AdvancedMarker';
+import { useGoogleMaps } from '../../../contexts/GoogleMapsContext';
+const MAP_ID = 'DEMO_MAP_ID';
 
-const libraries: ('places' | 'geocoding')[] = ['places', 'geocoding'];
+
 
 // Helper to generate modern SVG map pins for Google Maps
-const getPinIcon = (color: string, googleObj: any) => {
+const getPinIconUrl = (color: string) => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="${color}"><path d="M12 0C7.58 0 4 3.58 4 8c0 5.25 8 16 8 16s8-10.75 8-16c0-4.42-3.58-8-8-8z"></path><circle cx="12" cy="8" r="3" fill="white"></circle></svg>`;
-  return {
-    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-    scaledSize: googleObj ? new googleObj.maps.Size(32, 32) : null,
-    anchor: googleObj ? new googleObj.maps.Point(16, 32) : null
-  };
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 };
 
 const getLeafletPinIcon = (color: string) => L.divIcon({
@@ -70,6 +68,7 @@ interface TravelRouteViewerProps {
   totalDistanceMeters?: number;
   totalDurationSeconds?: number;
   onClose: () => void;
+  clockOutLabel?: string;
 }
 
 function formatDuration(seconds: number): string {
@@ -96,20 +95,18 @@ export default function TravelRouteViewer({
   totalDistanceMeters = 0,
   totalDurationSeconds = 0,
   onClose,
+  clockOutLabel,
 }: TravelRouteViewerProps) {
   const [logs, setLogs] = useState<TravelBreadcrumb[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
   const [mapType, setMapType] = useState<'map' | 'satellite' | '3d'>('map');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [directionsResponse, setDirectionsResponse] = useState<google.maps.DirectionsResult | null>(null);
+  const [googleMap, setGoogleMap] = useState<google.maps.Map | null>(null);
   const { companySettings } = useSettingsStore();
 
   const isGoogleEnabled = companySettings?.google_maps_enabled && companySettings?.google_maps_api_key;
-  const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: companySettings?.google_maps_api_key || '',
-    libraries,
-  });
+  const { isLoaded } = useGoogleMaps();
 
   useEffect(() => {
     let active = true;
@@ -147,9 +144,8 @@ export default function TravelRouteViewer({
             .from('attendance_timestamp')
             .select('latitude, longitude')
             .eq('employee_id', empId)
-            .eq('entry', 'OUT')
             .eq('timestamp', clockOutTime)
-            .single();
+            .maybeSingle();
             
           if (outTsData) {
             if (outTsData.latitude != null) finalClockOutLat = outTsData.latitude;
@@ -213,53 +209,15 @@ export default function TravelRouteViewer({
         const outTime = new Date(clockOutTime).getTime();
         // If it's closer to clockOut time than clockIn time
         if (Math.abs(logTime - outTime) < Math.abs(logTime - inTime)) {
-          return 'Clock Out';
+          return clockOutLabel || 'Clock Out';
         }
       }
       return 'Clock In';
     }
     if (index === 0) return 'Clock In';
-    if (index === logs.length - 1) return clockOutTime ? 'Clock Out' : 'Current Location';
+    if (index === logs.length - 1) return clockOutTime ? (clockOutLabel || 'Clock Out') : 'Current Location';
     return 'Checkpoint';
   };
-
-  useEffect(() => {
-    if (isGoogleEnabled && companySettings?.enable_directions_api && isLoaded && coords.length >= 2) {
-      const directionsService = new window.google.maps.DirectionsService();
-      
-      const origin = { lat: coords[0][0], lng: coords[0][1] };
-      const destination = { lat: coords[coords.length - 1][0], lng: coords[coords.length - 1][1] };
-      
-      // Google Directions allows max 25 waypoints (including origin/destination).
-      // We downsample the middle breadcrumbs to max 23 waypoints.
-      let waypointsCoords = coords.slice(1, coords.length - 1);
-      if (waypointsCoords.length > 23) {
-        const step = Math.ceil(waypointsCoords.length / 23);
-        waypointsCoords = waypointsCoords.filter((_, index) => index % step === 0).slice(0, 23);
-      }
-      
-      const waypoints = waypointsCoords.map(c => ({
-        location: { lat: c[0], lng: c[1] },
-        stopover: false
-      }));
-
-      directionsService.route(
-        {
-          origin,
-          destination,
-          waypoints,
-          travelMode: window.google.maps.TravelMode.DRIVING,
-        },
-        (result, status) => {
-          if (status === window.google.maps.DirectionsStatus.OK) {
-            setDirectionsResponse(result);
-          } else {
-            console.error('[Directions API] Error fetching route:', status);
-          }
-        }
-      );
-    }
-  }, [isLoaded, coords.length, companySettings?.enable_directions_api, isGoogleEnabled]);
 
   const effectiveDurationSeconds = totalDurationSeconds > 0 
     ? totalDurationSeconds 
@@ -410,6 +368,7 @@ export default function TravelRouteViewer({
               <GoogleMap
                 mapContainerStyle={{ width: '100%', height: '100%' }}
                 options={{
+                  mapId: MAP_ID,
                   disableDefaultUI: false,
                   mapTypeControl: true,
                   mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
@@ -417,6 +376,7 @@ export default function TravelRouteViewer({
                   fullscreenControl: true,
                 }}
                 onLoad={(map) => {
+                  setGoogleMap(map);
                   if (coords.length > 0) {
                     const bounds = new google.maps.LatLngBounds();
                     coords.forEach(coord => bounds.extend({ lat: coord[0], lng: coord[1] }));
@@ -429,16 +389,22 @@ export default function TravelRouteViewer({
                   options={{ strokeColor: '#4f46e5', strokeWeight: 4, strokeOpacity: 0.85 }}
                 />
                 
-                <GoogleMarker 
+                <AdvancedMarker 
+                  map={googleMap}
                   position={{ lat: coords[0][0], lng: coords[0][1] }} 
-                  icon={getPinIcon(getLogLabel(0) === 'Clock Out' ? '#dc2626' : '#16a34a', window.google)}
+                  iconUrl={getPinIconUrl(getLogLabel(0) === 'Clock Out' ? '#dc2626' : '#16a34a')}
+                  iconSize={[32, 32]}
+                  iconAnchor={[16, 32]}
                   title={showLabels ? `${getLogLabel(0)} · ${new Date(logs[0].recorded_at).toLocaleString()}` : getLogLabel(0)}
                 />
                 
                 {coords.length > 1 && (
-                  <GoogleMarker 
+                  <AdvancedMarker 
+                    map={googleMap}
                     position={{ lat: coords[coords.length - 1][0], lng: coords[coords.length - 1][1] }} 
-                    icon={getPinIcon('#dc2626', window.google)}
+                    iconUrl={getPinIconUrl('#dc2626')}
+                    iconSize={[32, 32]}
+                    iconAnchor={[16, 32]}
                     title={showLabels ? `${getLogLabel(coords.length - 1)} · ${new Date(logs[logs.length - 1].recorded_at).toLocaleString()}` : getLogLabel(coords.length - 1)}
                   />
                 )}

@@ -50,7 +50,7 @@ interface AttendanceTimestampStore extends StoreState<AttendanceTimestamp> {
   fetchTimestampsByEmployee: (employeeId: string, date: string) => Promise<void>;
   fetchTimestampsByDateRange: (employeeId: string, startDate: string, endDate: string) => Promise<void>;
   getTodayTimestamps: (employeeId: string) => Promise<AttendanceTimestamp[]>;
-  getLatestEntryType: (employeeId: string, date: string) => Promise<{ type: 'IN' | 'OUT', timestamp: string } | null>;
+  getLatestEntryType: (employeeId: string, date: string) => Promise<{ type: 'IN' | 'OUT', timestamp: string, office_location_status?: string | null, office_arrival_processed?: boolean } | null>;
   reset: () => void;
 }
 
@@ -344,7 +344,7 @@ export const useAttendanceTimestampStore = create<AttendanceTimestampStore>((set
 
       const { data, error } = await supabase
         .from('attendance_timestamp')
-        .select('entry, timestamp')
+        .select('entry, timestamp, office_location_status, office_arrival_processed')
         .eq('employee_id', employeeId)
         .gte('timestamp', startOfQuery.toISOString())
         .lte('timestamp', endOfDay.toISOString())
@@ -354,7 +354,12 @@ export const useAttendanceTimestampStore = create<AttendanceTimestampStore>((set
 
       if (error) throw error;
 
-      return data ? { type: data.entry, timestamp: data.timestamp } : null;
+      return data ? { 
+        type: data.entry, 
+        timestamp: data.timestamp,
+        office_location_status: data.office_location_status,
+        office_arrival_processed: data.office_arrival_processed
+      } : null;
     } catch (error) {
       console.error('Failed to get latest entry type:', error);
       return null;

@@ -75,6 +75,11 @@ export default function ClockInOutCard({
   const [manualReason, setManualReason] = useState("");
   const [latestEntryType, setLatestEntryType] = useState<"IN" | "OUT" | null>(null);
   const [latestEntryTime, setLatestEntryTime] = useState<string | null>(null);
+  const [latestOfficeStatus, setLatestOfficeStatus] = useState<string | null>(null);
+  const [latestOfficeArrivalProcessed, setLatestOfficeArrivalProcessed] = useState<boolean>(false);
+  const [currentLocationStatus, setCurrentLocationStatus] = useState<'Office' | 'Outside Office' | null>(null);
+  const [googleMapsEnabled, setGoogleMapsEnabled] = useState(false);
+  const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string | null>(null);
 
   // States for shift tracking
   const [assignedShifts, setAssignedShifts] = useState<AssignedShift[]>([]);
@@ -211,14 +216,22 @@ export default function ClockInOutCard({
         // Fetch company settings branch locations
         const { data: companyData } = await supabase
           .from('company_settings')
-          .select('branch_locations')
+          .select('branch_locations, google_maps_enabled, google_maps_api_key')
           .eq('tenant_id', currentTenant.id)
           .maybeSingle();
 
-        if (companyData && companyData.branch_locations) {
-          setBranchLocations(companyData.branch_locations);
+        if (companyData) {
+          if (companyData.branch_locations) {
+            setBranchLocations(companyData.branch_locations);
+          } else {
+            setBranchLocations([]);
+          }
+          setGoogleMapsEnabled(!!companyData.google_maps_enabled);
+          setGoogleMapsApiKey(companyData.google_maps_api_key || null);
         } else {
           setBranchLocations([]);
+          setGoogleMapsEnabled(false);
+          setGoogleMapsApiKey(null);
         }
 
         // 2. Fetch active screens for tenant
@@ -283,6 +296,26 @@ export default function ClockInOutCard({
     canShowClockInActions = true;
   }
 
+  // Check current location status against branch locations
+  useEffect(() => {
+    if (!branchLocations || branchLocations.length === 0 || !selectedEmployee) {
+      setCurrentLocationStatus(null);
+      return;
+    }
+
+    const checkLocation = async () => {
+      try {
+        const res = await validateLocationAgainstBranches(branchLocations);
+        setCurrentLocationStatus(res.status);
+      } catch (err) {
+        console.warn("Silent failure checking location status for card buttons:", err);
+        setCurrentLocationStatus('Outside Office');
+      }
+    };
+
+    checkLocation();
+  }, [branchLocations, selectedEmployee, lastRefresh]);
+
   // Consolidated data fetch triggered by selectedEmployee or parent's lastRefresh
   useEffect(() => {
     const fetchCardData = async () => {
@@ -308,6 +341,8 @@ export default function ClockInOutCard({
         const latestEntry = await getLatestEntryType(selectedEmployee.id, todayStrForEntry);
         setLatestEntryType(latestEntry?.type || null);
         setLatestEntryTime(latestEntry?.timestamp || null);
+        setLatestOfficeStatus(latestEntry?.office_location_status || null);
+        setLatestOfficeArrivalProcessed(!!latestEntry?.office_arrival_processed);
 
         // 2. Fetch face enrollment status
         const enrolled = await hasEnrolledFace(selectedEmployee.id);
@@ -467,19 +502,29 @@ export default function ClockInOutCard({
             // Attempt to reverse geocode the location to save it permanently in the database
             if (locResult.latitude && locResult.longitude) {
               try {
-                const res = await fetch(`https://photon.komoot.io/reverse?lon=${locResult.longitude}&lat=${locResult.latitude}&lang=en`);
-                if (res.ok) {
-                  const data = await res.json();
-                  if (data.features && data.features.length > 0) {
-                    const props = data.features[0].properties;
-                    const name = props.name || '';
-                    const street = [props.housenumber, props.street].filter(Boolean).join(' ');
-                    const city = props.city || props.town || props.village || props.county || '';
-                    const state = props.state || '';
+                if (googleMapsEnabled && googleMapsApiKey) {
+                  const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${locResult.latitude},${locResult.longitude}&key=${googleMapsApiKey}`);
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data.results && data.results.length > 0) {
+                      fetchedAddress = data.results[0].formatted_address;
+                    }
+                  }
+                } else {
+                  const res = await fetch(`https://photon.komoot.io/reverse?lon=${locResult.longitude}&lat=${locResult.latitude}&lang=en`);
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data.features && data.features.length > 0) {
+                      const props = data.features[0].properties;
+                      const name = props.name || '';
+                      const street = [props.housenumber, props.street].filter(Boolean).join(' ');
+                      const city = props.city || props.town || props.village || props.county || '';
+                      const state = props.state || '';
 
-                    // Build a concise, readable address
-                    const displayNameParts = [name, street, city, state].filter(p => p && p.trim() !== '');
-                    fetchedAddress = Array.from(new Set(displayNameParts)).join(', ');
+                      // Build a concise, readable address
+                      const displayNameParts = [name, street, city, state].filter(p => p && p.trim() !== '');
+                      fetchedAddress = Array.from(new Set(displayNameParts)).join(', ');
+                    }
                   }
                 }
               } catch (geocodeErr) {
@@ -569,6 +614,30 @@ export default function ClockInOutCard({
           await travelService.stopTravelTracking(true, finalLocation);
           setIsTracking(false);
           setLiveDistance(0);
+        }
+      }
+
+      if (entryType === 'IN' && latestEntryType === 'IN' && latestOfficeStatus === 'Outside Office' && !latestOfficeArrivalProcessed) {
+        // Mark the previous outside punch as processed so it doesn't trigger again
+        const { data: prevTs } = await supabase
+          .from('attendance_timestamp')
+          .select('id')
+          .eq('employee_id', employeeId)
+          .eq('entry', 'IN')
+          .eq('office_location_status', 'Outside Office')
+          .eq('office_arrival_processed', false)
+          .order('timestamp', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (prevTs?.id) {
+          const { error: updateErr } = await supabase
+            .from('attendance_timestamp')
+            .update({ office_arrival_processed: true })
+            .eq('id', prevTs.id);
+          if (updateErr) {
+            console.error("Failed to mark previous outside office punch as processed:", updateErr);
+          }
         }
       }
 
@@ -704,8 +773,14 @@ export default function ClockInOutCard({
   };
 
   const employeeCannotClock = !canViewAllData && !hasFaceEnrolled && !allowManualClockIn && hasFaceScreens;
-  const canClockIn = !loading && selectedEmployee && latestEntryType !== "IN" && !employeeCannotClock;
-  const canClockOut = !loading && selectedEmployee && latestEntryType === "IN" && !employeeCannotClock;
+  const isOutsideOfficeOpen = latestEntryType === "IN" && latestOfficeStatus === "Outside Office" && !latestOfficeArrivalProcessed;
+  const canClockIn = !loading && selectedEmployee && 
+    (latestEntryType !== "IN" || (isOutsideOfficeOpen && (manualMode || currentLocationStatus === 'Office'))) && 
+    !employeeCannotClock;
+  const canClockOut = !loading && selectedEmployee && 
+    latestEntryType === "IN" && 
+    !(isOutsideOfficeOpen && currentLocationStatus === 'Office') && 
+    !employeeCannotClock;
 
   // NEW: Determines if we should show the Hikvision-only warning
   const showHikWarning = !canViewAllData && hasHikScreens && !hasFaceScreens && !allowManualClockIn;
@@ -966,7 +1041,7 @@ export default function ClockInOutCard({
                       ) : (
                         <LogIn className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5" />
                       )}
-                      {loadingAction === "MANUAL_IN" ? "Processing..." : "Manual Clock In"}
+                      {loadingAction === "MANUAL_IN" ? "Processing..." : (isOutsideOfficeOpen ? "Manual Clock In (Office)" : "Manual Clock In")}
                     </button>
                     <button
                       onClick={() => handleClockInOut("OUT", true)}
@@ -996,7 +1071,7 @@ export default function ClockInOutCard({
                     ) : (
                       <LogIn className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5" />
                     )}
-                    {loadingAction === "IN" ? "Processing..." : "Clock In"}
+                    {loadingAction === "IN" ? "Processing..." : (isOutsideOfficeOpen && currentLocationStatus === 'Office' ? "Clock In (Office)" : "Clock In")}
                   </button>
                   <button
                     onClick={() => handleClockInOut("OUT", false)}

@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleMap, MarkerF, CircleF, PolylineF, InfoWindowF, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, CircleF, PolylineF, InfoWindowF } from '@react-google-maps/api';
+import AdvancedMarker from './AdvancedMarker';
+import { useGoogleMaps } from '../../../contexts/GoogleMapsContext';
+const MAP_ID = 'DEMO_MAP_ID';
 import { Activity, RefreshCw, Users, MapPin, Clock, Target, AlertTriangle, PauseCircle } from 'lucide-react';
 import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -8,14 +11,14 @@ import { supabase } from '../../../lib/supabase';
 import toast from 'react-hot-toast';
 import type { WorkLocation, WorkLocationTracking } from '../../../types/workLocation';
 
-const libraries: ('places' | 'geocoding')[] = ['places', 'geocoding'];
+
 
 interface GoogleMapsLiveTrackingProps {
   apiKey: string;
 }
 
 export default function GoogleMapsLiveTracking({ apiKey }: GoogleMapsLiveTrackingProps) {
-  const { isLoaded } = useJsApiLoader({ googleMapsApiKey: apiKey, libraries });
+  const { isLoaded } = useGoogleMaps();
   const { currentTenant } = useTenant();
   const { workLocations, loading, fetchWorkLocations } = useWorkLocationsStore();
   const [activeWorks, setActiveWorks] = useState<WorkLocation[]>([]);
@@ -25,9 +28,11 @@ export default function GoogleMapsLiveTracking({ apiKey }: GoogleMapsLiveTrackin
   const [currentTime, setCurrentTime] = useState(new Date());
   const [activeInfo, setActiveInfo] = useState<string | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
+  const [map, setMap] = useState<google.maps.Map | null>(null);
 
-  const onMapLoad = useCallback((map: google.maps.Map) => {
-    mapRef.current = map;
+  const onMapLoad = useCallback((mapInstance: google.maps.Map) => {
+    mapRef.current = mapInstance;
+    setMap(mapInstance);
   }, []);
 
   useEffect(() => {
@@ -229,7 +234,7 @@ export default function GoogleMapsLiveTracking({ apiKey }: GoogleMapsLiveTrackin
                 center={calculateMapCenter()}
                 zoom={selectedWork ? 15 : 12}
                 onLoad={onMapLoad}
-                options={{ mapTypeControl: true, mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_LEFT }, streetViewControl: false, fullscreenControl: true }}
+                options={{ mapId: MAP_ID, mapTypeControl: true, mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_LEFT }, streetViewControl: false, fullscreenControl: true }}
               >
                 {activeWorks.map((work) => {
                   const tracking = latestTracking.get(work.id);
@@ -240,11 +245,7 @@ export default function GoogleMapsLiveTracking({ apiKey }: GoogleMapsLiveTrackin
 
                   return (
                     <div key={work.id}>
-                      <MarkerF position={workPos} onClick={() => setActiveInfo(work.id)} icon={{
-                        url: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-                        scaledSize: new google.maps.Size(25, 41),
-                        anchor: new google.maps.Point(12, 41),
-                      }} />
+                      <AdvancedMarker map={map} position={workPos} onClick={() => setActiveInfo(work.id)} iconUrl="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png" iconSize={[25, 41]} iconAnchor={[12, 41]} />
                       {activeInfo === work.id && (
                         <InfoWindowF position={workPos} onCloseClick={() => setActiveInfo(null)}>
                           <div className="text-sm">
@@ -261,11 +262,7 @@ export default function GoogleMapsLiveTracking({ apiKey }: GoogleMapsLiveTrackin
                       }} />
                       {tracking && tracking.latitude && tracking.longitude && (
                         <>
-                          <MarkerF position={{ lat: Number(tracking.latitude), lng: Number(tracking.longitude) }} icon={{
-                            url: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-                            scaledSize: new google.maps.Size(25, 41),
-                            anchor: new google.maps.Point(12, 41),
-                          }} />
+                          <AdvancedMarker map={map} position={{ lat: Number(tracking.latitude), lng: Number(tracking.longitude) }} iconUrl="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png" iconSize={[25, 41]} iconAnchor={[12, 41]} />
                           <PolylineF path={[workPos, { lat: Number(tracking.latitude), lng: Number(tracking.longitude) }]} options={{
                             strokeColor: lost ? '#9ca3af' : within ? '#4ade80' : '#ef4444',
                             strokeWeight: 2,

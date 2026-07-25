@@ -218,6 +218,7 @@ export const useOutsideOfficeApprovalsStore = create<OutsideOfficeApprovalsStore
         .gte('clock_in_time', start)
         .lte('clock_in_time', end)
         .in('status', ['pending', 'approved'])
+        .is('clock_out_time', null)
         .is('inside_office_clock_in_time', null);
 
       if (error) console.error('Failed to update inside_office_clock_in_time:', error);

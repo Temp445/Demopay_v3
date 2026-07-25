@@ -78,6 +78,18 @@ import PrivacyPolicy from './components/dashboard/policies/PrivacyPolicy';
 import HikDeviceEmployeesPage from './components/dashboard/attendance/HikDeviceEmployeesPage';
 import SuperAdminScreenControl from './components/dashboard/access-control/SuperAdminScreenControl';
 import ShiftAttendanceReportSender from './components/dashboard/shifts/ShiftAttendanceReportSender';
+import { GoogleMapsProvider } from './contexts/GoogleMapsContext';
+import { useSettingsStore } from './stores/settingsStore';
+
+/** Thin wrapper that reads Google Maps API key from the settings store
+ * and initialises the shared singleton loader exactly once. */
+function GoogleMapsAppWrapper({ children }: { children: React.ReactNode }) {
+  const { companySettings } = useSettingsStore();
+  const apiKey = (companySettings?.google_maps_enabled && companySettings?.google_maps_api_key) 
+    ? companySettings.google_maps_api_key 
+    : '';
+  return <GoogleMapsProvider apiKey={apiKey}>{children}</GoogleMapsProvider>;
+}
 
 
  
@@ -87,6 +99,7 @@ function App() {
       <AuthProvider>
         <TenantProvider>
           <NotificationProvider>
+            <GoogleMapsAppWrapper>
             <Routes>
               {/* Public routes */}
               {/* <Route
@@ -191,6 +204,7 @@ function App() {
             </Routes>
             <Toaster position="top-right" />
 
+            </GoogleMapsAppWrapper>
           </NotificationProvider>
         </TenantProvider>
       </AuthProvider>

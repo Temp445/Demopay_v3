@@ -5,9 +5,13 @@ import { useEmployeesStore } from '../../../stores/employeesStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useTenant } from '../../../contexts/TenantContext';
 import type { WorkLocation } from '../../../types/workLocation';
-import { GoogleMap, MarkerF, DirectionsRenderer, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, PolylineF } from '@react-google-maps/api';
+import AdvancedMarker from './AdvancedMarker';
+import { useGoogleMaps } from '../../../contexts/GoogleMapsContext';
 
-const libraries: ('places' | 'geocoding')[] = ['places', 'geocoding'];
+const MAP_ID = 'DEMO_MAP_ID';
+
+
 
 interface RouteOptimizerModalProps {
   isOpen: boolean;
@@ -27,25 +31,17 @@ export default function RouteOptimizerModal({ isOpen, onClose }: RouteOptimizerM
   const [endPointId, setEndPointId] = useState('hq'); 
   
   const [isOptimizing, setIsOptimizing] = useState(false);
-  const [optimizedRoute, setOptimizedRoute] = useState<google.maps.DirectionsResult | null>(null);
+  const [optimizedRoute, setOptimizedRoute] = useState<any | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [waypointOrder, setWaypointOrder] = useState<number[]>([]);
   
   const hqLocation = companySettings?.branch_locations?.[0]; // Default to first branch as HQ
 
-  const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: companySettings?.google_maps_api_key || '',
-    libraries,
-  });
+  const { isLoaded } = useGoogleMaps();
 
   const [map, setMap] = useState<google.maps.Map | null>(null);
-  const directionsService = useRef<google.maps.DirectionsService | null>(null);
-
   const onMapLoad = useCallback((map: google.maps.Map) => {
     setMap(map);
-    if (window.google) {
-      directionsService.current = new window.google.maps.DirectionsService();
-    }
   }, []);
 
   // Filter locations for selected employee and date
@@ -61,8 +57,8 @@ export default function RouteOptimizerModal({ isOpen, onClose }: RouteOptimizerM
     });
   }, [workLocations, selectedEmployeeId, selectedDate]);
 
-  const handleOptimize = () => {
-    if (!directionsService.current) return;
+  const handleOptimize = async () => {
+    if (!companySettings?.google_maps_api_key) return;
     if (todaysLocations.length === 0) {
       setRouteError("No active work locations found for this employee on the selected date.");
       return;
@@ -111,24 +107,44 @@ export default function RouteOptimizerModal({ isOpen, onClose }: RouteOptimizerM
       return;
     }
 
-    directionsService.current.route(
-      {
-        origin,
-        destination,
-        waypoints,
-        optimizeWaypoints: true,
-        travelMode: google.maps.TravelMode.DRIVING,
-      },
-      (result, status) => {
-        setIsOptimizing(false);
-        if (status === google.maps.DirectionsStatus.OK && result) {
-          setOptimizedRoute(result);
-          setWaypointOrder(result.routes[0].waypoint_order);
-        } else {
-          setRouteError(`Failed to optimize route. Status: ${status}`);
-        }
+    const requestBody = {
+      origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
+      destination: { location: { latLng: { latitude: destination.lat, longitude: destination.lng } } },
+      intermediates: waypoints.map(wp => ({
+        location: { latLng: { latitude: wp.location.lat, longitude: wp.location.lng } }
+      })),
+      travelMode: "DRIVE",
+      routingPreference: "TRAFFIC_AWARE",
+      optimizeWaypointOrder: true
+    };
+
+    try {
+      const response = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": companySettings.google_maps_api_key,
+          "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.optimizedIntermediateWaypointIndex"
+        },
+        body: JSON.stringify(requestBody)
+      });
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error?.message || "Failed to fetch routes");
       }
-    );
+      
+      if (data.routes && data.routes.length > 0) {
+        setOptimizedRoute(data.routes[0]);
+        setWaypointOrder(data.routes[0].optimizedIntermediateWaypointIndex || []);
+      } else {
+        setRouteError("No route found.");
+      }
+    } catch (err: any) {
+      setRouteError(`Failed to optimize route. Error: ${err.message}`);
+    } finally {
+      setIsOptimizing(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -346,30 +362,48 @@ export default function RouteOptimizerModal({ isOpen, onClose }: RouteOptimizerM
                 zoom={10}
                 onLoad={onMapLoad}
                 options={{
+                  mapId: MAP_ID,
                   mapTypeControl: true,
                   mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
                   streetViewControl: false,
                   fullscreenControl: true,
                 }}
               >
-                {!optimizedRoute && todaysLocations.map((loc, i) => (
-                  <MarkerF
-                    key={loc.id}
-                    position={{ lat: loc.latitude, lng: loc.longitude }}
-                    label={(i + 1).toString()}
-                  />
-                ))}
+                {/* Render markers */}
+                {todaysLocations.map((loc, i) => {
+                  let label = (i + 1).toString();
+                  // If optimized, map original index to optimized order.
+                  // Start point remains 1, End point remains N. Intermediate points are 2 to N-1.
+                  if (optimizedRoute && startPointId !== 'hq' && endPointId !== 'hq') {
+                    if (i === 0) label = "1";
+                    else if (i === todaysLocations.length - 1) label = todaysLocations.length.toString();
+                    else {
+                      // Intermediate point offset by -1 because start point isn't in waypointOrder indices
+                      const optIndex = waypointOrder.indexOf(i - 1);
+                      if (optIndex !== -1) {
+                        label = (optIndex + 2).toString();
+                      }
+                    }
+                  }
 
-                {optimizedRoute && (
-                  <DirectionsRenderer
-                    directions={optimizedRoute}
+                  return (
+                    <AdvancedMarker
+                      key={loc.id}
+                      map={map}
+                      position={{ lat: loc.latitude, lng: loc.longitude }}
+                      label={label}
+                    />
+                  );
+                })}
+
+                {/* Render the manually decoded polyline */}
+                {optimizedRoute && optimizedRoute.polyline?.encodedPolyline && (
+                  <PolylineF
+                    path={window.google.maps.geometry.encoding.decodePath(optimizedRoute.polyline.encodedPolyline)}
                     options={{
-                      suppressMarkers: false,
-                      polylineOptions: {
-                        strokeColor: '#2563eb',
-                        strokeWeight: 5,
-                        strokeOpacity: 0.8,
-                      },
+                      strokeColor: '#2563eb',
+                      strokeWeight: 5,
+                      strokeOpacity: 0.8,
                     }}
                   />
                 )}

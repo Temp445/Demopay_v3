@@ -433,42 +433,59 @@ export default function AttendanceTimestamp() {
                             )}
                           </div>
                           
-                          {showAdminView && (entry.latitude || entry.office_location_status) && (
+                          {(showAdminView || entry.office_location_status) && (
                             <div className="text-sm px-1">
                                <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Location</span>
-                               <LocationAddressDisplay 
-                                  lat={entry.latitude} 
-                                  lng={entry.longitude} 
-                                  fallback={entry.office_location_status || '-'} 
-                                  preTranscribedAddress={entry.location_address}
-                                />
-                                 {entry.distance_from_branch != null && (
-                                  <div className="text-[11px] font-bold text-indigo-600 mt-1.5 flex items-center">
-                                    <MapPin className="h-3 w-3 mr-1" />
-                                    {Math.round(entry.distance_from_branch)}m away from branch
-                                  </div>
-                                )}
-                                {entry.latitude != null && entry.longitude != null && (
-                                  <>
-                                    <button
-                                      onClick={() => setSelectedMapLocation({ lat: entry.latitude!, lng: entry.longitude! })}
-                                      className="mt-2 inline-flex items-center px-2 py-1 border border-indigo-200 text-[11px] font-medium rounded text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors mr-2"
-                                    >
-                                      <MapIcon className="h-3 w-3 mr-1" />
-                                      View in Map
-                                    </button>
-                                    
-                                    {entry.entry === 'IN' && entry.office_location_status === 'Outside Office' && (
-                                      <button
-                                        onClick={() => setSelectedRouteEntry(entry)}
-                                        className="mt-2 inline-flex items-center px-2 py-1 border border-emerald-200 text-[11px] font-medium rounded text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors"
-                                      >
-                                        <Navigation className="h-3 w-3 mr-1" />
-                                        View Route
-                                      </button>
+                               {showAdminView ? (
+                                 <>
+                                   <LocationAddressDisplay 
+                                      lat={entry.latitude} 
+                                      lng={entry.longitude} 
+                                      fallback={entry.office_location_status || '-'} 
+                                      preTranscribedAddress={entry.location_address}
+                                    />
+                                     {entry.distance_from_branch != null && (
+                                      <div className="text-[11px] font-bold text-indigo-600 mt-1.5 flex items-center">
+                                        <MapPin className="h-3 w-3 mr-1" />
+                                        {entry.distance_from_branch >= 1000
+                                          ? `${(entry.distance_from_branch / 1000).toFixed(2)}km`
+                                          : `${Math.round(entry.distance_from_branch)}m`}{' '}
+                                        away from branch
+                                      </div>
                                     )}
-                                  </>
-                                )}
+                                    {entry.latitude != null && entry.longitude != null && (
+                                      <>
+                                        <button
+                                          onClick={() => setSelectedMapLocation({ lat: entry.latitude!, lng: entry.longitude! })}
+                                          className="mt-2 inline-flex items-center px-2 py-1 border border-indigo-200 text-[11px] font-medium rounded text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors mr-2"
+                                        >
+                                          <MapIcon className="h-3 w-3 mr-1" />
+                                          View in Map
+                                        </button>
+                                        
+                                        {entry.entry === 'IN' && entry.office_location_status === 'Outside Office' && (
+                                          <button
+                                            onClick={() => setSelectedRouteEntry(entry)}
+                                            className="mt-2 inline-flex items-center px-2 py-1 border border-emerald-200 text-[11px] font-medium rounded text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+                                          >
+                                            <Navigation className="h-3 w-3 mr-1" />
+                                            View Route
+                                          </button>
+                                        )}
+                                      </>
+                                    )}
+                                 </>
+                               ) : (
+                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                                   entry.office_location_status === 'Office' 
+                                     ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' 
+                                     : entry.office_location_status === 'Outside Office'
+                                     ? 'bg-amber-50 text-amber-700 border border-amber-100'
+                                     : 'bg-gray-50 text-gray-700 border border-gray-100'
+                                 }`}>
+                                   {entry.office_location_status || '-'}
+                                 </span>
+                               )}
                             </div>
                           )}
 
@@ -500,13 +517,15 @@ export default function AttendanceTimestamp() {
                               Timing Status
                             </th>
                             {showAdminView && (
+                              <th className="px-6 py-4 text-left text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">
+                                Mode
+                              </th>
+                            )}
+                            <th className="px-6 py-4 text-left text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">
+                              Location
+                            </th>
+                            {showAdminView && (
                               <>
-                                <th className="px-6 py-4 text-left text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">
-                                  Mode
-                                </th>
-                                <th className="px-6 py-4 text-left text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">
-                                  Location
-                                </th>
                                 <th className="px-6 py-4 text-left text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">
                                   Photo
                                 </th>
@@ -558,11 +577,13 @@ export default function AttendanceTimestamp() {
                               </span>
                             </td>
                             {showAdminView && (
-                              <>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                  {entry.attendance_mode || '-'}
-                                </td>
-                                <td className="px-6 py-4">
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {entry.attendance_mode || '-'}
+                              </td>
+                            )}
+                            <td className="px-6 py-4">
+                              {showAdminView ? (
+                                <>
                                   <LocationAddressDisplay 
                                     lat={entry.latitude} 
                                     lng={entry.longitude} 
@@ -572,7 +593,10 @@ export default function AttendanceTimestamp() {
                                   {entry.distance_from_branch != null && (
                                     <div className="text-[11px] font-bold text-indigo-600 mt-1 flex items-center">
                                       <MapPin className="h-3 w-3 mr-1" />
-                                      {Math.round(entry.distance_from_branch)}m away
+                                      {entry.distance_from_branch >= 1000
+                                        ? `${(entry.distance_from_branch / 1000).toFixed(2)}km`
+                                        : `${Math.round(entry.distance_from_branch)}m`}{' '}
+                                      away
                                     </div>
                                   )}
                                   {entry.latitude != null && entry.longitude != null && (
@@ -596,7 +620,21 @@ export default function AttendanceTimestamp() {
                                       )}
                                     </>
                                   )}
-                                </td>
+                                </>
+                              ) : (
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                                  entry.office_location_status === 'Office' 
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' 
+                                    : entry.office_location_status === 'Outside Office'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-100'
+                                    : 'bg-gray-50 text-gray-700 border border-gray-100'
+                                }`}>
+                                  {entry.office_location_status || '-'}
+                                </span>
+                              )}
+                            </td>
+                            {showAdminView && (
+                              <>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                   {entry.captured_image ? (
                                     <button 
@@ -701,28 +739,32 @@ export default function AttendanceTimestamp() {
 
       {/* Travel Route Viewer Modal */}
       {selectedRouteEntry && (() => {
-        const outEntry = timestamps
+        // Find the very next timestamp entry for this employee after the outside-office clock-in
+        const nextEntry = timestamps
           .filter(
             (t) =>
-              t.entry === 'OUT' &&
               t.employee_id === selectedRouteEntry.employee_id &&
               new Date(t.timestamp).getTime() > new Date(selectedRouteEntry.timestamp).getTime()
           )
           .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())[0];
+
+        const isOfficeArrival = nextEntry?.entry === 'IN';
+        const endLabel = isOfficeArrival ? 'Clock In (Office)' : 'Clock Out';
           
         return (
           <TravelRouteViewer
             timestampId={selectedRouteEntry.id}
             employeeName={selectedRouteEntry.employee_name || 'Employee'}
             clockInTime={selectedRouteEntry.timestamp}
-            clockOutTime={outEntry?.timestamp}
+            clockOutTime={nextEntry?.timestamp}
             clockInLat={selectedRouteEntry.latitude}
             clockInLng={selectedRouteEntry.longitude}
-            clockOutLat={outEntry?.latitude}
-            clockOutLng={outEntry?.longitude}
+            clockOutLat={nextEntry?.latitude}
+            clockOutLng={nextEntry?.longitude}
             totalDistanceMeters={selectedRouteEntry.travel_distance_meters || 0}
             totalDurationSeconds={selectedRouteEntry.travel_duration_seconds || 0}
             onClose={() => setSelectedRouteEntry(null)}
+            clockOutLabel={endLabel}
           />
         );
       })()}

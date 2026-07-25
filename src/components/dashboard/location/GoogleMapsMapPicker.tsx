@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleMap, MarkerF, CircleF, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, CircleF } from '@react-google-maps/api';
+import { useGoogleMaps } from '../../../contexts/GoogleMapsContext';
 import { Search, MapPin, LocateFixed, X, Lightbulb } from 'lucide-react';
 import type { LocationSearchResult } from '../../../types/workLocation';
 
-const libraries: ('places' | 'geocoding')[] = ['places', 'geocoding'];
+const MAP_ID = 'DEMO_MAP_ID';
+
+
 
 interface GoogleMapsMapPickerProps {
   apiKey: string;
@@ -37,10 +40,7 @@ export default function GoogleMapsMapPicker({
   lng,
   radius,
 }: GoogleMapsMapPickerProps) {
-  const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: apiKey,
-    libraries,
-  });
+  const { isLoaded } = useGoogleMaps();
 
   const [position, setPosition] = useState({ lat: lat !== undefined ? lat : initialLat, lng: lng !== undefined ? lng : initialLng });
   const [searchQuery, setSearchQuery] = useState('');
@@ -50,12 +50,31 @@ export default function GoogleMapsMapPicker({
   const [selectedAddress, setSelectedAddress] = useState('');
   const mapRef = useRef<google.maps.Map | null>(null);
   const geocoderRef = useRef<google.maps.Geocoder | null>(null);
-  const autocompleteServiceRef = useRef<google.maps.places.AutocompleteService | null>(null);
+  const markerRef = useRef<google.maps.marker.AdvancedMarkerElement | null>(null);
 
   const onMapLoad = useCallback((map: google.maps.Map) => {
     mapRef.current = map;
     geocoderRef.current = new google.maps.Geocoder();
-    autocompleteServiceRef.current = new google.maps.places.AutocompleteService();
+    // Create the draggable AdvancedMarker (replaces deprecated MarkerF)
+    if (google.maps.marker?.AdvancedMarkerElement) {
+      const m = new google.maps.marker.AdvancedMarkerElement({
+        map,
+        position,
+        gmpDraggable: true,
+      });
+      m.addListener('dragend', (e: google.maps.MapMouseEvent) => {
+        if (!e.latLng) return;
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        setPosition({ lat, lng });
+        reverseGeocode(lat, lng);
+        setSearchQuery('');
+        setSearchResults([]);
+        setShowResults(false);
+      });
+      markerRef.current = m;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -87,7 +106,7 @@ export default function GoogleMapsMapPicker({
   }, [lat, lng]);
 
   useEffect(() => {
-    if (!isLoaded || !autocompleteServiceRef.current) return;
+    if (!isLoaded) return;
     const timer = setTimeout(() => {
       if (searchQuery.trim().length >= 3 && searchQuery !== selectedAddress) {
         searchLocation(searchQuery);
@@ -127,28 +146,31 @@ export default function GoogleMapsMapPicker({
     });
   };
 
-  const searchLocation = (query: string) => {
-    if (!autocompleteServiceRef.current) return;
+  const searchLocation = async (query: string) => {
+    if (!isLoaded) return;
     setSearching(true);
-    autocompleteServiceRef.current.getPlacePredictions(
-      { input: query },
-      (predictions, status) => {
-        setSearching(false);
-        if (status === google.maps.places.PlacesServiceStatus.OK && predictions) {
-          const mapped: LocationSearchResult[] = predictions.map(p => ({
-            display_name: p.description,
-            lat: '0',
-            lon: '0',
-            _placeId: p.place_id,
-          })) as any;
-          setSearchResults(mapped);
-          setShowResults(true);
-        }
-      }
-    );
+    try {
+      // Use the new AutocompleteSuggestion API (replaces deprecated AutocompleteService)
+      const { suggestions } = await google.maps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+        input: query,
+      });
+      const mapped: LocationSearchResult[] = (suggestions || []).map(s => ({
+        display_name: s.placePrediction?.text?.toString() ?? s.placePrediction?.mainText?.toString() ?? query,
+        lat: '0',
+        lon: '0',
+        _placeId: s.placePrediction?.placeId,
+      } as any));
+      setSearchResults(mapped);
+      setShowResults(mapped.length > 0);
+    } catch {
+      // Silently fail if suggestions not available
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
   };
 
-  const handleResultSelect = (result: any) => {
+  const handleResultSelect = async (result: any) => {
     if (!geocoderRef.current) return;
     const placeId = result._placeId;
     if (placeId) {
@@ -159,7 +181,9 @@ export default function GoogleMapsMapPicker({
           const lat = loc.lat();
           const lng = loc.lng();
 
-          setPosition({ lat, lng });
+          const newPos = { lat, lng };
+          setPosition(newPos);
+          if (markerRef.current) markerRef.current.position = newPos;
 
           // Prefer the autocomplete display name because it contains the actual Company/POI name
           const formatted = result.display_name || r.formatted_address || '';
@@ -195,7 +219,9 @@ export default function GoogleMapsMapPicker({
     if (!e.latLng) return;
     const lat = e.latLng.lat();
     const lng = e.latLng.lng();
-    setPosition({ lat, lng });
+    const newPos = { lat, lng };
+    setPosition(newPos);
+    if (markerRef.current) markerRef.current.position = newPos;
     reverseGeocode(lat, lng);
     setSearchQuery('');
     setSearchResults([]);
@@ -207,27 +233,20 @@ export default function GoogleMapsMapPicker({
       navigator.geolocation.getCurrentPosition((pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
-        setPosition({ lat, lng });
+        const newPos = { lat, lng };
+        setPosition(newPos);
+        if (markerRef.current) markerRef.current.position = newPos;
         reverseGeocode(lat, lng);
         setSearchQuery('');
         setSearchResults([]);
         setShowResults(false);
-        mapRef.current?.panTo({ lat, lng });
+        mapRef.current?.panTo(newPos);
         mapRef.current?.setZoom(16);
       });
     }
   };
 
-  const handleMarkerDragEnd = (e: google.maps.MapMouseEvent) => {
-    if (!e.latLng) return;
-    const lat = e.latLng.lat();
-    const lng = e.latLng.lng();
-    setPosition({ lat, lng });
-    reverseGeocode(lat, lng);
-    setSearchQuery('');
-    setSearchResults([]);
-    setShowResults(false);
-  };
+  // handleMarkerDragEnd is now handled inside the AdvancedMarker listener in onMapLoad
 
   if (!isLoaded) {
     return (
@@ -327,6 +346,7 @@ export default function GoogleMapsMapPicker({
           onClick={handleMapClick}
           onLoad={onMapLoad}
           options={{
+            mapId: MAP_ID,
             mapTypeControl: true,
             mapTypeControlOptions: {
               position: google.maps.ControlPosition.TOP_LEFT,
@@ -340,11 +360,7 @@ export default function GoogleMapsMapPicker({
             },
           }}
         >
-          <MarkerF
-            position={position}
-            draggable
-            onDragEnd={handleMarkerDragEnd}
-          />
+          {/* Marker is managed imperatively via AdvancedMarkerElement in onMapLoad */}
           {radius && (
             <CircleF
               center={lat !== undefined && lng !== undefined ? { lat, lng } : position}

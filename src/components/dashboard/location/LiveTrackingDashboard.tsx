@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   MapContainer,
@@ -9,7 +9,7 @@ import {
   Polyline,
   ZoomControl
 } from 'react-leaflet';
-import { Activity, RefreshCw, Users, MapPin, Clock, Target, AlertTriangle, PauseCircle, ArrowLeft } from 'lucide-react';
+import { Activity, RefreshCw, Users, MapPin, Clock, Target, AlertTriangle, PauseCircle, ArrowLeft, Search, Filter } from 'lucide-react';
 import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
 import { useLocationSettingsStore } from '../../../stores/locationSettingsStore';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -62,6 +62,17 @@ export default function LiveTrackingDashboard() {
 
   const [mapType, setMapType] = useState<'street' | 'satellite' | '3d'>('street');
   const mapRef = useRef<L.Map | null>(null);
+  const activeWorksRef = useRef<WorkLocation[]>([]);
+
+  // --- Enterprise: Search & Filter state ---
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'traveling' | 'working' | 'paused' | 'offline'>('all');
+
+  // --- Enterprise: Debounce buffer for Realtime WebSocket updates ---
+  // Instead of calling setLatestTracking on every single incoming GPS ping,
+  // we accumulate all changes in a ref and flush to state every 500ms.
+  // This prevents excessive React re-renders when many employees are pinging simultaneously.
+  const pendingUpdatesRef = useRef<Map<string, any>>(new Map());
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 30000);
@@ -81,24 +92,71 @@ export default function LiveTrackingDashboard() {
 
   useEffect(() => {
     const fetchActiveState = async () => {
-      const candidates = workLocations.filter((wl) => ['assigned', 'in_progress', 'paused'].includes(wl.status));
+      const { data: outsideData } = await supabase
+        .from('outside_office_approvals')
+        .select(`*, employees!employee_id(name, employee_code, email)`)
+        .eq('tenant_id', currentTenant.id)
+        .in('status', ['pending', 'approved'])
+        .is('clock_out_time', null)
+        .is('inside_office_clock_in_time', null);
+
+      const outsideOfficeMocks = (outsideData || []).map((req: any) => ({
+        id: `outside_${req.id}`,
+        employee_id: req.employee_id,
+        employee_name: req.employees?.name || 'Outside Worker',
+        employee_email: req.employees?.email || '',
+        location_name: 'Outside Office',
+        formatted_address: req.attendance_location || 'Remote Work',
+        latitude: 0,
+        longitude: 0,
+        allowed_radius_meters: 50,
+        status: 'in_progress',
+        created_at: req.clock_in_time,
+        is_outside_office: true
+      }));
+
+      const candidates = [...workLocations.filter((wl) => ['assigned', 'in_progress', 'paused'].includes(wl.status)), ...outsideOfficeMocks];
 
       const newTrackingMap = new Map<string, any>();
       const trulyActive: WorkLocation[] = [];
 
       for (const work of candidates) {
         try {
-          const { data, error } = await supabase
-            .from('journey_tracking_logs')
-            .select('*')
-            .eq('work_location_id', work.id)
-            .order('timestamp', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+          let data, error;
+          if ((work as any).is_outside_office) {
+            const res = await supabase
+              .from('attendance_travel_logs')
+              .select('*')
+              .eq('employee_id', work.employee_id)
+              .gte('recorded_at', work.created_at)
+              .order('recorded_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            
+            if (res.data) {
+              data = {
+                latitude: res.data.latitude,
+                longitude: res.data.longitude,
+                timestamp: res.data.recorded_at,
+                event_type: 'LIVE_TRACK_JOURNEY',
+              };
+            }
+            error = res.error;
+          } else {
+            const res = await supabase
+              .from('journey_tracking_logs')
+              .select('*')
+              .eq('work_location_id', work.id)
+              .order('timestamp', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            data = res.data;
+            error = res.error;
+          }
 
           if (data && !error) {
             if (work.status === 'assigned') {
-              const activeJourneyEvents = ['START_JOURNEY', 'LIVE_TRACK_JOURNEY', 'REACHED_LOCATION', 'GPS_SIGNAL_LOST', 'GPS_SIGNAL_RESTORED', 'LIVE_TRACK_WORK'];
+              const activeJourneyEvents = ['START_JOURNEY', 'LIVE_TRACK_JOURNEY', 'REACHED_LOCATION', 'GPS_SIGNAL_LOST', 'GPS_SIGNAL_RESTORED', 'LIVE_TRACK_WORK', 'HEARTBEAT'];
               if (!activeJourneyEvents.includes(data.event_type)) {
                 continue;
               }
@@ -121,6 +179,7 @@ export default function LiveTrackingDashboard() {
       }
 
       setActiveWorks(trulyActive);
+      activeWorksRef.current = trulyActive;
       setLatestTracking(newTrackingMap);
 
       // Auto-Select worker if directed from another page via ?workId=...
@@ -132,10 +191,10 @@ export default function LiveTrackingDashboard() {
       }
     };
 
-    if (workLocations.length > 0) {
+    if (workLocations.length > 0 || currentTenant) {
       fetchActiveState();
     }
-  }, [workLocations, targetWorkId]);
+  }, [workLocations, targetWorkId, currentTenant]);
 
   // Automatically center the map whenever `selectedWork` changes
   useEffect(() => {
@@ -149,12 +208,24 @@ export default function LiveTrackingDashboard() {
     }
   }, [selectedWork, latestTracking]);
 
-  // Real-time Subscription AND Admin Notification Alerts
+  // Real-time Subscription with Debounced State Updates
   useEffect(() => {
     if (!currentTenant?.id || !autoRefresh) return;
 
+    // Flush buffered WebSocket updates to React state every 500ms
+    const flushTimer = setInterval(() => {
+      if (pendingUpdatesRef.current.size === 0) return;
+      const updates = new Map(pendingUpdatesRef.current);
+      pendingUpdatesRef.current.clear();
+      setLatestTracking(prev => {
+        const newMap = new Map(prev);
+        updates.forEach((value, key) => newMap.set(key, value));
+        return newMap;
+      });
+    }, 500);
+
     const trackingSubscription = supabase
-      .channel('public:journey_tracking_logs')
+      .channel('public:tracking_logs')
       .on(
         'postgres_changes',
         {
@@ -165,17 +236,14 @@ export default function LiveTrackingDashboard() {
         },
         (payload) => {
           const newLog = payload.new as any;
-          if (!newLog.work_location_id || !newLog.latitude || !newLog.longitude) return;
+          if (!newLog.work_location_id) return;
 
-          setLatestTracking((prev) => {
-            const newMap = new Map(prev);
-            newMap.set(newLog.work_location_id, {
-              latitude: newLog.latitude || prev.get(newLog.work_location_id)?.latitude,
-              longitude: newLog.longitude || prev.get(newLog.work_location_id)?.longitude,
-              recorded_at: newLog.timestamp,
-              event_type: newLog.event_type,
-            });
-            return newMap;
+          const prev = pendingUpdatesRef.current.get(newLog.work_location_id);
+          pendingUpdatesRef.current.set(newLog.work_location_id, {
+            latitude: newLog.latitude || prev?.latitude,
+            longitude: newLog.longitude || prev?.longitude,
+            recorded_at: newLog.timestamp,
+            event_type: newLog.event_type,
           });
 
           if (newLog.event_type === 'START_JOURNEY' || newLog.event_type === 'COMPLETE_WORK') {
@@ -183,9 +251,32 @@ export default function LiveTrackingDashboard() {
           }
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'attendance_travel_logs',
+          filter: `tenant_id=eq.${currentTenant.id}`
+        },
+        (payload) => {
+          const newLog = payload.new as any;
+          const outsideWorker = activeWorksRef.current.find(w => (w as any).is_outside_office && w.employee_id === newLog.employee_id);
+          if (outsideWorker) {
+            const prev = pendingUpdatesRef.current.get(outsideWorker.id);
+            pendingUpdatesRef.current.set(outsideWorker.id, {
+              latitude: newLog.latitude || prev?.latitude,
+              longitude: newLog.longitude || prev?.longitude,
+              recorded_at: newLog.recorded_at,
+              event_type: 'LIVE_TRACK_JOURNEY',
+            });
+          }
+        }
+      )
       .subscribe();
 
     return () => {
+      clearInterval(flushTimer);
       supabase.removeChannel(trackingSubscription);
     };
   }, [currentTenant?.id, autoRefresh, fetchWorkLocations]);
@@ -203,6 +294,7 @@ export default function LiveTrackingDashboard() {
   };
 
   const isWithinRadius = (work: WorkLocation, tracking: any) => {
+    if ((work as any).is_outside_office) return true;
     if (!tracking.latitude || !tracking.longitude) return true;
     const R = 6371e3; // metres
     const φ1 = (Number(work.latitude) * Math.PI) / 180;
@@ -227,6 +319,32 @@ export default function LiveTrackingDashboard() {
     return differenceInMinutes(currentTime, parseISO(tracking.recorded_at)) >= maxDelayMins;
   };
 
+  // --- Enterprise: Computed filtered + searched list ---
+  const filteredWorks = useMemo(() => {
+    return activeWorks.filter(work => {
+      const tracking = latestTracking.get(work.id);
+      const signalLost = isSignalLost(tracking);
+      const isTraveling = work.status === 'assigned';
+      const isPaused = work.status === 'paused';
+
+      // Status filter
+      if (filterStatus === 'traveling' && !isTraveling) return false;
+      if (filterStatus === 'working' && (isTraveling || isPaused || signalLost)) return false;
+      if (filterStatus === 'paused' && !isPaused) return false;
+      if (filterStatus === 'offline' && !signalLost) return false;
+
+      // Search filter (name or location)
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (
+          (work.employee_name?.toLowerCase().includes(q)) ||
+          (work.location_name?.toLowerCase().includes(q))
+        );
+      }
+      return true;
+    });
+  }, [activeWorks, latestTracking, filterStatus, searchQuery, currentTime]);
+
   if (loading && workLocations.length === 0) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -236,16 +354,10 @@ export default function LiveTrackingDashboard() {
   }
 
   return (
-    <div className="p-6 max-w-full mx-auto">
-      <div className="mb-6 flex items-center justify-between">
+    <div className=" max-w-full mx-auto">
+      {/* Header */}
+      <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => navigate('/dashboard/location-tracking')}
-            className="p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg transition-colors flex items-center justify-center"
-            title="Back to Locations"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
           <div>
             <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
               <Activity className="h-6 w-6 text-green-600" />
@@ -268,26 +380,73 @@ export default function LiveTrackingDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-12 gap-6">
-        <div className="col-span-4 space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Sidebar */}
+        <div className="col-span-1 lg:col-span-4 space-y-4 order-2 lg:order-1">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                 <Users className="h-4 w-4 text-gray-600" />
                 Active Workers ({activeWorks.length})
               </h3>
+              {selectedWork && (
+                <button
+                  onClick={() => setSelectedWork(null)}
+                  className="flex items-center gap-1 text-[10px] font-semibold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-1 rounded-full hover:bg-blue-100 transition-colors"
+                >
+                  Show all
+                </button>
+              )}
+            </div>
+            {selectedWork && (
+              <div className="mb-2 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5">
+                <div className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0" />
+                <span className="text-xs text-blue-700 font-medium truncate">Viewing: <strong>{selectedWork.employee_name}</strong></span>
+              </div>
+            )}
+
+            {/* --- Enterprise: Search Bar --- */}
+            <div className="relative mb-2">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search by name or location..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-2 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
 
-            {activeWorks.length === 0 ? (
+            {/* --- Enterprise: Status Filter Tabs --- */}
+            <div className="flex flex-wrap gap-1 mb-3">
+              {(['all', 'traveling', 'working', 'paused', 'offline'] as const).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setFilterStatus(s)}
+                  className={`px-2 py-0.5 text-[10px] font-semibold rounded-full capitalize transition-colors ${
+                    filterStatus === s
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+
+            {filteredWorks.length === 0 ? (
               <div className="text-center py-8">
                 <Activity className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                <p className="text-sm text-gray-500">No active workers</p>
+                <p className="text-sm text-gray-500">
+                  {activeWorks.length === 0 ? 'No active workers' : 'No results match your filter'}
+                </p>
               </div>
             ) : (
-              <div className="space-y-3 max-h-[calc(100vh-300px)] overflow-y-auto pr-2">
-                {activeWorks.map((work) => {
+              <div className="space-y-3 max-h-[calc(100vh-360px)] overflow-y-auto pr-2">
+                {filteredWorks.map((work) => {
                   const tracking = latestTracking.get(work.id);
-                  const withinRadius = tracking ? isWithinRadius(work, tracking) : true;
+                  const isOutside = (work as any).is_outside_office;
+                  const withinRadius = tracking ? (isOutside ? true : isWithinRadius(work, tracking)) : true;
                   const signalLost = isSignalLost(tracking);
                   const isTraveling = work.status === 'assigned';
 
@@ -321,11 +480,15 @@ export default function LiveTrackingDashboard() {
                               <span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full flex items-center gap-1 font-bold">
                                 OFFLINE
                               </span>
+                            ) : isOutside ? (
+                              <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full flex items-center gap-1 font-bold">
+                                REMOTE
+                              </span>
                             ) : null}
                           </div>
                           <div className="text-xs text-gray-500 mt-1">{work.location_name}</div>
                         </div>
-                        {!withinRadius && !signalLost && !isTraveling && (
+                        {!withinRadius && !signalLost && !isTraveling && !isOutside && (
                           <AlertTriangle className="h-4 w-4 text-red-600 flex-shrink-0" />
                         )}
                       </div>
@@ -336,7 +499,7 @@ export default function LiveTrackingDashboard() {
                             <Clock className="h-3 w-3" />
                             {signalLost ? 'Signal lost at ' : 'Last update '} {format(new Date(tracking.recorded_at), 'hh:mm:ss a')}
                           </div>
-                          {tracking.calculated_distance !== undefined && !isTraveling && (
+                          {tracking.calculated_distance !== undefined && !isTraveling && !isOutside && (
                             <div className={`flex items-center gap-1 text-xs ${signalLost ? 'text-gray-400' : withinRadius ? 'text-green-600' : 'text-red-600'}`}>
                               <Target className="h-3 w-3" />
                               Gap from center: {tracking.calculated_distance.toFixed(1)}m
@@ -354,7 +517,7 @@ export default function LiveTrackingDashboard() {
           </div>
         </div>
 
-        <div className="col-span-8">
+        <div className="col-span-1 lg:col-span-8 order-1 lg:order-2">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
             <div className="mb-4">
               <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
@@ -363,7 +526,9 @@ export default function LiveTrackingDashboard() {
               </h3>
             </div>
 
-            <div className="border border-gray-300 rounded-lg overflow-hidden relative" style={{ height: 'calc(100vh - 280px)' }}>
+
+
+            <div className="border border-gray-300 rounded-lg overflow-hidden relative z-0" style={{ height: 'calc(100vh - 280px)' }}>
 
               <div className="absolute top-4 right-4 z-[1000] flex bg-white rounded-md shadow-md overflow-hidden border border-gray-300">
                 <button
@@ -390,7 +555,7 @@ export default function LiveTrackingDashboard() {
                 <MapLibre3DViewer
                   center={calculateMapCenter()}
                   height="100%"
-                  circles={activeWorks.map(work => {
+                  circles={(selectedWork ? [selectedWork] : activeWorks).filter(w => !(w as any).is_outside_office).map(work => {
                     const tracking = latestTracking.get(work.id);
                     const withinRadius = tracking ? isWithinRadius(work, tracking) : true;
                     const signalLost = isSignalLost(tracking);
@@ -404,32 +569,36 @@ export default function LiveTrackingDashboard() {
                     };
                   })}
                   markers={[
-                    ...activeWorks.map(work => ({
+                    ...(selectedWork ? [selectedWork] : activeWorks).filter(w => !(w as any).is_outside_office).map(work => ({
                       lat: Number(work.latitude),
                       lng: Number(work.longitude),
                       color: '#ef4444',
                       popupHTML: `<div class="font-bold">${work.location_name}</div><div class="text-xs">Assigned Site Center</div>`
                     })),
-                    ...activeWorks.filter(w => latestTracking.get(w.id)).map(work => {
+                    ...(selectedWork ? [selectedWork] : activeWorks).filter(w => latestTracking.get(w.id)).map(work => {
                       const tracking = latestTracking.get(work.id)!;
-                      const withinRadius = isWithinRadius(work, tracking);
+                      const isOutside = (work as any).is_outside_office;
+                      const withinRadius = isOutside ? true : isWithinRadius(work, tracking);
                       const signalLost = isSignalLost(tracking);
                       const isTraveling = work.status === 'assigned';
                       
                       let color = '#3b82f6';
                       if (signalLost) color = '#9ca3af';
+                      else if (isOutside) color = '#8b5cf6'; // Purple for remote
                       else if (!isTraveling && withinRadius) color = '#22c55e';
                       else if (!isTraveling && !withinRadius) color = '#ef4444';
+
+                      const statusText = isOutside ? 'Remote Work Location' : (isTraveling ? 'En Route to Site' : withinRadius ? 'Within allowed area' : 'Outside allowed area');
 
                       return {
                         lat: Number(tracking.latitude),
                         lng: Number(tracking.longitude),
                         color,
-                        popupHTML: `<div class="font-bold">${work.employee_name}</div><div class="text-xs font-semibold" style="color:${color}">${isTraveling ? 'En Route to Site' : withinRadius ? 'Within allowed area' : 'Outside allowed area'}</div><div class="text-[10px] text-gray-500 mt-1">Last Update: ${new Date(tracking.recorded_at).toLocaleTimeString()}</div>`
+                        popupHTML: `<div class="font-bold">${work.employee_name}</div><div class="text-xs font-semibold" style="color:${color}">${statusText}</div><div class="text-[10px] text-gray-500 mt-1">Last Update: ${new Date(tracking.recorded_at).toLocaleTimeString()}</div>`
                       };
                     })
                   ]}
-                  routes={activeWorks.map(work => {
+                  routes={(selectedWork ? [selectedWork] : activeWorks).filter(w => !(w as any).is_outside_office).map(work => {
                     const tracking = latestTracking.get(work.id);
                     if (!tracking) return null;
                     return {
@@ -460,9 +629,10 @@ export default function LiveTrackingDashboard() {
                   attribution='&copy; Google Maps'
                 />
 
-                {activeWorks.map((work) => {
+                {(selectedWork ? [selectedWork] : activeWorks).map((work) => {
                   const tracking = latestTracking.get(work.id);
-                  const withinRadius = tracking ? isWithinRadius(work, tracking) : true;
+                  const isOutside = (work as any).is_outside_office;
+                  const withinRadius = tracking ? (isOutside ? true : isWithinRadius(work, tracking)) : true;
                   const signalLost = isSignalLost(tracking);
                   const isTraveling = work.status === 'assigned';
 
@@ -472,26 +642,30 @@ export default function LiveTrackingDashboard() {
 
                   return (
                     <div key={work.id}>
-                      <Marker position={[workLat, workLng]} icon={workSiteIcon}>
-                        <Popup>
-                          <div className="text-sm">
-                            <div className="font-semibold mb-1">{work.location_name}</div>
-                            <div className="text-gray-600 mb-1">Employee: {work.employee_name}</div>
-                            <div className="text-xs font-bold mt-1 text-red-600">Assigned Site Center</div>
-                          </div>
-                        </Popup>
-                      </Marker>
+                      {!isOutside && (
+                        <>
+                          <Marker position={[workLat, workLng]} icon={workSiteIcon}>
+                            <Popup>
+                              <div className="text-sm">
+                                <div className="font-semibold mb-1">{work.location_name}</div>
+                                <div className="text-gray-600 mb-1">Employee: {work.employee_name}</div>
+                                <div className="text-xs font-bold mt-1 text-red-600">Assigned Site Center</div>
+                              </div>
+                            </Popup>
+                          </Marker>
 
-                      <Circle
-                        center={[workLat, workLng]}
-                        radius={radiusMeters}
-                        pathOptions={{
-                          color: signalLost ? 'gray' : isTraveling ? '#3b82f6' : withinRadius ? 'green' : 'red',
-                          fillColor: signalLost ? 'gray' : isTraveling ? '#3b82f6' : withinRadius ? 'green' : 'red',
-                          fillOpacity: 0.1,
-                          weight: 2,
-                        }}
-                      />
+                          <Circle
+                            center={[workLat, workLng]}
+                            radius={radiusMeters}
+                            pathOptions={{
+                              color: signalLost ? 'gray' : isTraveling ? '#3b82f6' : withinRadius ? 'green' : 'red',
+                              fillColor: signalLost ? 'gray' : isTraveling ? '#3b82f6' : withinRadius ? 'green' : 'red',
+                              fillOpacity: 0.1,
+                              weight: 2,
+                            }}
+                          />
+                        </>
+                      )}
 
                       {tracking && tracking.latitude && tracking.longitude && (
                         <>
@@ -505,14 +679,14 @@ export default function LiveTrackingDashboard() {
                                 {signalLost && (
                                   <div className="text-xs font-bold text-gray-500 mt-1 mb-1">GPS Signal Lost / Offline</div>
                                 )}
-                                <div className={`text-xs mb-1 font-bold ${signalLost ? 'text-gray-500' : isTraveling ? 'text-blue-600' : withinRadius ? 'text-green-600' : 'text-red-600'
+                                <div className={`text-xs mb-1 font-bold ${signalLost ? 'text-gray-500' : isTraveling ? 'text-blue-600' : isOutside ? 'text-purple-600' : withinRadius ? 'text-green-600' : 'text-red-600'
                                   }`}>
-                                  {isTraveling ? 'En Route to Site' : withinRadius ? 'Within allowed area' : 'Outside allowed area'}
+                                  {isOutside ? 'Remote Work Location' : isTraveling ? 'En Route to Site' : withinRadius ? 'Within allowed area' : 'Outside allowed area'}
                                 </div>
                                 <div className={`text-xs ${signalLost ? 'text-gray-400' : 'text-gray-500'}`}>
                                   {signalLost ? 'Signal lost at: ' : 'Last update: '} {format(new Date(tracking.recorded_at), 'hh:mm:ss a')}
                                 </div>
-                                {tracking.calculated_distance !== undefined && (
+                                {tracking.calculated_distance !== undefined && !isOutside && (
                                   <div className={`text-xs ${signalLost ? 'text-gray-400' : 'text-gray-500'}`}>
                                     Distance from center: {tracking.calculated_distance.toFixed(1)}m
                                   </div>
@@ -521,18 +695,20 @@ export default function LiveTrackingDashboard() {
                             </Popup>
                           </Marker>
 
-                          <Polyline
-                            positions={[
-                              [workLat, workLng],
-                              [Number(tracking.latitude), Number(tracking.longitude)]
-                            ]}
-                            pathOptions={{
-                              color: signalLost ? '#9ca3af' : isTraveling ? '#3b82f6' : withinRadius ? '#4ade80' : '#ef4444',
-                              dashArray: '5, 10',
-                              weight: 2,
-                              opacity: 0.7
-                            }}
-                          />
+                          {!isOutside && (
+                            <Polyline
+                              positions={[
+                                [workLat, workLng],
+                                [Number(tracking.latitude), Number(tracking.longitude)]
+                              ]}
+                              pathOptions={{
+                                color: signalLost ? '#9ca3af' : isTraveling ? '#3b82f6' : withinRadius ? '#4ade80' : '#ef4444',
+                                dashArray: '5, 10',
+                                weight: 2,
+                                opacity: 0.7
+                              }}
+                            />
+                          )}
                         </>
                       )}
                     </div>

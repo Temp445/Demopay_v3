@@ -193,7 +193,7 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
     .map((log, i, arr) => ({
       lat: log.latitude,
       lng: log.longitude,
-      type: i === 0 ? 'start' : i === arr.length - 1 ? 'end' : 'track',
+      type: i === 0 ? 'start' : i === arr.length - 1 ? 'end' : 'traveling',
       time: log.timestamp
     }));
 
@@ -237,6 +237,7 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
                     points={mapPoints}
                     workLat={mapPoints[0].lat}
                     workLng={mapPoints[0].lng}
+                    hideWorkSite={true}
                   />
                 )}
               </div>

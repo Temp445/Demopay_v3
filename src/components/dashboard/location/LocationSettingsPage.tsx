@@ -155,6 +155,7 @@ export default function LocationSettingsPage() {
       field_work_component_id: settings.field_work_component_id ?? null,
       travel_allowance_method: settings.travel_allowance_method ?? 'manual',
       travel_allowance_rate: settings.travel_allowance_rate ?? 0,
+      multi_location_policy: settings.multi_location_policy ?? 'separate',
     });
     setIsDirty(false);
   }, [settings]);
@@ -218,6 +219,7 @@ export default function LocationSettingsPage() {
         field_work_component_id: localSettings.field_work_component_id,
         travel_allowance_method: localSettings.travel_allowance_method,
         travel_allowance_rate: Number(localSettings.travel_allowance_rate) || 0,
+        multi_location_policy: localSettings.multi_location_policy,
       };
       await saveSettings(currentTenant.id, payload);
       toast.success('Location settings saved successfully');
@@ -542,6 +544,49 @@ export default function LocationSettingsPage() {
                                 </div>
                               )}
                             </div>
+                            
+                            {/* Multi-Location Policy */}
+                            <div className="mt-4 pt-4 border-t border-blue-100/50">
+                              <label className="block text-xs font-medium text-gray-700 mb-1.5">Multi-Location Policy</label>
+                              <div className="flex flex-col sm:flex-row gap-3">
+                                <label className={`flex-1 flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${localSettings.multi_location_policy === 'separate' ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50'}`}>
+                                  <input 
+                                    type="radio" 
+                                    name="multi_location_policy" 
+                                    value="separate"
+                                    checked={localSettings.multi_location_policy === 'separate'}
+                                    onChange={(e) => {
+                                      setLocalSettings(prev => ({ ...prev, multi_location_policy: 'separate' }));
+                                      setIsDirty(true);
+                                    }}
+                                    className="mt-1 text-blue-600 focus:ring-blue-500"
+                                  />
+                                  <div>
+                                    <div className="text-sm font-semibold text-gray-900">Separate Locations</div>
+                                    <div className="text-xs text-gray-500 mt-0.5">Split journey distance precisely between locations visited in the same day.</div>
+                                  </div>
+                                </label>
+                                
+                                <label className={`flex-1 flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${localSettings.multi_location_policy === 'combine' ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50'}`}>
+                                  <input 
+                                    type="radio" 
+                                    name="multi_location_policy" 
+                                    value="combine"
+                                    checked={localSettings.multi_location_policy === 'combine'}
+                                    onChange={(e) => {
+                                      setLocalSettings(prev => ({ ...prev, multi_location_policy: 'combine' }));
+                                      setIsDirty(true);
+                                    }}
+                                    className="mt-1 text-blue-600 focus:ring-blue-500"
+                                  />
+                                  <div>
+                                    <div className="text-sm font-semibold text-gray-900">Combine into Daily Route</div>
+                                    <div className="text-xs text-gray-500 mt-0.5">Group all locations into a single combined approval item for the full day's route.</div>
+                                  </div>
+                                </label>
+                              </div>
+                            </div>
+
                           </div>
                         </div>
                       ) : (

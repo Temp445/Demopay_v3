@@ -188,15 +188,10 @@ export const useOutsideOfficeApprovalsStore = create<OutsideOfficeApprovalsStore
 
   updateClockOut: async (employeeId, date, clockOutTime) => {
     try {
-      const start = `${date}T00:00:00.000Z`;
-      const end = `${date}T23:59:59.999Z`;
-
       const { error } = await supabase
         .from('outside_office_approvals')
         .update({ clock_out_time: clockOutTime, updated_at: new Date().toISOString() })
         .eq('employee_id', employeeId)
-        .gte('clock_in_time', start)
-        .lte('clock_in_time', end)
         .in('status', ['pending', 'approved'])
         .is('clock_out_time', null);
 
@@ -208,15 +203,10 @@ export const useOutsideOfficeApprovalsStore = create<OutsideOfficeApprovalsStore
 
   updateInsideOfficeClockIn: async (employeeId, date, time) => {
     try {
-      const start = `${date}T00:00:00.000Z`;
-      const end = `${date}T23:59:59.999Z`;
-
       const { error } = await supabase
         .from('outside_office_approvals')
         .update({ inside_office_clock_in_time: time, updated_at: new Date().toISOString() })
         .eq('employee_id', employeeId)
-        .gte('clock_in_time', start)
-        .lte('clock_in_time', end)
         .in('status', ['pending', 'approved'])
         .is('clock_out_time', null)
         .is('inside_office_clock_in_time', null);

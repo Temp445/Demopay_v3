@@ -73,7 +73,8 @@ export type JourneyEventType =
   | 'START_RETURN_JOURNEY'
   | 'REACHED_ENDPOINT'
   | 'GPS_SIGNAL_LOST'
-  | 'GPS_SIGNAL_RESTORED';
+  | 'GPS_SIGNAL_RESTORED'
+  | 'HEARTBEAT'; // Enterprise: lightweight online-presence ping (no GPS required)
 
 export interface JourneyTrackingLog {
   id: string;

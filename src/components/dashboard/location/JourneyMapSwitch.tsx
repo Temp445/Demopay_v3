@@ -16,6 +16,7 @@ interface JourneyMapSwitchProps {
   // Multi-location support (optional)
   workSites?: WorkSitePin[];
   segments?: PathSegment[];
+  hideWorkSite?: boolean;
 }
 
 export default function JourneyMapSwitch(props: JourneyMapSwitchProps) {

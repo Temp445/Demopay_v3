@@ -34,6 +34,7 @@ interface JourneyTrackingState {
 }
 
 let trackingIntervalRef: ReturnType<typeof setInterval> | null = null;
+let heartbeatIntervalRef: ReturnType<typeof setInterval> | null = null;
 
 export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) => ({
   logs: [],
@@ -75,6 +76,20 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
       case 'COMPLETE_WORK': step = 'COMPLETED_WORK'; break;
       case 'START_RETURN_JOURNEY': step = 'RETURNING'; break;
       case 'REACHED_ENDPOINT': step = 'DAY_COMPLETED'; break;
+      // These events must not alter the current journey step
+      case 'GPS_SIGNAL_LOST':
+      case 'GPS_SIGNAL_RESTORED':
+      case 'HEARTBEAT': {
+        // Find the last non-status event to determine the real step
+        const neutralEvents: JourneyEventType[] = ['GPS_SIGNAL_LOST', 'GPS_SIGNAL_RESTORED', 'HEARTBEAT'];
+        const lastMeaningful = [...fetchedLogs].reverse().find(l => !neutralEvents.includes(l.event_type));
+        if (lastMeaningful) {
+          // Recursively resolve against the last meaningful event
+          get().calculateCurrentStep([lastMeaningful]);
+          return;
+        }
+        break;
+      }
     }
 
     set({ currentStep: step, activeLocationId: latestLog.work_location_id || null });
@@ -272,12 +287,41 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
          performLivePing();
       }
     }, ms);
+    // --- Enterprise: Heartbeat Ping (every 60 seconds) ---
+    // Fires a tiny event with no GPS coordinates to keep "Last Seen" timestamp fresh.
+    // This prevents stationary employees from incorrectly appearing as "Offline" on the dashboard.
+    if (heartbeatIntervalRef) clearInterval(heartbeatIntervalRef);
+    heartbeatIntervalRef = setInterval(async () => {
+      try {
+        const currentStep = get().currentStep;
+        // Only heartbeat during active journey states — stop automatically if journey ends
+        const activeSteps: JourneyStep[] = ['TRAVELING', 'REACHED_LOCATION', 'WORKING', 'PAUSED', 'RETURNING'];
+        if (!activeSteps.includes(currentStep)) return;
+
+        await workLocationLib.logJourneyEvent(
+          tenantId,
+          employeeId,
+          'HEARTBEAT',
+          null, // No GPS needed — this is presence-only
+          get().activeLocationId || undefined,
+          undefined
+        );
+        console.log('[JourneyTracking] Heartbeat sent.');
+      } catch (e) {
+        // Heartbeat failures are silent — they must not interrupt the main tracking flow
+        console.warn('[JourneyTracking] Heartbeat failed silently:', e);
+      }
+    }, 60_000); // every 60 seconds
   },
 
   stopBackgroundTracking: () => {
     if (trackingIntervalRef) {
       clearInterval(trackingIntervalRef);
       trackingIntervalRef = null;
+    }
+    if (heartbeatIntervalRef) {
+      clearInterval(heartbeatIntervalRef);
+      heartbeatIntervalRef = null;
     }
     gpsTrackingService.stopTracking();
     set({ isBackgroundTracking: false });

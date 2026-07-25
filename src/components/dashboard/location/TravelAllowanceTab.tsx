@@ -4,7 +4,7 @@ import {
   ExternalLink, Map as MapIcon, History, PlayCircle, PauseCircle, 
   CheckCircle2, CreditCard as Edit, AlignLeft, AlertTriangle, AlertCircle, 
   ShieldCheck, Navigation, WifiOff, Wifi, Maximize2, Minimize2, Ruler, Gauge,
-  Square, CheckSquare, ListChecks, Search
+  Square, CheckSquare, ListChecks, Search, Info, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -162,6 +162,14 @@ export default function TravelAllowanceTab() {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showViolationsModal, setShowViolationsModal] = useState(false);
   const [showTimelinePings, setShowTimelinePings] = useState(false);
+  const [showGroupApprovalModal, setShowGroupApprovalModal] = useState(false);
+  const [showGroupDenyModal, setShowGroupDenyModal] = useState(false);
+  const [selectedGroupToApprove, setSelectedGroupToApprove] = useState<JourneyGroup | null>(null);
+  const [groupDistanceMeters, setGroupDistanceMeters] = useState(0);
+  const [groupDurationSeconds, setGroupDurationSeconds] = useState(0);
+  const [showGroupDetails, setShowGroupDetails] = useState(false);
+  const [groupLocationDetails, setGroupLocationDetails] = useState<Array<{id: string, name: string, distance: number, duration: number}>>([]);
+  const [mapModalWorkFilterId, setMapModalWorkFilterId] = useState<string | null>(null);
   
   const [selectedWork, setSelectedWork] = useState<WorkLocation | null>(null);
   const [journeyLogs, setJourneyLogs] = useState<any[]>([]);
@@ -340,7 +348,11 @@ export default function TravelAllowanceTab() {
           }
 
           // Find the specific journey block that contains the selected work location
-          const activeBlock = blocks.find(b => b.some(l => l.work_location_id === selectedWork.id)) || [];
+          let activeBlock = blocks.find(b => b.some(l => l.work_location_id === selectedWork.id)) || [];
+          
+          if (settings?.multi_location_policy === 'separate') {
+            activeBlock = activeBlock.filter(l => l.work_location_id === selectedWork.id);
+          }
 
           setJourneyLogs(activeBlock);
         } catch (error) {
@@ -508,6 +520,106 @@ export default function TravelAllowanceTab() {
     }
   };
 
+  const handleOpenGroupApproval = (group: JourneyGroup) => {
+    setSelectedGroupToApprove(group);
+    
+    const method = settings?.travel_allowance_method || 'manual';
+    const rate = settings?.travel_allowance_rate || 0;
+    
+    const logsForGroup = allJourneyLogs.filter(l => group.works.some(w => w.id === l.work_location_id));
+    const logsWithCoords = logsForGroup.filter(l => l.latitude && l.longitude);
+    const coords = logsWithCoords.map(l => [Number(l.latitude), Number(l.longitude)] as [number, number]);
+    const distanceMeters = calculateTotalDistance(coords);
+    
+    setGroupDistanceMeters(distanceMeters);
+    
+    let durationSec = 0;
+    if (logsForGroup.length > 0) {
+      const sorted = [...logsForGroup].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      const first = new Date(sorted[0].timestamp).getTime();
+      const last = new Date(sorted[sorted.length - 1].timestamp).getTime();
+      durationSec = (last - first) / 1000;
+    }
+    setGroupDurationSeconds(durationSec);
+
+    // Calculate individual segment details
+    const details = group.works.map(w => {
+      const logs = allJourneyLogs.filter(l => l.work_location_id === w.id);
+      const wCoords = logs.filter(l => l.latitude && l.longitude).map(l => [Number(l.latitude), Number(l.longitude)] as [number, number]);
+      const dist = calculateTotalDistance(wCoords);
+      
+      let dur = 0;
+      if (logs.length > 0) {
+        const sorted = [...logs].sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        const first = new Date(sorted[0].timestamp).getTime();
+        const last = new Date(sorted[sorted.length - 1].timestamp).getTime();
+        dur = (last - first) / 1000;
+      }
+      return { id: w.id, name: w.location_name, distance: dist, duration: dur };
+    });
+    setGroupLocationDetails(details);
+    setShowGroupDetails(false);
+
+    if (method === 'manual') {
+      setWorkAmount('');
+    } else if (method === 'fixed') {
+      setWorkAmount(rate.toString());
+    } else if (method === 'distance') {
+      const distanceKm = distanceMeters / 1000;
+      const amount = Math.round(distanceKm * rate * 100) / 100;
+      setWorkAmount(amount > 0 ? amount.toString() : '');
+    }
+    
+    setWorkUnit('');
+    setShowGroupApprovalModal(true);
+  };
+
+  const handleApproveGroupSubmit = async () => {
+    if (!selectedGroupToApprove) return;
+    setSubmitting(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const amount = workAmount ? parseFloat(workAmount) : undefined;
+      
+      // Approve the first work location with the full amount
+      await approveWork(selectedGroupToApprove.works[0].id, user.id, amount, workUnit || undefined);
+      
+      // Approve the rest with 0 amount (to mark them as approved without double paying)
+      for (let i = 1; i < selectedGroupToApprove.works.length; i++) {
+        await approveWork(selectedGroupToApprove.works[i].id, user.id, 0, undefined);
+      }
+      
+      toast.success('Combined route approved successfully');
+      setShowGroupApprovalModal(false);
+      setSelectedGroupToApprove(null);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to approve combined route');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDenyGroupSubmit = async () => {
+    if (!selectedGroupToApprove || !denyReason.trim()) return;
+
+    setSubmitting(true);
+    try {
+      for (const w of selectedGroupToApprove.works) {
+        await denyWorkLocation(w.id, denyReason);
+      }
+      toast.success('Combined route denied');
+      setShowGroupDenyModal(false);
+      setSelectedGroupToApprove(null);
+      setDenyReason('');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to deny combined route');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const toggleSelectWork = (workId: string) => {
     setSelectedWorkIds(prev => {
       const next = new Set(prev);
@@ -552,9 +664,29 @@ export default function TravelAllowanceTab() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
-      const amount = bulkAmount ? parseFloat(bulkAmount) : undefined;
+      
       const ids = Array.from(selectedWorkIds);
-      await Promise.all(ids.map(id => approveWork(id, user.id, amount, undefined)));
+      const method = settings?.travel_allowance_method || 'manual';
+      const rate = settings?.travel_allowance_rate || 0;
+      const amountStr = bulkAmount;
+      const parsedAmount = amountStr ? parseFloat(amountStr) : undefined;
+      
+      // If distance method and the user didn't manually override the computed sum
+      if (method === 'distance' && amountStr === computeBulkAmount()) {
+        await Promise.all(ids.map(async id => {
+          const logs = allJourneyLogs.filter(l => l.work_location_id === id && l.latitude && l.longitude);
+          let individualAmount = 0;
+          if (logs.length > 0) {
+            const coords = logs.map(l => [l.latitude, l.longitude] as [number, number]);
+            const distanceMeters = calculateTotalDistance(coords);
+            individualAmount = Math.round((distanceMeters / 1000) * rate * 100) / 100;
+          }
+          await approveWork(id, user.id, individualAmount > 0 ? individualAmount : undefined, undefined);
+        }));
+      } else {
+        await Promise.all(ids.map(id => approveWork(id, user.id, parsedAmount, undefined)));
+      }
+      
       toast.success(`${ids.length} work assignment${ids.length > 1 ? 's' : ''} approved!`);
       setShowBulkModal(false);
       setSelectedWorkIds(new Set());
@@ -631,19 +763,24 @@ export default function TravelAllowanceTab() {
     }
   };
 
+  const filteredJourneyLogs = useMemo(() => {
+    if (!mapModalWorkFilterId) return journeyLogs;
+    return journeyLogs.filter(log => log.work_location_id === mapModalWorkFilterId);
+  }, [journeyLogs, mapModalWorkFilterId]);
+
   const timelineEvents = useMemo(() => {
     if (!selectedWork) return [];
     
     const logs: Array<{ status: string, timestamp: string, message: string, lat?: number, lng?: number, locationId?: string, speed_ms?: number | null }> = [];
 
-    if (journeyLogs && journeyLogs.length > 0) {
+    if (filteredJourneyLogs && filteredJourneyLogs.length > 0) {
       // For timeline, skip pure LIVE_TRACK noise unless showTimelinePings is true. Always show the last log.
-      const filteredLogs = journeyLogs.filter((log, idx, arr) => {
+      const filteredLogsForTimeline = filteredJourneyLogs.filter((log, idx, arr) => {
         if (idx === arr.length - 1) return true;
         if (showTimelinePings) return true;
         return !['LIVE_TRACK_JOURNEY', 'LIVE_TRACK_WORK'].includes(log.event_type);
       });
-      filteredLogs.forEach((log) => {
+      filteredLogsForTimeline.forEach((log) => {
         let statusStr = log.event_type;
         let msg = '';
         
@@ -691,7 +828,7 @@ export default function TravelAllowanceTab() {
     }
 
     return logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  }, [selectedWork, activeWorkPauses, journeyLogs, workLocations, showTimelinePings]);
+  }, [selectedWork, activeWorkPauses, filteredJourneyLogs, workLocations, showTimelinePings]);
 
   // Build multi-location map data from all-day logs
   const multiMapData = useMemo(() => {
@@ -731,7 +868,7 @@ export default function TravelAllowanceTab() {
     let currentSegmentPoints: { lat: number; lng: number; type: string; time: string }[] = [];
     let currentSegmentType: 'journey' | 'work' | 'return' = 'journey';
 
-    const logsWithCoords = journeyLogs.filter(log => log.latitude != null && log.longitude != null);
+    const logsWithCoords = filteredJourneyLogs.filter(log => log.latitude != null && log.longitude != null);
 
     const labelMap: Record<string, string> = {
       START_JOURNEY: 'Start Journey',
@@ -806,29 +943,29 @@ export default function TravelAllowanceTab() {
       }));
 
     return { allPoints, segments, workSites };
-  }, [selectedWork, journeyLogs, workLocations, showTimelinePings]);
+  }, [selectedWork, journeyLogs, filteredJourneyLogs, workLocations, showTimelinePings]);
 
   // Global Journey Stats
   const journeyCoords = useMemo(() => {
-    return journeyLogs.filter(log => log.latitude != null && log.longitude != null).map(log => [Number(log.latitude), Number(log.longitude)] as [number, number]);
-  }, [journeyLogs]);
+    return filteredJourneyLogs.filter(log => log.latitude != null && log.longitude != null).map(log => [Number(log.latitude), Number(log.longitude)] as [number, number]);
+  }, [filteredJourneyLogs]);
 
   const totalDistanceMeters = useMemo(() => calculateTotalDistance(journeyCoords), [journeyCoords]);
 
   const totalDurationSeconds = useMemo(() => {
-    if (journeyLogs.length === 0) return 0;
-    const firstLogTime = new Date(journeyLogs[0].timestamp).getTime();
-    const lastLogTime = new Date(journeyLogs[journeyLogs.length - 1].timestamp).getTime();
+    if (filteredJourneyLogs.length === 0) return 0;
+    const firstLogTime = new Date(filteredJourneyLogs[0].timestamp).getTime();
+    const lastLogTime = new Date(filteredJourneyLogs[filteredJourneyLogs.length - 1].timestamp).getTime();
     return (lastLogTime - firstLogTime) / 1000;
-  }, [journeyLogs]);
+  }, [filteredJourneyLogs]);
 
   const avgSpeedKmh = useMemo(() => {
     return totalDurationSeconds > 0 ? ((totalDistanceMeters / 1000) / (totalDurationSeconds / 3600)).toFixed(1) : '0.0';
   }, [totalDistanceMeters, totalDurationSeconds]);
 
   const maxSpeedKmh = useMemo(() => {
-    return journeyLogs.length > 0 ? Math.max(...journeyLogs.map(l => (l.speed_ms != null ? l.speed_ms : 0))) * 3.6 : 0;
-  }, [journeyLogs]);
+    return filteredJourneyLogs.length > 0 ? Math.max(...filteredJourneyLogs.map(l => (l.speed_ms != null ? l.speed_ms : 0))) * 3.6 : 0;
+  }, [filteredJourneyLogs]);
 
   const getTimelineIcon = (status: string, isFirst: boolean, isLast: boolean) => {
     const iconClass = "h-4 w-4 drop-shadow-sm mt-0.5";
@@ -936,7 +1073,7 @@ export default function TravelAllowanceTab() {
     const isApproved = tabType === 'approved';
 
     return (
-      <div key={group.id} className="p-4 sm:p-6 hover:bg-gray-50/70 transition-colors border-b border-gray-100 last:border-b-0">
+      <div key={group.id} className=" hover:bg-gray-50/70 transition-colors py-4 border-b border-dashed border-gray-500 last:border-b-0">
         <div className="flex flex-col gap-4 sm:gap-5">
           {/* Group Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -969,6 +1106,54 @@ export default function TravelAllowanceTab() {
           </div>
         </div>
 
+        {/* Group Approval Action (Combine Mode) */}
+        {settings?.multi_location_policy === 'combine' && isPending && group.works.length > 1 && (
+          <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ml-0 sm:ml-2 mt-2">
+            <div>
+              <div className="text-sm font-semibold text-blue-900">Combined Route Approval</div>
+              <div className="text-xs text-blue-700 mt-0.5">Approve or deny this multi-location route as a single travel allowance.</div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => { setSelectedWork(group.works[0]); setShowMapModal(true); }}
+                className="px-3 py-1.5 bg-white hover:bg-gray-50 text-indigo-700 border border-indigo-200 text-sm font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-1.5"
+              >
+                <MapIcon className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => { setSelectedWork(group.works[0]); setShowTimelineModal(true); }}
+                className="px-3 py-1.5 bg-white hover:bg-gray-50 text-purple-700 border border-purple-200 text-sm font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-1.5"
+              >
+                <History className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => { setSelectedWork(group.works[0]); setShowViolationsModal(true); }}
+                className="p-1.5 bg-white hover:bg-gray-50 text-orange-700 border border-orange-200 rounded-lg shadow-sm transition-colors"
+                title="Violations"
+              >
+                <AlertTriangle className="h-4 w-4" />
+              </button>
+              <div className="w-px h-6 bg-blue-200 mx-1 hidden sm:block"></div>
+              <button
+                onClick={() => {
+                  setSelectedGroupToApprove(group);
+                  setDenyReason('');
+                  setShowGroupDenyModal(true);
+                }}
+                className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 text-sm font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-2 whitespace-nowrap"
+              >
+                <XCircle className="h-4 w-4" /> Deny
+              </button>
+              <button
+                onClick={() => handleOpenGroupApproval(group)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-2 whitespace-nowrap"
+              >
+                <CheckCircle className="h-4 w-4" /> Approve
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Location Cards */}
         <div className="space-y-3 pl-0 sm:pl-2">
           {group.works.map(work => (
@@ -978,7 +1163,7 @@ export default function TravelAllowanceTab() {
                 isPending
                   ? selectedWorkIds.has(work.id)
                     ? 'bg-amber-50 border-amber-400 shadow-sm ring-1 ring-amber-300'
-                    : 'bg-white border-amber-100 shadow-sm'
+                    : 'bg-white border-gray-400 shadow-sm'
                   : isRejected
                     ? 'bg-red-50 border-red-100 shadow-sm'
                     : 'bg-emerald-50/40 border-emerald-100 shadow-sm'
@@ -987,7 +1172,7 @@ export default function TravelAllowanceTab() {
 
               <div className="flex-1">
                 <div className="flex items-start gap-2 mb-2">
-                  {isPending && (
+                  {isPending && !(settings?.multi_location_policy === 'combine' && group.works.length > 1) && (
                     <button
                       onClick={() => toggleSelectWork(work.id)}
                       className="flex-shrink-0 mt-0.5 text-amber-500 hover:text-amber-700 transition-colors"
@@ -1000,12 +1185,12 @@ export default function TravelAllowanceTab() {
                   )}
                   <div className="flex flex-col gap-2">
                     <div>
-                      <span className="text-[10px] uppercase tracking-wider font-bold text-gray-400">Company Name</span>
+                      <span className="text-[10px] uppercase tracking-wider font-bold text-gray-700">Company Name</span>
                       <div className="font-semibold text-gray-900 text-sm">{work.location_name}</div>
                     </div>
                     {work.formatted_address && (
                       <div>
-                        <span className="text-[10px] uppercase tracking-wider font-bold text-gray-400">Location Name</span>
+                        <span className="text-[10px] uppercase tracking-wider font-bold text-gray-700">Location Name</span>
                         <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{work.formatted_address}</div>
                       </div>
                     )}
@@ -1023,7 +1208,7 @@ export default function TravelAllowanceTab() {
 
               {/* Actions */}
               <div className="flex flex-wrap items-center gap-2 shrink-0 w-full xl:w-auto border-t xl:border-t-0 pt-3 xl:pt-0 border-gray-100 mt-2 xl:mt-0">
-                {isPending && (
+                {isPending && !(settings?.multi_location_policy === 'combine' && group.works.length > 1) && (
                   <button
                     onClick={() => handleOpenApproval(work)}
                     className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-1.5"
@@ -1049,30 +1234,34 @@ export default function TravelAllowanceTab() {
                     <AlignLeft className="h-4 w-4" />
                   </button>
                 )}
-                <button
-                  onClick={() => { setSelectedWork(work); setShowMapModal(true); }}
-                  className="p-1.5 text-indigo-600 hover:bg-indigo-50 border border-indigo-100 rounded-lg transition-colors"
-                  title="View Map"
-                >
-                  <MapIcon className="h-4 w-4" />
-                </button>
-                {isPending && (
-                  <button
-                    onClick={() => { setSelectedWork(work); setShowTimelineModal(true); }}
-                    className="p-1.5 text-purple-600 hover:bg-purple-50 border border-purple-100 rounded-lg transition-colors"
-                    title="Timeline"
-                  >
-                    <History className="h-4 w-4" />
-                  </button>
+                {!(settings?.multi_location_policy === 'combine' && group.works.length > 1) && (
+                  <>
+                    <button
+                      onClick={() => { setSelectedWork(work); setShowMapModal(true); }}
+                      className="p-1.5 text-indigo-600 hover:bg-indigo-50 border border-indigo-100 rounded-lg transition-colors"
+                      title="View Map"
+                    >
+                      <MapIcon className="h-4 w-4" />
+                    </button>
+                    {isPending && (
+                      <button
+                        onClick={() => { setSelectedWork(work); setShowTimelineModal(true); }}
+                        className="p-1.5 text-purple-600 hover:bg-purple-50 border border-purple-100 rounded-lg transition-colors"
+                        title="Timeline"
+                      >
+                        <History className="h-4 w-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setSelectedWork(work); setShowViolationsModal(true); }}
+                      className="p-1.5 text-orange-600 hover:bg-orange-50 border border-orange-100 rounded-lg transition-colors"
+                      title="Violations"
+                    >
+                      <AlertTriangle className="h-4 w-4" />
+                    </button>
+                  </>
                 )}
-                <button
-                  onClick={() => { setSelectedWork(work); setShowViolationsModal(true); }}
-                  className="p-1.5 text-orange-600 hover:bg-orange-50 border border-orange-100 rounded-lg transition-colors"
-                  title="Violations"
-                >
-                  <AlertTriangle className="h-4 w-4" />
-                </button>
-                {isPending && (
+                {isPending && !(settings?.multi_location_policy === 'combine' && group.works.length > 1) && (
                   <button
                     onClick={() => { setSelectedWork(work); setDenyReason(''); setShowDenyModal(true); }}
                     className="p-1.5 text-red-600 hover:bg-red-50 border border-red-100 rounded-lg transition-colors"
@@ -1166,7 +1355,7 @@ export default function TravelAllowanceTab() {
       </div>
 
       {/* ─── Tab Content ─── */}
-      <div className="bg-white md:rounded-2xl md:border border-gray-200 md:shadow-sm overflow-hidden">
+      <div className="bg-white md:rounded-2xl  border-gray-200 md:shadow-sm overflow-hidden">
 
         {/* PENDING TAB */}
         {activeTab === 'pending' && (
@@ -1182,7 +1371,7 @@ export default function TravelAllowanceTab() {
             ) : (
               <>
                 {/* Select All bar */}
-                <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-gray-100 bg-gray-50">
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4  py-3 border-b border-gray-500 bg-gray-50">
                   <button
                     onClick={handleSelectAll}
                     className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-amber-700 transition-colors"
@@ -1195,9 +1384,25 @@ export default function TravelAllowanceTab() {
                       : `Select All (${completedWorks.length})`}
                   </button>
                   {selectedWorkIds.size > 0 && (
-                    <span className="text-xs text-amber-700 font-semibold bg-amber-100 px-2.5 py-1 rounded-full">
-                      {selectedWorkIds.size} selected
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-amber-700 font-semibold bg-amber-100 px-2.5 py-1.5 rounded-full mr-1">
+                        {selectedWorkIds.size} selected
+                      </span>
+                      <button
+                        onClick={handleOpenBulkModal}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition-colors shadow-sm"
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                        Approve Selected
+                      </button>
+                      <button
+                        onClick={() => setSelectedWorkIds(new Set())}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition-colors"
+                      >
+                        <X className="h-4 w-4" />
+                        Clear
+                      </button>
+                    </div>
                   )}
                 </div>
                 {paginatedPendingGroups.map(group => renderJourneyGroup(group, 'pending'))}
@@ -1296,30 +1501,6 @@ export default function TravelAllowanceTab() {
 
       </div>
 
-      {/* ─── Bulk Action Floating Bar ─── */}
-      {selectedWorkIds.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-3 border border-gray-700 animate-in fade-in slide-in-from-bottom-4 duration-200">
-          <ListChecks className="h-5 w-5 text-amber-400 flex-shrink-0" />
-          <span className="text-sm font-semibold">
-            {selectedWorkIds.size} item{selectedWorkIds.size > 1 ? 's' : ''} selected
-          </span>
-          <div className="w-px h-5 bg-gray-600" />
-          <button
-            onClick={handleOpenBulkModal}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-400 rounded-lg text-sm font-semibold transition-colors"
-          >
-            <CheckCircle className="h-4 w-4" />
-            Approve All
-          </button>
-          <button
-            onClick={() => setSelectedWorkIds(new Set())}
-            className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
-          >
-            <X className="h-4 w-4" />
-            Clear
-          </button>
-        </div>
-      )}
 
       {/* ─── BULK APPROVAL MODAL ─── */}
       {showBulkModal && (
@@ -1339,15 +1520,19 @@ export default function TravelAllowanceTab() {
                 <CheckSquare className="h-5 w-5 text-amber-600 flex-shrink-0" />
                 <div>
                   <div className="text-sm font-semibold text-amber-800">{selectedWorkIds.size} work assignment{selectedWorkIds.size > 1 ? 's' : ''} selected</div>
-                  <div className="text-xs text-amber-600 mt-0.5">The same travel allowance will be applied to all selected items.</div>
+                  <div className="text-xs text-amber-600 mt-0.5">
+                    {settings?.travel_allowance_method === 'distance' 
+                      ? "Each location will receive its own individual distance calculation."
+                      : "The same travel allowance will be applied to all selected items."}
+                  </div>
                 </div>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Travel Allowance Amount (₹)
+                  {settings?.travel_allowance_method === 'distance' ? "Total Sum (For Reference) (₹)" : "Travel Allowance Amount (₹)"}
                   {settings?.travel_allowance_method === 'distance' && (
-                    <span className="ml-2 text-xs text-blue-600 font-normal">(Total calculated from all GPS tracks)</span>
+                    <span className="ml-2 text-xs text-blue-600 font-normal">(Combined from all GPS tracks)</span>
                   )}
                 </label>
                 <input
@@ -1383,6 +1568,163 @@ export default function TravelAllowanceTab() {
                     <><Loader2 className="h-4 w-4 animate-spin" /> Approving...</>
                   ) : (
                     <><CheckCircle className="h-4 w-4" /> Approve {selectedWorkIds.size} Item{selectedWorkIds.size > 1 ? 's' : ''}</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GROUP DENY MODAL */}
+      {showGroupDenyModal && selectedGroupToApprove && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">Deny Combined Route</h2>
+              <button onClick={() => { setShowGroupDenyModal(false); setSelectedGroupToApprove(null); }} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-red-50 p-3 rounded-lg border border-red-100 flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-sm font-semibold text-red-800">Deny Full Route</h4>
+                  <p className="text-xs text-red-700 mt-1">
+                    You are denying all <strong>{selectedGroupToApprove.works.length} locations</strong> in this route for {selectedGroupToApprove.employeeName}.
+                  </p>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason for Denial</label>
+                <textarea
+                  rows={3}
+                  value={denyReason}
+                  onChange={e => setDenyReason(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  placeholder="e.g., Journey path looks invalid..."
+                />
+              </div>
+              <div className="flex gap-3 pt-4 border-t border-gray-100">
+                <button
+                  onClick={() => { setShowGroupDenyModal(false); setSelectedGroupToApprove(null); }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDenyGroupSubmit}
+                  disabled={submitting || !denyReason.trim()}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                  {submitting ? 'Denying...' : 'Deny'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GROUP APPROVAL MODAL (Combine Mode) */}
+      {showGroupApprovalModal && selectedGroupToApprove && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">Approve Combined Route</h2>
+              <button onClick={() => { setShowGroupApprovalModal(false); setSelectedGroupToApprove(null); }} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 flex items-start gap-3">
+                <Info className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-sm font-semibold text-amber-800">Combined Route Approval</h4>
+                  <p className="text-xs text-amber-700 mt-1">
+                    You are approving <strong>{selectedGroupToApprove.works.length} locations</strong> for {selectedGroupToApprove.employeeName}. 
+                    The full travel allowance will be added to the first location, and the others will be marked as approved without duplicating the allowance.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                  <p className="text-xs font-semibold text-blue-700 mb-1">Total Route Distance</p>
+                  <p className="text-lg font-bold text-gray-900">{formatDistance(groupDistanceMeters)}</p>
+                </div>
+                <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                  <p className="text-xs font-semibold text-blue-700 mb-1">Total Duration</p>
+                  <p className="text-lg font-bold text-gray-900">{formatDuration(groupDurationSeconds)}</p>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center px-1">
+                <button
+                  onClick={() => setShowGroupDetails(!showGroupDetails)}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
+                >
+                  {showGroupDetails ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  {showGroupDetails ? 'Hide' : 'Show'} Segment Details
+                </button>
+              </div>
+
+              {showGroupDetails && (
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2 mt-2 max-h-40 overflow-y-auto">
+                  {groupLocationDetails.map(loc => (
+                    <div key={loc.id} className="flex items-center justify-between text-xs py-0.5">
+                      <span className="font-medium text-gray-700 truncate pr-2 flex-1" title={loc.name}>
+                        {loc.name}
+                      </span>
+                      <div className="flex items-center gap-4 text-gray-500 font-medium shrink-0">
+                        <span className="flex items-center gap-1.5 justify-end w-20 whitespace-nowrap">
+                          <Ruler className="h-3.5 w-3.5 shrink-0 text-gray-400" /> {formatDistance(loc.distance)}
+                        </span>
+                        <span className="flex items-center gap-1.5 justify-end w-20 whitespace-nowrap">
+                          <Clock className="h-3.5 w-3.5 shrink-0 text-gray-400" /> {formatDuration(loc.duration)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="pt-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Combined Travel Allowance Amount (₹)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={workAmount}
+                  onChange={(e) => setWorkAmount(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  placeholder="e.g. 500"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4 border-t border-gray-100">
+                <button
+                  onClick={() => { setShowGroupApprovalModal(false); setSelectedGroupToApprove(null); }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleApproveGroupSubmit}
+                  disabled={submitting}
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {submitting ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Approving...</>
+                  ) : (
+                    <><CheckCircle className="h-4 w-4" /> Approve Route</>
                   )}
                 </button>
               </div>
@@ -1848,7 +2190,7 @@ export default function TravelAllowanceTab() {
                   >
                     {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
                   </button>
-                  <button onClick={() => { setShowMapModal(false); setSelectedWork(null); }} className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+                  <button onClick={() => { setShowMapModal(false); setSelectedWork(null); setMapModalWorkFilterId(null); }} className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
                     <X className="h-5 w-5" />
                   </button>
                 </div>
@@ -1912,12 +2254,20 @@ export default function TravelAllowanceTab() {
                       <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
                         <div className="text-xs font-semibold text-blue-700 mb-2">📍 Locations Visited Today ({multiMapData.workSites.length})</div>
                         <div className="flex flex-wrap gap-2">
-                          {multiMapData.workSites.map((ws, i) => (
-                            <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-blue-200 rounded-full text-[10px] text-blue-800 font-medium">
-                              <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ backgroundColor: ['#ef4444','#f97316','#eab308','#7c3aed','#2563eb'][i % 5] }} />
-                              {ws.name}
-                            </span>
-                          ))}
+                          {multiMapData.workSites.map((ws, i) => {
+                            const isSelected = mapModalWorkFilterId === ws.id;
+                            const isFaded = mapModalWorkFilterId !== null && !isSelected;
+                            return (
+                              <button 
+                                key={i} 
+                                onClick={() => setMapModalWorkFilterId(isSelected ? null : ws.id)}
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border rounded-full text-[10px] font-semibold transition-all shadow-sm ${isSelected ? 'border-blue-400 bg-blue-50 text-blue-900 ring-2 ring-blue-100' : isFaded ? 'border-gray-200 text-gray-400 opacity-60' : 'border-blue-200 text-blue-800 hover:bg-blue-50'}`}
+                              >
+                                <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: ['#ef4444','#f97316','#eab308','#7c3aed','#2563eb'][i % 5] }} />
+                                {ws.name}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     )}

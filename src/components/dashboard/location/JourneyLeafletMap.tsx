@@ -160,11 +160,12 @@ interface JourneyLeafletMapProps {
   height?: string;
   workSites?: WorkSitePin[];
   segments?: PathSegment[];
+  hideWorkSite?: boolean;
 }
 
 export default function JourneyLeafletMap({ 
   points = [], workLat, workLng, workName, radiusMeters, height = '400px',
-  workSites, segments = []
+  workSites, segments = [], hideWorkSite = false
 }: JourneyLeafletMapProps) {
   
   const chronologicallySortedPoints = useMemo(() => sortPointsByTime(points), [points]);
@@ -299,23 +300,23 @@ export default function JourneyLeafletMap({
               else if (i === displayPoints.length - 1) color = '#8b5cf6';
               
               return {
-                lat: p.lat,
-                lng: p.lng,
+                coordinates: [p.lat, p.lng] as [number, number],
                 color,
-                popupHTML: `<div class="font-semibold">${locationText ? `${locationText} - ${p.type}` : p.type}</div><div class="text-xs">${p.time}</div>`
+                title: `${p.type}\n${new Date(p.time).toLocaleTimeString()}`,
+                size: (p.type === 'traveling' || p.type === 'working') ? 0.6 : 1
               };
             }),
-            ...(hasMultiSite ? (workSites || []).map(ws => ({
-              lat: ws.lat,
-              lng: ws.lng,
+            ...(hideWorkSite ? [] : (hasMultiSite && workSites ? workSites.map((ws, i) => ({
+              coordinates: [ws.lat, ws.lng] as [number, number],
               color: '#ef4444',
-              popupHTML: `<div class="font-bold">${ws.name}</div><div class="text-xs text-gray-500">Work Site</div>`
+              title: `${ws.name} — Work Site ${i + 1}`,
+              size: 1.2
             })) : [{
-              lat: workLat,
-              lng: workLng,
+              coordinates: [workLat, workLng] as [number, number],
               color: '#ef4444',
-              popupHTML: `<div class="font-bold">${workName}</div><div class="text-xs text-gray-500">Assigned Site</div>`
-            }])
+              title: workName || 'Assigned Site',
+              size: 1.2
+            }]))
           ]}
           circles={[
             ...(hasMultiSite ? (workSites || []).filter(ws => ws.radiusMeters && ws.radiusMeters > 0).map(ws => ({
@@ -447,14 +448,17 @@ export default function JourneyLeafletMap({
           ))
         ) : (
           <>
-            <Marker position={[workLat, workLng]} icon={getOffsetIcon('red', 0, 1)}>
-              <Tooltip direction="top">
-                <span className="text-xs font-bold">{workName}</span>
-                <br />
-                <span className="text-xs text-gray-500">Assigned Site</span>
-              </Tooltip>
-            </Marker>
-            {radiusMeters && radiusMeters > 0 && (
+            {/* SINGLE WORK SITE MARKER */}
+            {!hideWorkSite && (
+              <Marker position={[workLat, workLng]} icon={getOffsetIcon('red', 0, 1)}>
+                <Tooltip direction="top">
+                  <span className="text-xs font-bold">{workName}</span>
+                  <br />
+                  <span className="text-xs text-gray-500">Assigned Site</span>
+                </Tooltip>
+              </Marker>
+            )}
+            {!hideWorkSite && radiusMeters && radiusMeters > 0 && (
               <Circle
                 center={[workLat, workLng]}
                 radius={radiusMeters}

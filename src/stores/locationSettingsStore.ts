@@ -17,6 +17,7 @@ export interface LocationSettings {
   field_work_component_id: string | null;
   travel_allowance_method: 'manual' | 'distance' | 'fixed';
   travel_allowance_rate: number;
+  multi_location_policy: 'combine' | 'separate';
   created_at?: string;
   updated_at?: string;
 }
@@ -35,6 +36,7 @@ const DEFAULT_SETTINGS: LocationSettings = {
   field_work_component_id: null,
   travel_allowance_method: 'manual',
   travel_allowance_rate: 0,
+  multi_location_policy: 'separate',
 };
 
 interface LocationSettingsStore {

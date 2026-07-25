@@ -39,14 +39,14 @@ interface JourneyGoogleMapProps {
   workName: string;
   radiusMeters?: number;
   height?: string;
-  // Multi-location support
   workSites?: WorkSitePin[];
   segments?: PathSegment[];
+  hideWorkSite?: boolean;
 }
 
 export default function JourneyGoogleMap({ 
   apiKey, points, workLat, workLng, workName, radiusMeters, height = '400px',
-  workSites, segments
+  workSites, segments, hideWorkSite = false
 }: JourneyGoogleMapProps) {
   const { isLoaded } = useGoogleMaps();
   const mapRef = useRef<google.maps.Map | null>(null);
@@ -161,42 +161,44 @@ export default function JourneyGoogleMap({
         })}
 
         {/* ---- MULTI WORK SITE MARKERS ---- */}
-        {hasMultiSite ? (
-          workSites!.map((ws, si) => (
-            <div key={`ws-${si}`}>
-              <AdvancedMarker
-                map={map}
-                position={{ lat: ws.lat, lng: ws.lng }}
-                title={`${ws.name} — Work Site ${si + 1}`}
-                iconUrl={getPinIconUrl(ws.color || 'red')}
-                iconSize={[32, 32]}
-                iconAnchor={[16, 32]}
-              />
-              {ws.radiusMeters && ws.radiusMeters > 0 && (
-                <CircleF
-                  center={{ lat: ws.lat, lng: ws.lng }}
-                  radius={ws.radiusMeters}
-                  options={{
-                    strokeColor: SITE_COLORS_GOOGLE[si % SITE_COLORS_GOOGLE.length],
-                    strokeOpacity: 0.6,
-                    strokeWeight: 2,
-                    fillColor: SITE_COLORS_GOOGLE[si % SITE_COLORS_GOOGLE.length],
-                    fillOpacity: 0.06,
-                  }}
+        {!hideWorkSite && (
+          hasMultiSite ? (
+            workSites!.map((ws, si) => (
+              <div key={`ws-${si}`}>
+                <AdvancedMarker
+                  map={map}
+                  position={{ lat: ws.lat, lng: ws.lng }}
+                  title={`${ws.name} — Work Site ${si + 1}`}
+                  iconUrl={getPinIconUrl(ws.color || 'red')}
+                  iconSize={[32, 32]}
+                  iconAnchor={[16, 32]}
                 />
-              )}
-            </div>
-          ))
-        ) : (
-          /* ---- SINGLE WORK SITE MARKER ---- */
-          <AdvancedMarker
-            map={map}
-            position={{ lat: workLat, lng: workLng }}
-            title={workName}
-            iconUrl={getPinIconUrl('red')}
-            iconSize={[32, 32]}
-            iconAnchor={[16, 32]}
-          />
+                {ws.radiusMeters && ws.radiusMeters > 0 && (
+                  <CircleF
+                    center={{ lat: ws.lat, lng: ws.lng }}
+                    radius={ws.radiusMeters}
+                    options={{
+                      strokeColor: SITE_COLORS_GOOGLE[si % SITE_COLORS_GOOGLE.length],
+                      strokeOpacity: 0.6,
+                      strokeWeight: 2,
+                      fillColor: SITE_COLORS_GOOGLE[si % SITE_COLORS_GOOGLE.length],
+                      fillOpacity: 0.06,
+                    }}
+                  />
+                )}
+              </div>
+            ))
+          ) : (
+            /* ---- SINGLE WORK SITE MARKER ---- */
+            <AdvancedMarker
+              map={map}
+              position={{ lat: workLat, lng: workLng }}
+              title={workName}
+              iconUrl={getPinIconUrl('red')}
+              iconSize={[32, 32]}
+              iconAnchor={[16, 32]}
+            />
+          )
         )}
       </GoogleMap>
     </div>

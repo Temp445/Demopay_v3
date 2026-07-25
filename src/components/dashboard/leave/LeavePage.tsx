@@ -7,6 +7,8 @@ import LeaveBalances from "./LeaveBalances";
 import AddLeaveRequestModal from "./AddLeaveRequestModal";
 import AbsenteeList from "./AbsenteeList";
 import AbsenteeLeaveRequestModal from "./AbsenteeLeaveRequestModal";
+import CompOffList from "./CompOffList";
+import AddCompOffRequestModal from "./AddCompOffRequestModal";
 import ImportModal from "../../ImportModal";
 import { exportToCSV } from "../../../lib/export";
 import { useLeaveStore, type LeaveRequest } from "../../../stores/leaveStore";
@@ -20,6 +22,7 @@ import { useRoleAccess } from "../../../hooks/useRoleAccess";
 
 export default function LeavePage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isCompOffModalOpen, setIsCompOffModalOpen] = useState(false);
   const [editingRequest, setEditingRequest] = useState<LeaveRequest | undefined>(undefined);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(Date.now());
@@ -28,9 +31,9 @@ export default function LeavePage() {
   const isReportingHead = role === 'Reporting Head';
 
   // New state for tab switching
-  const [activeTab, setActiveTab] = useState<"leaves" | "absentees">("leaves");
+  const [activeTab, setActiveTab] = useState<"leaves" | "absentees" | "comp_offs">("leaves");
 
-  const handleTabChange = (tab: "leaves" | "absentees") => {
+  const handleTabChange = (tab: "leaves" | "absentees" | "comp_offs") => {
     setActiveTab(tab);
     
     const today = new Date();
@@ -84,7 +87,16 @@ export default function LeavePage() {
     error,
     fetchEmployees,
   } = useEmployeesStore();
-  const { leaveRequests, fetchLeaveRequests } = useLeaveStore();
+  const { leaveRequests, fetchLeaveRequests, leaveTypes, fetchLeaveTypes } = useLeaveStore();
+
+  useEffect(() => {
+    fetchLeaveTypes();
+  }, [fetchLeaveTypes]);
+
+  const hasCompOff = leaveTypes.items.some(lt => {
+    const name = lt.name.toLowerCase();
+    return name.includes('comp off') || name.includes('compensatory') || name.includes('co');
+  });
 
   useEffect(() => {
     if (canViewAllData || isReportingHead) {
@@ -298,13 +310,22 @@ export default function LeavePage() {
                 Request My Leave
               </button>
             )}
-            {selectedEmployee && (
+            {selectedEmployee && activeTab !== 'comp_offs' && (
               <button
                 onClick={() => setIsAddModalOpen(true)}
                 className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 <Plus className="h-4 w-4 mr-2" />
                 Request Leave
+              </button>
+            )}
+            {selectedEmployee && activeTab === 'comp_offs' && hasCompOff && (
+              <button
+                onClick={() => setIsCompOffModalOpen(true)}
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Request Comp Off Credit
               </button>
             )}
             {canViewAllData && !isReportingHead && (
@@ -467,6 +488,22 @@ export default function LeavePage() {
                 Absentee List
               </button>
             )}
+            {hasCompOff && (
+              <button
+                onClick={() => handleTabChange("comp_offs")}
+                className={`
+                  whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
+                  ${
+                    activeTab === "comp_offs"
+                      ? "border-indigo-500 text-indigo-600"
+                      : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                  }
+                `}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Comp Off Credits
+              </button>
+            )}
           </nav>
         </div>
         {/* ----------------------------------------------------------- */}
@@ -482,6 +519,16 @@ export default function LeavePage() {
               lastRefresh={lastRefresh}
               subordinateIds={subordinateIds}
               isReportingHead={isReportingHead}
+            />
+          ) : activeTab === "comp_offs" ? (
+            <CompOffList
+              employeeId={selectedEmployee?.id}
+              filters={filters}
+              onRefresh={handleLeaveAdded}
+              lastRefresh={lastRefresh}
+              isReportingHead={isReportingHead}
+              subordinateIds={subordinateIds}
+              canViewAllData={canViewAllData}
             />
           ) : (
             <LeaveList
@@ -506,7 +553,7 @@ export default function LeavePage() {
         </div>
       </div>
 
-      {selectedEmployee && (
+      {isAddModalOpen && selectedEmployee && (
         <AddLeaveRequestModal
           employee={selectedEmployee}
           isOpen={isAddModalOpen}
@@ -516,6 +563,16 @@ export default function LeavePage() {
           }}
           onLeaveAdded={handleLeaveAdded}
           initialData={editingRequest}
+        />
+      )}
+
+      {isCompOffModalOpen && (
+        <AddCompOffRequestModal
+          isOpen={isCompOffModalOpen}
+          onClose={() => setIsCompOffModalOpen(false)}
+          employeeId={selectedEmployee?.id || ""}
+          employeeName={selectedEmployee?.name || ""}
+          onSuccess={handleLeaveAdded}
         />
       )}
 

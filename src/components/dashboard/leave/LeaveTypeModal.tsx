@@ -298,9 +298,11 @@ export default function LeaveTypeModal({ isOpen, onClose, onSave, leaveType }: L
                           onChange={(e) => setFormData({ ...formData, is_paid: e.target.checked })}
                         />
                         <label htmlFor="is_paid" className="ml-2 block text-sm text-gray-900">
-                          Paid Leave
+                          Is Paid Leave
                         </label>
                       </div>
+
+
 
                       <div className="flex items-center">
                         <input

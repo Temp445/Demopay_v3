@@ -1,9 +1,7 @@
 import { useRef, useCallback } from 'react';
-import { GoogleMap, MarkerF, PolylineF, CircleF, useJsApiLoader, InfoWindowF } from '@react-google-maps/api';
+import { GoogleMap, MarkerF, PolylineF, CircleF, InfoWindowF, useJsApiLoader } from '@react-google-maps/api';
 import { MapPin, Navigation as NavigationIcon } from 'lucide-react';
 import { useState } from 'react';
-
-const libraries: ('places' | 'geocoding')[] = ['places', 'geocoding'];
 
 interface GoogleMapsMapViewerProps {
   apiKey: string;
@@ -30,10 +28,7 @@ export default function GoogleMapsMapViewer({
   height = '400px',
   radius,
 }: GoogleMapsMapViewerProps) {
-  const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: apiKey,
-    libraries,
-  });
+  const { isLoaded } = useJsApiLoader({ googleMapsApiKey: apiKey });
 
   const mapRef = useRef<google.maps.Map | null>(null);
   const [showInfo, setShowInfo] = useState(false);

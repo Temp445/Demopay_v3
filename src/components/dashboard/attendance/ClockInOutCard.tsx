@@ -121,7 +121,7 @@ export default function ClockInOutCard({
     clockInTime: string;
     attendanceLocation?: string | null;
   } | null>(null);
-  
+
   const [pendingActions, setPendingActions] = useState<any[]>([]);
   const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
 
@@ -657,6 +657,110 @@ export default function ClockInOutCard({
         captured_image: capturedImageBase64,
       });
 
+      // ── Auto Comp-Off Credit on Holiday / Weekly-Off Clock-IN ──
+      // Queries the holidays table directly and expands recurring patterns client-side
+      // (same logic as HolidayCalendar.tsx). The get_holidays RPC does NOT expand
+      // recurring patterns like "every Sunday = Weekly Holiday", so we can't use it here.
+      if (entryType === 'IN' && currentTenant?.id) {
+        try {
+          const workedDate = (() => {
+            const d = timestamp;
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+          })();
+
+          // Fetch all holiday records for the tenant (including recurring patterns)
+          const { data: allHolidays } = await supabase
+            .from('holidays')
+            .select('id, name, date, is_recurring, recurring_patterns')
+            .eq('tenant_id', currentTenant.id);
+
+          const localDate = new Date(workedDate + 'T12:00:00');
+          const dow = localDate.getDay();
+          const dayOfMonth = localDate.getDate();
+          const weekIndex = Math.floor((dayOfMonth - 1) / 7);
+          const nextWeek = new Date(localDate);
+          nextWeek.setDate(nextWeek.getDate() + 7);
+          const isLastOccurrence = nextWeek.getMonth() !== localDate.getMonth();
+
+          const dayToNumber: Record<string, number> = {
+            sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+            thursday: 4, friday: 5, saturday: 6,
+          };
+
+          let matchedHolidayName: string | null = null;
+          for (const holiday of allHolidays || []) {
+            if (!holiday) continue;
+
+            if (!holiday.is_recurring) {
+              if (holiday.date === workedDate) {
+                matchedHolidayName = holiday.name;
+                break;
+              }
+              continue;
+            }
+
+            if (holiday.recurring_patterns?.length) {
+              const matched = holiday.recurring_patterns.some((pattern: any) => {
+                const pDay = (pattern.week_day || pattern.weekDay || '').toLowerCase();
+                const pOcc = (pattern.week_occurrence || pattern.weekOccurrence || '').toLowerCase();
+                if (dayToNumber[pDay] !== dow) return false;
+                if (!pOcc || pOcc === 'all') return true;
+                const occurrenceMap: Record<string, number> = { first: 0, second: 1, third: 2, fourth: 3 };
+                if (pOcc === 'last') return isLastOccurrence;
+                return occurrenceMap[pOcc] === weekIndex;
+              });
+              if (matched) {
+                matchedHolidayName = holiday.name;
+                break;
+              }
+            }
+          }
+
+          if (matchedHolidayName) {
+            // Find the first active Comp Off leave type
+            const { data: leaveTypesData } = await supabase
+              .from('leave_types')
+              .select('id, name')
+              .eq('tenant_id', currentTenant.id)
+              .eq('is_active', true);
+
+            const compOffType = (leaveTypesData || []).find((lt: any) => {
+              const n = lt.name.toLowerCase();
+              return n.includes('comp off') || n.includes('compensatory') || n.includes('comp-off');
+            });
+
+            if (compOffType) {
+              const { data: existingRequests } = await supabase
+                .from('comp_off_requests')
+                .select('id')
+                .eq('tenant_id', currentTenant.id)
+                .eq('employee_id', employeeId)
+                .eq('worked_date', workedDate)
+                .limit(1);
+
+              if (!existingRequests || existingRequests.length === 0) {
+                await supabase
+                  .from('comp_off_requests')
+                  .insert([{
+                    employee_id: employeeId,
+                    leave_type_id: compOffType.id,
+                    worked_date: workedDate,
+                    reason: `Worked on ${matchedHolidayName}`,
+                    status: 'Pending',
+                    tenant_id: currentTenant.id,
+                  }]);
+              }
+            }
+          }
+        } catch (compOffErr) {
+          console.warn('Auto comp-off creation failed (non-fatal):', compOffErr);
+        }
+      }
+
+
       // Start travel tracking after a successful Outside-Office clock-IN, if enabled
       if (entryType === 'IN' && locationData.status === 'Outside Office' && !manual && currentTenant?.id) {
         if (enableTravelTracking) {
@@ -774,12 +878,12 @@ export default function ClockInOutCard({
 
   const employeeCannotClock = !canViewAllData && !hasFaceEnrolled && !allowManualClockIn && hasFaceScreens;
   const isOutsideOfficeOpen = latestEntryType === "IN" && latestOfficeStatus === "Outside Office" && !latestOfficeArrivalProcessed;
-  const canClockIn = !loading && selectedEmployee && 
-    (latestEntryType !== "IN" || (isOutsideOfficeOpen && (manualMode || currentLocationStatus === 'Office'))) && 
+  const canClockIn = !loading && selectedEmployee &&
+    (latestEntryType !== "IN" || (isOutsideOfficeOpen && (manualMode || currentLocationStatus === 'Office'))) &&
     !employeeCannotClock;
-  const canClockOut = !loading && selectedEmployee && 
-    latestEntryType === "IN" && 
-    !(isOutsideOfficeOpen && currentLocationStatus === 'Office') && 
+  const canClockOut = !loading && selectedEmployee &&
+    latestEntryType === "IN" &&
+    !(isOutsideOfficeOpen && currentLocationStatus === 'Office') &&
     !employeeCannotClock;
 
   // NEW: Determines if we should show the Hikvision-only warning
@@ -1115,8 +1219,8 @@ export default function ClockInOutCard({
             </div>
             <div
               className={`px-4 py-2 rounded-lg text-sm font-bold uppercase tracking-wider shadow-sm ${latestEntryType === "IN"
-                  ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                  : "bg-rose-100 text-rose-800 border border-rose-200"
+                ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                : "bg-rose-100 text-rose-800 border border-rose-200"
                 }`}
             >
               {latestEntryType}

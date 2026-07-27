@@ -143,15 +143,44 @@ export default function LiveTrackingDashboard() {
             }
             error = res.error;
           } else {
-            const res = await supabase
+            const { data: journeyData, error: journeyError } = await supabase
               .from('journey_tracking_logs')
               .select('*')
               .eq('work_location_id', work.id)
               .order('timestamp', { ascending: false })
               .limit(1)
               .maybeSingle();
-            data = res.data;
-            error = res.error;
+              
+            const { data: workData, error: workError } = await supabase
+              .from('work_location_tracking')
+              .select('*')
+              .eq('work_location_id', work.id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            let latestData = journeyData;
+            let isWorkData = false;
+
+            if (workData && journeyData) {
+              if (new Date(workData.created_at) > new Date(journeyData.timestamp)) {
+                latestData = workData;
+                isWorkData = true;
+              }
+            } else if (workData) {
+              latestData = workData;
+              isWorkData = true;
+            }
+
+            if (latestData) {
+              data = {
+                latitude: latestData.latitude,
+                longitude: latestData.longitude,
+                timestamp: isWorkData ? latestData.created_at : latestData.timestamp,
+                event_type: isWorkData ? 'LIVE_TRACK_WORK' : latestData.event_type
+              };
+            }
+            error = journeyError || workError;
           }
 
           if (data && !error) {
@@ -271,6 +300,27 @@ export default function LiveTrackingDashboard() {
               event_type: 'LIVE_TRACK_JOURNEY',
             });
           }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'work_location_tracking',
+          filter: `tenant_id=eq.${currentTenant.id}`
+        },
+        (payload) => {
+          const newLog = payload.new as any;
+          if (!newLog.work_location_id) return;
+
+          const prev = pendingUpdatesRef.current.get(newLog.work_location_id);
+          pendingUpdatesRef.current.set(newLog.work_location_id, {
+            latitude: newLog.latitude || prev?.latitude,
+            longitude: newLog.longitude || prev?.longitude,
+            recorded_at: newLog.created_at,
+            event_type: 'LIVE_TRACK_WORK',
+          });
         }
       )
       .subscribe();

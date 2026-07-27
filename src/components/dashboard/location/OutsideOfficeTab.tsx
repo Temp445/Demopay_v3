@@ -129,7 +129,7 @@ export default function OutsideOfficeTab() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Remote Clock-In Approvals</h1>
+          <h1 className="text-xl font-bold text-gray-900">Outside Office Clock-In Approvals</h1>
           <p className="text-sm text-gray-500 mt-0.5">Review and approve travel slips for employees who clocked in outside the office</p>
         </div>
       </div>

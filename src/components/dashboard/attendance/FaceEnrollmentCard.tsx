@@ -76,30 +76,37 @@ export default function FaceEnrollmentCard({
     <>
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <div className="px-4 py-5 sm:p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <div className="flex-shrink-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <div className="flex-shrink-0 mt-0.5">
                 {faceData?.image_url ? (
                   <img
                     src={faceData.image_url}
                     alt={`${employee?.name || 'Employee'} Face Data`}
                     onClick={() => setIsPreviewOpen(true)}
-                    className="h-12 w-12 rounded-full object-cover border-2 border-indigo-100 cursor-pointer hover:opacity-80 transition-opacity ring-2 ring-transparent hover:ring-indigo-300"
+                    className="h-10 w-10 rounded-full object-cover border-2 border-indigo-100 cursor-pointer hover:opacity-80 transition-opacity ring-2 ring-transparent hover:ring-indigo-300"
                     title="Click to view full image"
                   />
                 ) : (
-                  <div className="h-12 w-12 rounded-full bg-indigo-100 flex items-center justify-center">
-                    <User className="h-6 w-6 text-indigo-600" />
+                  <div className="h-10 w-10 rounded-full bg-indigo-100 flex items-center justify-center">
+                    <User className="h-5 w-5 text-indigo-600" />
                   </div>
                 )}
               </div>
-              <div className="ml-4">
-                <h3 className="text-lg font-medium text-gray-900">{employee?.name || 'Unknown Employee'}</h3>
-                <p className="text-sm text-gray-500">{employee?.departments?.name || 'No Department'} • {employee?.roles?.name || 'No Role'}</p>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center flex-wrap gap-1.5">
+                  <h3 className="text-base font-semibold text-gray-900 leading-tight">{employee?.name || 'Unknown Employee'}</h3>
+                  {employee?.employee_code && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap">
+                      {employee.employee_code}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2">{employee?.departments?.name || 'No Department'}</p>
               </div>
             </div>
 
-            <div className="flex items-center">
+            <div className="flex-shrink-0">
               {loading ? (
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
               ) : faceData ? (
@@ -124,7 +131,7 @@ export default function FaceEnrollmentCard({
             </div>
           )}
 
-          <div className="mt-5 flex justify-end space-x-3">
+          <div className="mt-5 flex flex-wrap justify-end gap-3">
             {faceData && (
               <button
                 type="button"

@@ -247,7 +247,7 @@ export default function ClockInOutCard({
         if (screensData) {
           const routes = screensData.map(s => s.screen_route);
           faceEnabled = routes.includes('/dashboard/attendance-face-verify') || routes.includes('/dashboard/attendance/face-enrollment');
-          hikEnabled = routes.includes('/dashboard/attendance/hik-device-employees') || routes.includes('/dashboard/settings/hik-device-controller');
+          hikEnabled = routes.includes('/dashboard/attendance/device-employees') || routes.includes('/dashboard/settings/hik-device-controller');
         }
 
         setHasFaceScreens(faceEnabled);
@@ -717,6 +717,10 @@ export default function ClockInOutCard({
                 break;
               }
             }
+          }
+
+          if (!matchedHolidayName && dow === 0) {
+            matchedHolidayName = 'Weekly Off (Sunday)';
           }
 
           if (matchedHolidayName) {

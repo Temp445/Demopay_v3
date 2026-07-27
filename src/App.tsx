@@ -72,6 +72,7 @@ import WorkLocationAssignmentPage from './components/dashboard/location/WorkLoca
 import LiveTrackingSwitch from './components/dashboard/location/LiveTrackingSwitch';
 import LocationSettingsPage from './components/dashboard/location/LocationSettingsPage';
 import DeviceController from './components/dashboard/HikVision/DeviceController';
+import BiometricControllers from './components/dashboard/biometrics/BiometricControllers';
 import TermsOfService from './components/dashboard/policies/TermOfService';
 import { RefundPolicy } from './components/dashboard/policies/RefundPolicy';
 import PrivacyPolicy from './components/dashboard/policies/PrivacyPolicy';
@@ -146,7 +147,7 @@ function App() {
                 <Route path="attendance/face-enrollment" element={<FaceEnrollmentPage />} />
                 <Route path="attendance-face-verify" element={<FaceAttendancePage />} />
                 <Route path="attendance-logs" element={<AttendanceLogsPage />} />
-                <Route path="attendance/hik-device-employees" element={<HikDeviceEmployeesPage />} />
+                <Route path="attendance/device-employees" element={<HikDeviceEmployeesPage />} />
                 <Route path="clockin-clockout" element={<AttendanceTimestamp />} />
                 <Route path="time-stamp-management" element={<TimeStampManagementPage />} />
                 <Route path="visitor-records" element={<VisitorCapturesPage />} />
@@ -184,6 +185,7 @@ function App() {
                 <Route path="settings/user-management" element={<UserManagement />} />
                 <Route path="settings/company-settings" element={<CompanySettings />} />
                 <Route path="settings/master-data-import" element={<MasterDataImport/>} />
+                <Route path="settings/biometric-device-manager" element={<BiometricControllers />} />
                 <Route path="settings/hik-device-controller" element={<DeviceController/>} />
                 <Route path="settings/shift-attendance-notifier" element={<ShiftAttendanceReportSender />} />
                 <Route path="notifications" element={<NotificationsPage />} />

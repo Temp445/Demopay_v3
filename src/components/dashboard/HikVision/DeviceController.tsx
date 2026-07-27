@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useSettingsStore } from '../../../stores/settingsStore';
+import { useNavigate } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -88,6 +90,7 @@ function DeviceCard({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function DeviceController() {
+  const navigate = useNavigate();
   const { tenantId } = useAuth();
   const { companySettings, fetchCompanySettings } = useSettingsStore();
 
@@ -283,11 +286,18 @@ export default function DeviceController() {
   const isMasterEnabled = form.is_enabled;
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-10 font-sans text-slate-800">
+    <div className="min-h-screen md:bg-slate-50  md:p-10 font-sans text-slate-800">
       <div className="max-w-7xl mx-auto">
 
         <div className="mb-8">
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">Hikvision Controller</h1>
+          <button
+            onClick={() => navigate('/dashboard/settings/biometric-device-manager')}
+            className="flex items-center text-sm font-medium text-slate-500 hover:text-blue-600 transition-colors mb-4 group"
+          >
+            <ArrowLeft className="w-4 h-4 mr-1.5 transition-transform group-hover:-translate-x-1" />
+            Back 
+          </button>
+          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">Hikvision Controller</h1>
           <p className="text-slate-500 mt-2 text-base">Manage biometric device connections and synchronize attendance data.</p>
         </div>
 

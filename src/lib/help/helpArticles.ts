@@ -1356,7 +1356,7 @@ export const helpArticles: HelpArticle[] = [
       { type: 'paragraph', text: 'This module connects to your Hikvision biometric hardware to manage employee enrolments and pull attendance timestamps.' },
       {
         type: 'steps', items: [
-          'Go to [[Attendance → Device Employees|/dashboard/attendance/hik-device-employees]].',
+          'Go to [[Attendance → Device Employees|/dashboard/attendance/device-employees]].',
           'Select the target device from the device list.',
           'Check the employees you want to upload and click "Upload to Device".',
           'To pull attendance records, In the Manual Device Fetch section select the device and the date range and click fetch — the timestamps will appear in [[Clock in/out page|/dashboard/attendance/clock-in-out]] or view in the [[Timestamp management page|/dashboard/attendance/timestamp-management]].'

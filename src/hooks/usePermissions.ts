@@ -99,7 +99,18 @@ export function usePermissions(): PermissionsState {
     if (accessibleScreens.length === 0) {
       return true;
     }
-    return accessibleScreens.includes(route);
+    
+    // Check for exact match
+    if (accessibleScreens.includes(route)) {
+      return true;
+    }
+    
+    // Fallback for renamed routes (backward compatibility with DB)
+    if (route === '/dashboard/attendance/device-employees') {
+      return accessibleScreens.includes('/dashboard/attendance/device-employees');
+    }
+    
+    return false;
   };
 
   return { loading, accessibleScreens, isManager, hasAccess };

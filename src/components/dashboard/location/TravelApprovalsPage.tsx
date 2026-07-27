@@ -43,7 +43,7 @@ export default function TravelApprovalsPage() {
             }`}
           >
             <Clock10 className={`h-4 w-4 ${activeTab === 'outside' ? 'text-blue-600' : 'text-gray-400'}`} />
-            Remote Clock-In 
+            Outside Office Clock-In 
           </button>
         </div>
 

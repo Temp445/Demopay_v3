@@ -6,3 +6,4 @@ ALTER TABLE work_locations
 ALTER TABLE work_locations
   ADD CONSTRAINT work_locations_status_check
   CHECK (status IN ('assigned', 'in_progress', 'paused', 'completed', 'approved', 'cancelled', 'denied'));
+

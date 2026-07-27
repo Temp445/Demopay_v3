@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { X, Home, Users, ScanFace, IndianRupee, Settings, PieChart, FileText, Clock, FileClock, Calendar, ClipboardList, Bell, Play, SquareUser, CreditCard, CreditCard as Edit, MapPin, HandCoins, ChevronDown, ChevronRight, CheckCircle, Shield, NotepadText, UserCog, UserPlus, Building2, Server, Webcam, MonitorCheck, LayoutDashboard, ClipboardCheck, MapPinned, SlidersHorizontal, Wifi, FlaskConical, Files, Mail } from 'lucide-react';
+import { X, Home, Users, ScanFace, IndianRupee, Settings, PieChart, FileText, Clock, FileClock, Calendar, ClipboardList, Bell, Play, SquareUser, CreditCard, CreditCard as Edit, MapPin, HandCoins, ChevronDown, ChevronRight, CheckCircle, Shield, NotepadText, UserCog, UserPlus, Building2, Server, Webcam, MonitorCheck, LayoutDashboard, ClipboardCheck, MapPinned, SlidersHorizontal, Wifi, FlaskConical, Files, Mail,Camera,BookUser,CircleUserRound ,SquareUserRound   } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useRoleAccess } from '../../hooks/useRoleAccess';
 import { useLocationSettingsStore } from '../../stores/locationSettingsStore';
 import { useTenant } from '../../contexts/TenantContext';
-
+import { useSettingsStore } from '../../stores/settingsStore';
 interface DashboardSidebarProps {
   isOpen: boolean;
   onClose: () => void;
@@ -35,12 +35,17 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
   const { isAdmin, employeeId } = useRoleAccess();
   const { currentTenant } = useTenant();
   const { settings, fetchSettings, initialized } = useLocationSettingsStore();
+  const { companySettings, fetchCompanySettings } = useSettingsStore();
+  const isHikvisionEnabled = companySettings?.is_hikvision_enabled ?? false;
 
   React.useEffect(() => {
     if (currentTenant?.id && !initialized) {
       fetchSettings(currentTenant.id);
     }
-  }, [currentTenant?.id, initialized]);
+    if (currentTenant?.id && !companySettings) {
+      fetchCompanySettings();
+    }
+  }, [currentTenant?.id, initialized, companySettings, fetchSettings, fetchCompanySettings]);
 
   const locationSubItems: NavigationItem[] = [
     { name: 'Gate Pass', href: '/dashboard/gate-passes', icon: CreditCard },
@@ -60,7 +65,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
       icon: Clock,
       isGroup: true,
       subItems: [
-        { name: 'Face Enrollment', href: '/dashboard/attendance/face-enrollment', icon: ScanFace },
+        { name: 'Face Enrollment', href: '/dashboard/attendance/face-enrollment', icon: CircleUserRound },
         { name: 'Attendance Face', href: '/dashboard/attendance-face-verify', icon: Webcam },
         { name: 'Clock In/Out', href: '/dashboard/clockin-clockout', icon: Clock },
         { name: 'Time Stamp Mgmt', href: '/dashboard/time-stamp-management', icon: Edit },
@@ -69,7 +74,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
         { name: 'Leave', href: '/dashboard/leave', icon: Calendar },
         { name: 'Leave Settings', href: '/dashboard/leave/settings', icon: Settings },
         { name: 'Attendance Settings', href: '/dashboard/settings/attendance-settings', icon: Clock },
-        { name: 'Hik Device Employees', href: '/dashboard/attendance/hik-device-employees', icon: ScanFace }
+        ...(isHikvisionEnabled ? [{ name: 'Device Employees', href: '/dashboard/attendance/device-employees', icon: SquareUserRound }] : [])
       ],
     },
     { name: 'Shifts', href: '/dashboard/shifts', icon: ClipboardList },
@@ -143,7 +148,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
         { name: 'SMTP Configuration', href: '/dashboard/settings/smtp-configuration', icon: Server },
         { name: 'Shift Attendance Notifier', href: '/dashboard/settings/shift-attendance-notifier', icon: NotepadText },
         { name: 'Notifications', href: '/dashboard/notifications', icon: Bell },
-        { name: 'Hik Device Controller', href: '/dashboard/settings/hik-device-controller', icon: Wifi },
+        { name: 'Biometric Device Manager', href: '/dashboard/settings/biometric-device-manager', icon: ScanFace },
         // { name: 'Billing & Subscriptions', href: '/dashboard/billing', icon: CreditCard }
       ],
     },

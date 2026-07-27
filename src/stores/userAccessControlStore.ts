@@ -100,7 +100,8 @@ export const restrictedEmployeeRoutes = [
   '/dashboard/settings/company-settings',
   '/dashboard/settings/attendance-settings',
   '/dashboard/permissions/approval',
-  '/dashboard/attendance/hik-device-employees',
+  '/dashboard/attendance/device-employees',
+  '/dashboard/settings/biometric-device-manager',
   '/dashboard/settings/hik-device-controller',
   '/dashboard/billing',
   '/dashboard/formula-tester',
@@ -110,7 +111,8 @@ export const restrictedEmployeeRoutes = [
 ];
 
 export const restrictedReportingHeadRoutes = [
-  '/dashboard/attendance/hik-device-employees',
+  '/dashboard/attendance/device-employees',
+  '/dashboard/settings/biometric-device-manager',
   '/dashboard/settings/hik-device-controller',
   '/dashboard/billing',
   '/dashboard/formula-tester',

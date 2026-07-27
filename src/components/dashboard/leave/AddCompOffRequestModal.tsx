@@ -160,6 +160,10 @@ export default function AddCompOffRequestModal({
               }
             }
           }
+          
+          if (dow === 0 && !holidayMap.has(dateStr)) {
+            holidayMap.set(dateStr, 'Weekly Off (Sunday)');
+          }
         }
         console.log('[CompOff Debug] final holidayMap:', Object.fromEntries(holidayMap));
 

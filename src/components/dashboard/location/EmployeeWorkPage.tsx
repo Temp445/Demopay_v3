@@ -339,7 +339,6 @@ export default function EmployeeWorkPage() {
        setShowPauseModal(false);
        setReasonText('');
        setSelectedLocation(null);
-       setShowPostCompleteOptions(true);
     } catch (error: any) {
       toast.error(error.message || 'Failed to pause work');
     } finally {
@@ -479,7 +478,7 @@ export default function EmployeeWorkPage() {
 
   if (isInitialLoad) {
     return (
-      <div className="p-6 max-w-5xl mx-auto space-y-6 animate-pulse">
+      <div className="max-w-5xl mx-auto space-y-6 animate-pulse">
         <div className="flex flex-col md:flex-row justify-between mb-4">
             <div className="h-8 bg-gray-200 rounded w-64 mb-2"></div>
             <div className="h-4 bg-gray-200 rounded w-48"></div>
@@ -495,7 +494,7 @@ export default function EmployeeWorkPage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <div className=" max-w-5xl mx-auto space-y-6">
       
       {/* OFFLINE BANNER */}
       {isOffline && (
@@ -559,7 +558,7 @@ export default function EmployeeWorkPage() {
       </div>
 
       {/* WHAT'S NEXT? PANEL */}
-      {(currentStep === 'COMPLETED_WORK' || currentStep === 'PAUSED') && showPostCompleteOptions && (
+      {(currentStep === 'COMPLETED_WORK') && showPostCompleteOptions && (
         <div className="bg-white rounded-xl border-2 border-indigo-200 shadow-md p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -622,11 +621,11 @@ export default function EmployeeWorkPage() {
         </div>
       )}
 
-      {(currentStep === 'COMPLETED_WORK' || currentStep === 'PAUSED') && !showPostCompleteOptions && (
+      {(currentStep === 'COMPLETED_WORK') && !showPostCompleteOptions && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center justify-between">
           <div className="flex items-center gap-2 text-green-800">
             <CheckCircle className="h-5 w-5" />
-           <span className="font-medium text-sm">{currentStep === 'PAUSED' ? 'Work paused.' : 'Work completed.'} Ready for your next action.</span>
+           <span className="font-medium text-sm">Work completed. Ready for your next action.</span>
          </div>
           <button
             onClick={() => setShowPostCompleteOptions(true)}

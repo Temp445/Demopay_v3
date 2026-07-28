@@ -6,7 +6,7 @@ import { useLocationSettingsStore } from './locationSettingsStore';
 import { useWorkLocationsStore } from './workLocationsStore';
 import toast from 'react-hot-toast';
 
-export type JourneyStep = 
+export type JourneyStep =
   | 'NOT_STARTED'        // 1. Assignment Received, waiting to start journey
   | 'TRAVELING'          // 2. Journey Started
   | 'REACHED_LOCATION'   // 3. Reached
@@ -28,7 +28,7 @@ interface JourneyTrackingState {
   fetchTodayLogs: (tenantId: string, employeeId: string) => Promise<void>;
   logEvent: (tenantId: string, employeeId: string, eventType: JourneyEventType, locationId?: string) => Promise<void>;
   calculateCurrentStep: (fetchedLogs: JourneyTrackingLog[], tenantId?: string, employeeId?: string) => void;
-  
+
   startBackgroundTracking: (tenantId: string, employeeId: string, intervalMins: number) => void;
   stopBackgroundTracking: () => void;
 }
@@ -98,11 +98,11 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
     if (tenantId && employeeId) {
       const settings = useLocationSettingsStore.getState().settings;
       if (['TRAVELING', 'RETURNING'].includes(step)) {
-         get().startBackgroundTracking(tenantId, employeeId, settings.journey_tracking_interval_mins);
+        get().startBackgroundTracking(tenantId, employeeId, settings.journey_tracking_interval_mins);
       } else if (['WORKING'].includes(step) && settings.radius_monitoring_enabled) {
-         get().startBackgroundTracking(tenantId, employeeId, settings.work_radius_tracking_interval_mins);
+        get().startBackgroundTracking(tenantId, employeeId, settings.work_radius_tracking_interval_mins);
       } else {
-         get().stopBackgroundTracking();
+        get().stopBackgroundTracking();
       }
     }
   },
@@ -112,7 +112,7 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
     try {
       const settings = useLocationSettingsStore.getState().settings;
       const isOfflineEvent = ['GPS_SIGNAL_LOST', 'GPS_SIGNAL_RESTORED'].includes(eventType);
-      
+
       let position: { latitude: number; longitude: number; accuracy?: number } | null = null;
       let battery = null;
 
@@ -151,17 +151,17 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
 
       // Handle Background Tracking State Changes
       if (['START_JOURNEY', 'START_RETURN_JOURNEY'].includes(eventType)) {
-          get().startBackgroundTracking(tenantId, employeeId, settings.journey_tracking_interval_mins);
+        get().startBackgroundTracking(tenantId, employeeId, settings.journey_tracking_interval_mins);
       } else if (['REACHED_LOCATION', 'REACHED_ENDPOINT'].includes(eventType)) {
-          get().stopBackgroundTracking();
+        get().stopBackgroundTracking();
       } else if (['START_WORK', 'RESUME_WORK'].includes(eventType)) {
-          if (settings.radius_monitoring_enabled) {
-              get().startBackgroundTracking(tenantId, employeeId, settings.work_radius_tracking_interval_mins);
-          } else {
-              get().stopBackgroundTracking();
-          }
-      } else if (['PAUSE_WORK', 'COMPLETE_WORK'].includes(eventType)) {
+        if (settings.radius_monitoring_enabled) {
+          get().startBackgroundTracking(tenantId, employeeId, settings.work_radius_tracking_interval_mins);
+        } else {
           get().stopBackgroundTracking();
+        }
+      } else if (['PAUSE_WORK', 'COMPLETE_WORK'].includes(eventType)) {
+        get().stopBackgroundTracking();
       }
 
     } catch (error: any) {
@@ -186,74 +186,74 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
         if (step === 'WORKING' || step === 'PAUSED') {
           pEvent = 'LIVE_TRACK_WORK';
         }
-        
+
         const position = manualPosition || await gpsTrackingService.getCurrentPosition();
-        
+
         // --- STATIONARY FILTER (Time AND Distance) ---
         const lsStore = useLocationSettingsStore.getState();
         const settings = lsStore.settings;
-        
-        const threshold = (step === 'WORKING' || step === 'PAUSED') 
-               ? settings.work_radius_minimum_movement_threshold_meters 
-               : settings.minimum_movement_threshold_meters;
-               
+
+        const threshold = (step === 'WORKING' || step === 'PAUSED')
+          ? settings.work_radius_minimum_movement_threshold_meters
+          : settings.minimum_movement_threshold_meters;
+
         const lastPos = get().lastKnownPosition;
         if (lastPos) {
-           const distanceMoved = gpsTrackingService.calculateDistance(
-               lastPos.latitude, lastPos.longitude, position.latitude, position.longitude
-           );
-           
-           // If they haven't moved enough, we abort the ping to save DB space and battery.
-           // The timer (lastLogTime) was already reset by the caller, so we'll check again next interval.
-           if (distanceMoved < threshold) {
-               console.log(`[JourneyTracking] Stationary filter: skipped point (moved ${distanceMoved.toFixed(1)}m < threshold ${threshold}m).`);
-               return; 
-           }
+          const distanceMoved = gpsTrackingService.calculateDistance(
+            lastPos.latitude, lastPos.longitude, position.latitude, position.longitude
+          );
+
+          // If they haven't moved enough, we abort the ping to save DB space and battery.
+          // The timer (lastLogTime) was already reset by the caller, so we'll check again next interval.
+          if (distanceMoved < threshold) {
+            console.log(`[JourneyTracking] Stationary filter: skipped point (moved ${distanceMoved.toFixed(1)}m < threshold ${threshold}m).`);
+            return;
+          }
         }
         // ---------------------------------------------
 
         const battery = await gpsTrackingService.getBatteryLevel();
-        
+
         // Cache the last known position for offline fallback (and future distance calculations)
         set({ lastKnownPosition: position });
-        
+
         await workLocationLib.logJourneyEvent(
-            tenantId,
-            employeeId,
-            pEvent,
-            position,
-            get().activeLocationId || undefined,
-            battery || undefined
+          tenantId,
+          employeeId,
+          pEvent,
+          position,
+          get().activeLocationId || undefined,
+          battery || undefined
         );
 
         if (get().activeLocationId) {
-            const wstore = useWorkLocationsStore.getState();
-            const loc = wstore.workLocations.find(l => l.id === get().activeLocationId);
-            if (loc) {
-                const lsStore = useLocationSettingsStore.getState();
-                const radiusMonitoringEnabled = lsStore.settings.radius_monitoring_enabled;
-                
-                try {
-                  await workLocationLib.recordTracking(
-                      tenantId,
-                      loc.id,
-                      employeeId,
-                      position,
-                      loc,
-                      battery || undefined,
-                      radiusMonitoringEnabled
-                  );
-                } catch (e) {
-                  console.warn("Legacy work_location_tracking insertion failed", e);
-                }
+          const wstore = useWorkLocationsStore.getState();
+          const loc = wstore.workLocations.find(l => l.id === get().activeLocationId);
+          if (loc) {
+            const lsStore = useLocationSettingsStore.getState();
+            const radiusMonitoringEnabled = lsStore.settings.radius_monitoring_enabled;
 
-                if (pEvent === 'LIVE_TRACK_WORK') {
-                    const distance = gpsTrackingService.calculateDistance(position.latitude, position.longitude, loc.latitude, loc.longitude);
-                    if (distance > loc.radius) {
-                        toast.error('Warning: You have left the assigned work area!', { duration: 8000 });
-                    }
-                }
+            try {
+              await workLocationLib.recordTracking(
+                tenantId,
+                loc.id,
+                employeeId,
+                position,
+                loc,
+                battery || undefined,
+                radiusMonitoringEnabled
+              );
+            } catch (e) {
+              console.warn("Legacy work_location_tracking insertion failed", e);
             }
+
+            if (pEvent === 'LIVE_TRACK_WORK') {
+              const distance = gpsTrackingService.calculateDistance(position.latitude, position.longitude, loc.latitude, loc.longitude);
+              if (distance > loc.radius) {
+                toast.error('Warning: You have left the assigned work area!', { duration: 8000 });
+              }
+            }
+          }
         }
       } catch (err) {
         console.warn('Interval ping failed', err);
@@ -267,8 +267,8 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
         const now = Date.now();
         // Fire if the expected interval has passed
         if (now - lastLogTime >= ms) {
-           lastLogTime = now;
-           performLivePing(position);
+          lastLogTime = now;
+          performLivePing(position);
         }
       },
       (err) => {
@@ -283,8 +283,8 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
       const now = Date.now();
       // Ensure we don't double ping if watchPosition recently fired
       if (now - lastLogTime >= (ms - 5000)) {
-         lastLogTime = now;
-         performLivePing();
+        lastLogTime = now;
+        performLivePing();
       }
     }, ms);
     // --- Enterprise: Heartbeat Ping (every 60 seconds) ---

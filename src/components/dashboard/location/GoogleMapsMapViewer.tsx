@@ -1,10 +1,10 @@
 import { useRef, useCallback } from 'react';
-import { GoogleMap, PolylineF, CircleF, InfoWindowF } from '@react-google-maps/api';
+import { GoogleMap, PolylineF, CircleF, InfoWindowF, DirectionsRenderer } from '@react-google-maps/api';
 import AdvancedMarker from './AdvancedMarker';
 import { useGoogleMaps } from '../../../contexts/GoogleMapsContext';
 const MAP_ID = 'DEMO_MAP_ID';
 import { MapPin, Navigation as NavigationIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 interface GoogleMapsMapViewerProps {
   apiKey: string;
@@ -41,6 +41,31 @@ export default function GoogleMapsMapViewer({
   const currentPosition = showNavigation && currentLat && currentLng
     ? { lat: currentLat, lng: currentLng }
     : undefined;
+
+  const [directionsResponse, setDirectionsResponse] = useState<google.maps.DirectionsResult | null>(null);
+  const [fetchingDirections, setFetchingDirections] = useState(false);
+
+  useEffect(() => {
+    if (showNavigation && currentPosition && center && !directionsResponse && !fetchingDirections) {
+      setFetchingDirections(true);
+      const directionsService = new window.google.maps.DirectionsService();
+      directionsService.route(
+        {
+          origin: currentPosition,
+          destination: center,
+          travelMode: window.google.maps.TravelMode.DRIVING,
+        },
+        (result, status) => {
+          if (status === window.google.maps.DirectionsStatus.OK && result) {
+            setDirectionsResponse(result);
+          } else {
+            console.error('Error fetching directions', status);
+          }
+          setFetchingDirections(false);
+        }
+      );
+    }
+  }, [showNavigation, currentLat, currentLng, latitude, longitude]);
 
   const onMapLoad = useCallback((mapInstance: google.maps.Map) => {
     mapRef.current = mapInstance;
@@ -151,19 +176,34 @@ export default function GoogleMapsMapViewer({
                 iconSize={[25, 41]}
                 iconAnchor={[12, 41]}
               />
-              <PolylineF
-                path={[currentPosition, center]}
-                options={{
-                  strokeColor: '#3B82F6',
-                  strokeWeight: 3,
-                  strokeOpacity: 0.7,
-                  icons: [{
-                    icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-                    offset: '0',
-                    repeat: '15px',
-                  }],
-                }}
-              />
+              
+              {directionsResponse ? (
+                <DirectionsRenderer
+                  directions={directionsResponse}
+                  options={{
+                    suppressMarkers: true,
+                    polylineOptions: {
+                      strokeColor: '#3B82F6',
+                      strokeWeight: 4,
+                      strokeOpacity: 0.8,
+                    }
+                  }}
+                />
+              ) : (
+                <PolylineF
+                  path={[currentPosition, center]}
+                  options={{
+                    strokeColor: '#3B82F6',
+                    strokeWeight: 3,
+                    strokeOpacity: 0.7,
+                    icons: [{
+                      icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+                      offset: '0',
+                      repeat: '15px',
+                    }],
+                  }}
+                />
+              )}
             </>
           )}
         </GoogleMap>

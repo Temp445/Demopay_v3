@@ -279,7 +279,7 @@ export default function AttendanceTimestamp() {
           )}
 
           {selectedEmployee && (
-            <div className={`${showAdminView ? 'mt-4' : ''} bg-white/80 backdrop-blur-md rounded-xl p-5 border border-indigo-100/50 shadow-sm transition-all hover:shadow-md`}>
+            <div className={`${showAdminView ? 'mt-4' : ''} bg-white/80 backdrop-blur-md rounded-xl  transition-all hover:shadow-md`}>
               <div className="flex items-center gap-2 mb-4">
                 <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-sm">
                   {selectedEmployee.name.charAt(0).toUpperCase()}
@@ -323,38 +323,55 @@ export default function AttendanceTimestamp() {
             </div>
 
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200/60 overflow-hidden">
-              <div className="px-6 py-5 border-b border-gray-100 bg-gray-50/50 backdrop-blur-sm">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              {/* Header + Filter — stacks on mobile, inline on desktop */}
+              <div className="px-4 sm:px-6 py-4 border-b border-gray-100">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  {/* Title */}
                   <div>
-                    <h2 className="text-lg font-semibold text-gray-900">Timestamp Entries</h2>
-                    <p className="mt-1 text-sm text-gray-500">
-                      View all clock in/out entries for the selected date range
-                    </p>
+                    <h2 className="text-base font-bold text-gray-900">Timestamp Entries</h2>
+                    <p className="text-xs text-gray-400 mt-0.5">Clock in/out records for selected date range</p>
                   </div>
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
-                    <div className="flex items-center space-x-2 px-2">
-                      {/* <Calendar className="h-4 w-4 text-indigo-500" /> */}
-                      <input
-                        type="date"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        className="block w-full sm:w-auto py-1.5 px-2 border-none bg-transparent focus:ring-0 text-sm font-medium text-gray-700"
-                      />
-                      <span className="text-gray-300 text-sm font-medium">to</span>
-                      <input
-                        type="date"
-                        value={endDate}
-                        min={startDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        className="block w-full sm:w-auto py-1.5 px-2 border-none bg-transparent focus:ring-0 text-sm font-medium text-gray-700"
-                      />
+
+                  {/* Filters */}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+                    {/* Date row on mobile: From + dash + To side by side */}
+                    <div className="flex items-center gap-2">                       {/* From Date */}
+                      <label className="flex-1 sm:flex-none flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs cursor-pointer hover:border-indigo-300 transition-colors focus-within:ring-2 focus-within:ring-indigo-100 focus-within:border-indigo-400">
+                        <Calendar className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                        <div className="flex flex-col leading-none">
+                          <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">From</span>
+                          <input
+                            type="date"
+                            value={startDate}
+                            onChange={(e) => setStartDate(e.target.value)}
+                            className="border-none outline-none appearance-none p-0 bg-transparent focus:ring-0 text-xs font-semibold text-slate-700 cursor-pointer w-full"
+                          />
+                        </div>
+                      </label>
+
+                      <span className="text-slate-300 font-bold text-sm shrink-0">—</span>
+
+                      {/* To Date */}
+                      <label className="flex-1 sm:flex-none flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs cursor-pointer hover:border-indigo-300 transition-colors focus-within:ring-2 focus-within:ring-indigo-100 focus-within:border-indigo-400">
+                        <Calendar className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                        <div className="flex flex-col leading-none">
+                          <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">To</span>
+                          <input
+                            type="date"
+                            value={endDate}
+                            min={startDate}
+                            onChange={(e) => setEndDate(e.target.value)}
+                            className="border-none outline-none appearance-none p-0 bg-transparent focus:ring-0 text-xs font-semibold text-slate-700 cursor-pointer w-full"
+                          />
+                        </div>
+                      </label>
                     </div>
-                    <div className="w-px h-6 bg-gray-200 hidden sm:block"></div>
+                    {/* Refresh — full width on mobile */}
                     <button
                       onClick={handleRefresh}
-                      className="inline-flex justify-center items-center px-4 py-1.5 rounded-lg text-sm font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                      className="w-full sm:w-auto flex justify-center items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 active:scale-95 transition-all focus:outline-none focus:ring-2 focus:ring-indigo-300"
                     >
-                      <RefreshCw className="h-4 w-4 mr-2" />
+                      <RefreshCw className="h-3.5 w-3.5" />
                       Refresh
                     </button>
                   </div>

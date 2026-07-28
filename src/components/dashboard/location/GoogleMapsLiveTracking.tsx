@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GoogleMap, CircleF, PolylineF, InfoWindowF } from '@react-google-maps/api';
 import AdvancedMarker from './AdvancedMarker';
 import { useGoogleMaps } from '../../../contexts/GoogleMapsContext';
-import { Activity, RefreshCw, MapPin, Clock, AlertTriangle, PauseCircle, ArrowLeft, Search } from 'lucide-react';
+import { Activity, RefreshCw, MapPin, Clock, AlertTriangle, PauseCircle, ArrowLeft, Search, X } from 'lucide-react';
 
 const MAP_ID = 'DEMO_MAP_ID';
 import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
@@ -12,6 +12,31 @@ import { format, differenceInMinutes, parseISO } from 'date-fns';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import type { WorkLocation } from '../../../types/workLocation';
+
+const getEmployeeColor = (name: string, code?: string) => {
+  const str = code || name || 'A';
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 70%, 40%)`;
+};
+
+const getEmployeeMarkerHtml = (name: string, code?: string) => {
+  const color = getEmployeeColor(name, code);
+
+  return `
+    <div style="
+      background-color: ${color};
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid white;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+    "></div>
+  `;
+};
 
 interface GMapsLiveProps { apiKey: string; }
 
@@ -192,13 +217,24 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
             </div>
             {selectedWork && (
               <div className="mb-2 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5">
-                <div className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0" />
+                <div 
+                  className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-white shadow-sm" 
+                  style={{ backgroundColor: getEmployeeColor(selectedWork.employee_name || 'Worker', selectedWork.employee_code as string | undefined) }} 
+                />
                 <span className="text-xs text-blue-700 font-medium truncate">Viewing: <strong>{selectedWork.employee_name}</strong></span>
               </div>
             )}
             <div className="relative mb-2">
               <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-gray-400"/>
-              <input type="text" placeholder="Search by name or location..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full pl-8 pr-3 py-2 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+              <input type="text" placeholder="Search by name or location..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full pl-8 pr-8 py-2 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-2.5 text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
             <div className="flex flex-wrap gap-1 mb-3">
               {(['all','traveling','working','paused','offline'] as const).map(s => (
@@ -222,12 +258,24 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex-1">
                           <div className="text-sm font-medium text-gray-900 flex items-center gap-2 flex-wrap">
+                            <div 
+                              className="w-2.5 h-2.5 rounded-full shadow-sm border border-white flex-shrink-0" 
+                              style={{ backgroundColor: getEmployeeColor(work.employee_name || 'Worker', work.employee_code as string | undefined) }} 
+                            />
                             {work.employee_name}
+                            {work.employee_code && <span className="text-xs text-gray-500 font-normal">({work.employee_code as string})</span>}
                             {work.status==='paused'&&<span className="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full flex items-center gap-1 font-bold"><PauseCircle className="h-3 w-3"/>PAUSED</span>}
                             {traveling&&<span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${lost?'bg-orange-100 text-orange-800':'bg-purple-100 text-purple-800'}`}>TRAVELING{lost?' (OFFLINE)':''}</span>}
                             {!traveling&&!work.status.includes('pause')&&lost&&<span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-bold">OFFLINE</span>}
                           </div>
-                          <div className="text-xs text-gray-500 mt-1">{work.location_name}</div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            <span className="font-medium text-gray-700">{work.location_name}</span>
+                            {(work.formatted_address || work.address) && (
+                              <span className="block mt-0.5 text-[11px] leading-tight">
+                                {work.formatted_address || [work.address, work.city, work.state].filter(Boolean).join(', ')}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         {!within&&!lost&&!traveling&&<AlertTriangle className="h-4 w-4 text-red-600 flex-shrink-0"/>}
                       </div>
@@ -266,8 +314,8 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
                       <CircleF center={wp} radius={Number(work.allowed_radius_meters)} options={{ strokeColor: lost?'gray':traveling?'#3b82f6':within?'green':'red', fillColor: lost?'gray':traveling?'#3b82f6':within?'green':'red', fillOpacity:0.1, strokeWeight:2 }}/>
                       {tr?.latitude&&tr?.longitude&&(
                         <>
-                          <AdvancedMarker map={map} position={{ lat:Number(tr.latitude), lng:Number(tr.longitude) }} onClick={() => setActiveInfo(`emp-${work.id}`)} iconUrl="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png" iconSize={[25,41]} iconAnchor={[12,41]}/>
-                          {activeInfo===`emp-${work.id}`&&<InfoWindowF position={{ lat:Number(tr.latitude), lng:Number(tr.longitude) }} onCloseClick={() => setActiveInfo(null)}><div className="text-sm"><div className="font-semibold mb-1">{work.employee_name}</div><div className={`text-xs font-bold mb-1 ${traveling?'text-blue-600':within?'text-green-600':'text-red-600'}`}>{traveling?'En Route to Site':within?'Within allowed area':'Outside allowed area'}</div><div className="text-xs text-gray-500">Last update: {format(new Date(tr.recorded_at),'hh:mm:ss a')}</div></div></InfoWindowF>}
+                          <AdvancedMarker map={map} position={{ lat:Number(tr.latitude), lng:Number(tr.longitude) }} onClick={() => setActiveInfo(`emp-${work.id}`)} html={getEmployeeMarkerHtml(work.employee_name || 'Worker', work.employee_code as string | undefined)} iconAnchor={[7,7]}/>
+                          {activeInfo===`emp-${work.id}`&&<InfoWindowF position={{ lat:Number(tr.latitude), lng:Number(tr.longitude) }} onCloseClick={() => setActiveInfo(null)}><div className="text-sm"><div className="font-semibold mb-1">{work.employee_name}{work.employee_code && <span className="text-gray-500 font-normal ml-1">({work.employee_code as string})</span>}</div><div className={`text-xs font-bold mb-1 ${traveling?'text-blue-600':within?'text-green-600':'text-red-600'}`}>{traveling?'En Route to Site':within?'Within allowed area':'Outside allowed area'}</div><div className="text-xs text-gray-500">Last update: {format(new Date(tr.recorded_at),'hh:mm:ss a')}</div></div></InfoWindowF>}
                           <PolylineF path={[wp,{ lat:Number(tr.latitude), lng:Number(tr.longitude) }]} options={{ strokeColor: lost?'#9ca3af':traveling?'#3b82f6':within?'#4ade80':'#ef4444', strokeWeight:2, strokeOpacity:0.7, icons:[{ icon:{ path:'M 0,-1 0,1', strokeOpacity:1, scale:3 }, offset:'0', repeat:'15px' }] }}/>
                         </>
                       )}

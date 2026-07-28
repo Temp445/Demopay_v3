@@ -27,6 +27,7 @@ import {
 } from '../../../lib/travelTrackingService';
 import { useOutsideOfficeApprovalsStore } from '../../../stores/outsideOfficeApprovalsStore';
 import OutsideOfficeReasonModal from './OutsideOfficeReasonModal';
+import toast from 'react-hot-toast';
 
 interface Shift {
   id: string;
@@ -57,7 +58,6 @@ export default function ClockInOutCard({
   const [loading, setLoading] = useState(false);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [isConfigLoading, setIsConfigLoading] = useState(true); // Added to prevent flickering
-  const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const cachedLocationDataRef = useRef<{ data: any, time: number } | null>(null);
 
@@ -78,6 +78,8 @@ export default function ClockInOutCard({
   const [latestOfficeStatus, setLatestOfficeStatus] = useState<string | null>(null);
   const [latestOfficeArrivalProcessed, setLatestOfficeArrivalProcessed] = useState<boolean>(false);
   const [currentLocationStatus, setCurrentLocationStatus] = useState<'Office' | 'Outside Office' | null>(null);
+  // Internal key bumped whenever we want to force a location re-check (e.g. after Location Services re-enabled)
+  const [locationCheckKey, setLocationCheckKey] = useState(0);
   const [googleMapsEnabled, setGoogleMapsEnabled] = useState(false);
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string | null>(null);
 
@@ -314,7 +316,70 @@ export default function ClockInOutCard({
     };
 
     checkLocation();
-  }, [branchLocations, selectedEmployee, lastRefresh]);
+  }, [branchLocations, selectedEmployee, lastRefresh, locationCheckKey]);
+
+  // ── Location Services Re-Detection ──
+  // When the user disables then re-enables Location Services on their device,
+  // React's existing useEffect (above) does NOT re-run because its dependencies
+  // haven't changed. This effect bridges that gap:
+  //   1. Uses navigator.permissions.query to subscribe to geolocation permission events.
+  //   2. Bumps `locationCheckKey` the moment permission becomes 'granted', which
+  //      causes the effect above to re-run and re-validate the geofence.
+  //   3. Falls back to a 30-second polling loop on browsers (e.g. iOS Safari)
+  //      that do not fire permission change events.
+  useEffect(() => {
+    if (!branchLocations || branchLocations.length === 0 || !selectedEmployee) return;
+
+    const bumpLocationCheck = () => setLocationCheckKey(k => k + 1);
+
+    let permStatus: PermissionStatus | null = null;
+    let pollingInterval: ReturnType<typeof setInterval> | null = null;
+    let cleanupPermListener: (() => void) | null = null;
+
+    const setup = async () => {
+      if (typeof navigator !== 'undefined' && navigator.permissions) {
+        try {
+          permStatus = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+
+          const handlePermissionChange = () => {
+            if (permStatus?.state === 'granted') {
+              // Location Services just became available — re-check immediately
+              bumpLocationCheck();
+            }
+          };
+
+          permStatus.addEventListener('change', handlePermissionChange);
+          cleanupPermListener = () => permStatus?.removeEventListener('change', handlePermissionChange);
+
+          // If permission is already granted but currentLocationStatus is stale/null, fix it now
+          if (permStatus.state === 'granted' && currentLocationStatus === null) {
+            bumpLocationCheck();
+          }
+        } catch {
+          // Permissions API not available — fall through to polling
+        }
+      }
+
+      // Polling fallback: runs on iOS Safari and any browser that doesn't
+      // support permission change events. Only polls when the location is
+      // not yet confirmed as 'Office' so it stops once the check succeeds.
+      if (!cleanupPermListener) {
+        pollingInterval = setInterval(() => {
+          if (currentLocationStatus !== 'Office') {
+            bumpLocationCheck();
+          }
+        }, 30_000);
+      }
+    };
+
+    setup();
+
+    return () => {
+      cleanupPermListener?.();
+      if (pollingInterval) clearInterval(pollingInterval);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchLocations, selectedEmployee]);
 
   // Consolidated data fetch triggered by selectedEmployee or parent's lastRefresh
   useEffect(() => {
@@ -326,7 +391,6 @@ export default function ClockInOutCard({
 
       try {
         setLoading(true);
-        setError(null);
 
         // 1. Fetch latest entry type — use local date, NOT UTC (UTC can be a day behind in IST)
         const getLocalDateStr = (d: Date) => {
@@ -378,7 +442,7 @@ export default function ClockInOutCard({
         setAssignedShifts(assignments);
       } catch (err) {
         console.error("Failed to fetch card data:", err);
-        setError("Failed to load data");
+        toast.error("Failed to load data");
       } finally {
         setLoading(false);
       }
@@ -449,7 +513,7 @@ export default function ClockInOutCard({
     if (!user && !selectedEmployee) return;
 
     if (manual && !manualReason.trim()) {
-      setError("Please provide a reason for manual entry.");
+      toast.error("Please provide a reason for manual entry.");
       return;
     }
 
@@ -475,7 +539,7 @@ export default function ClockInOutCard({
 
           if (timestamp > statusDate) {
             const statusLabel = employeeStatus.charAt(0).toUpperCase() + employeeStatus.slice(1);
-            setError(`Clock-in/out is not allowed. Employee status is ${statusLabel} effective from ${new Date(selectedEmployee.status_date).toLocaleDateString()}.`);
+            toast.error(`Clock-in/out is not allowed. Employee status is ${statusLabel} effective from ${new Date(selectedEmployee.status_date).toLocaleDateString()}.`);
             setLoading(false);
             return;
           }
@@ -550,7 +614,7 @@ export default function ClockInOutCard({
             } else if (msg.toLowerCase().includes("denied")) {
               friendlyMsg = "Location access was denied. Please allow location access in your browser settings to clock in/out.";
             }
-            setError(friendlyMsg);
+            toast.error(friendlyMsg);
             setLoading(false);
             return;
           }
@@ -559,11 +623,10 @@ export default function ClockInOutCard({
 
       if (useFaceRecognition && !manual && !faceVerified) {
         if (!hasFaceEnrolled) {
-          setError("Please enroll your face first or use Manual Mode.");
+          toast.error("Please enroll your face first or use Manual Mode.");
           setLoading(false);
           return;
         }
-        setError(null);
         setIsFaceRecognitionModalOpen(true);
         setFaceRecognitionMode("verify");
         setLoading(false);
@@ -617,7 +680,23 @@ export default function ClockInOutCard({
         }
       }
 
+      if (entryType === 'OUT' && latestEntryType === 'IN' && latestOfficeStatus === 'Outside Office' && !latestOfficeArrivalProcessed) {
+        if (!manual && locationData.status === 'Office') {
+          toast.error("You must Clock In (Office) to register your arrival before clocking out.");
+          setLoading(false);
+          setLoadingAction(null);
+          return;
+        }
+      }
+
       if (entryType === 'IN' && latestEntryType === 'IN' && latestOfficeStatus === 'Outside Office' && !latestOfficeArrivalProcessed) {
+        if (!manual && locationData.status === 'Outside Office') {
+          toast.error("You have not reached the office location yet.");
+          setLoading(false);
+          setLoadingAction(null);
+          return;
+        }
+
         // Mark the previous outside punch as processed so it doesn't trigger again
         const { data: prevTs } = await supabase
           .from('attendance_timestamp')
@@ -848,7 +927,7 @@ export default function ClockInOutCard({
       }
     } catch (err: any) {
       console.error("ClockInOut Error:", err);
-      setError(
+      toast.error(
         err?.message ||
         (typeof err === 'string' ? err : `Failed to clock ${entryType.toLowerCase()}`)
       );
@@ -876,29 +955,28 @@ export default function ClockInOutCard({
       const finalImageToSave = captureImageEnabled ? capturedImageBase64 : undefined;
       handleClockInOut(latestEntryType !== "IN" ? "IN" : "OUT", false, true, finalImageToSave);
     } else {
-      setError("Face verification failed. Identity could not be confirmed.");
+      toast.error("Face verification failed. Identity could not be confirmed.");
     }
   };
 
   const employeeCannotClock = !canViewAllData && !hasFaceEnrolled && !allowManualClockIn && hasFaceScreens;
   const isOutsideOfficeOpen = latestEntryType === "IN" && latestOfficeStatus === "Outside Office" && !latestOfficeArrivalProcessed;
   const canClockIn = !loading && selectedEmployee &&
-    (latestEntryType !== "IN" || (isOutsideOfficeOpen && (manualMode || currentLocationStatus === 'Office'))) &&
+    (latestEntryType !== "IN" || isOutsideOfficeOpen) &&
     !employeeCannotClock;
   const canClockOut = !loading && selectedEmployee &&
     latestEntryType === "IN" &&
-    !(isOutsideOfficeOpen && currentLocationStatus === 'Office') &&
     !employeeCannotClock;
 
   // NEW: Determines if we should show the Hikvision-only warning
   const showHikWarning = !canViewAllData && hasHikScreens && !hasFaceScreens && !allowManualClockIn;
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden relative transition-all duration-500 hover:shadow-[0_16px_48px_rgba(0,0,0,0.08)]">
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden relative">
       {/* Top Accent Border */}
       <div className="h-2 w-full bg-indigo-500"></div>
 
-      <div className="p-5 sm:p-6">
+      <div className="p-4 sm:p-6">
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 sm:gap-6 mb-6">
           <div className="flex justify-between items-center md:flex-col">
             <div className="flex items-center space-x-2 text-indigo-600 mb-1 sm:mb-1.5">
@@ -979,17 +1057,6 @@ export default function ClockInOutCard({
             </div>
           )}
         </div>
-
-        {error && (
-          <div className="mt-4 rounded-md bg-red-50 p-4">
-            <div className="flex">
-              <AlertCircle className="h-5 w-5 text-red-400" />
-              <div className="ml-3">
-                <div className="text-sm text-red-700">{error}</div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {isConfigLoading ? (
           <div className="flex justify-center items-center py-8">
@@ -1142,7 +1209,7 @@ export default function ClockInOutCard({
                     <button
                       onClick={() => handleClockInOut("IN", true)}
                       disabled={!canClockIn}
-                      className="flex-1 inline-flex justify-center items-center px-4 py-3 sm:px-5 sm:py-3 border border-transparent rounded-xl shadow-md sm:shadow-lg text-base sm:text-base font-bold text-white bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all hover:-translate-y-0.5"
+                      className="flex-1 inline-flex justify-center items-center px- py-3 sm:px-5 sm:py-3 border border-transparent rounded-xl shadow-md sm:shadow-lg text-base sm:text-base font-bold text-white bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all hover:-translate-y-0.5"
                     >
                       {loadingAction === "MANUAL_IN" ? (
                         <Loader2 className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5 animate-spin" />
@@ -1170,7 +1237,7 @@ export default function ClockInOutCard({
                   <button
                     onClick={() => handleClockInOut("IN", false)}
                     disabled={!canClockIn}
-                    className="flex-1 inline-flex justify-center items-center px-4 py-3 sm:px-5 sm:py-3 border border-transparent rounded-xl shadow-md sm:shadow-lg text-base sm:text-base font-bold text-white bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all hover:-translate-y-0.5"
+                    className="flex-1 inline-flex justify-center items-center px-2 py-3 sm:px-5 sm:py-3 border border-transparent rounded-xl shadow-md sm:shadow-lg text-sm sm:text-base font-bold text-white bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all hover:-translate-y-0.5"
                   >
                     {loadingAction === "IN" ? (
                       <Loader2 className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5 animate-spin" />
@@ -1179,12 +1246,12 @@ export default function ClockInOutCard({
                     ) : (
                       <LogIn className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5" />
                     )}
-                    {loadingAction === "IN" ? "Processing..." : (isOutsideOfficeOpen && currentLocationStatus === 'Office' ? "Clock In (Office)" : "Clock In")}
+                    {loadingAction === "IN" ? "Processing..." : (isOutsideOfficeOpen ? "Clock In (Office)" : "Clock In")}
                   </button>
                   <button
                     onClick={() => handleClockInOut("OUT", false)}
                     disabled={!canClockOut}
-                    className="flex-1 inline-flex justify-center items-center px-4 py-3 sm:px-5 sm:py-3 border border-transparent rounded-xl shadow-md sm:shadow-lg text-base sm:text-base font-bold text-white bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 focus:outline-none focus:ring-4 focus:ring-rose-200 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all hover:-translate-y-0.5"
+                    className="flex-1 inline-flex justify-center items-center px-4 py-3 sm:px-5 sm:py-3 border border-transparent rounded-xl shadow-md sm:shadow-lg text-sm sm:text-base font-bold text-white bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 focus:outline-none focus:ring-4 focus:ring-rose-200 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all hover:-translate-y-0.5"
                   >
                     {loadingAction === "OUT" ? (
                       <Loader2 className="h-5 w-5 mr-2 sm:h-5 sm:w-5 sm:mr-2.5 animate-spin" />
@@ -1202,32 +1269,27 @@ export default function ClockInOutCard({
         )}
 
         {latestEntryType && (
-          <div className="mt-4 sm:mt-6 p-4 sm:p-5 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-200 shadow-sm flex items-start sm:items-center justify-between gap-3 sm:gap-0">
-            <div>
-              <p className="text-xs sm:text-xs font-bold text-indigo-600 uppercase tracking-wider mb-1">
-                Latest Entry Status
-              </p>
-              <div className="flex items-center space-x-2 sm:space-x-3">
-                <div className={`h-2.5 w-2.5 sm:h-2.5 sm:w-2.5 rounded-full ${latestEntryType === 'IN' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
-                <div className="flex flex-col">
-                  <p className="text-base sm:text-lg font-semibold text-gray-900 tracking-tight">
-                    {latestEntryType === "IN" ? "Clocked In" : "Clocked Out"}
-                  </p>
-                  {latestEntryTime && (
-                    <p className="text-sm font-medium text-gray-500 mt-0.5">
-                      at {new Date(latestEntryTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} on {new Date(latestEntryTime).toLocaleDateString()}
-                    </p>
-                  )}
-                </div>
+          <div className="mt-5">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 px-1">Latest Status</p>
+            <div className={`flex items-center justify-between px-4 py-3 sm:px-5 sm:py-3.5 rounded-full border transition-all duration-300 ${latestEntryType === 'IN' ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
+              {/* Left: Pulsing dot + status */}
+              <div className="flex items-center gap-2.5 sm:gap-3">
+                <span className="relative flex h-3 w-3">
+                  <span className={`absolute inline-flex h-full w-full rounded-full opacity-60 ${latestEntryType === 'IN' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                  <span className={`relative inline-flex h-3 w-3 rounded-full ${latestEntryType === 'IN' ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
+                </span>
+                <span className={`text-sm sm:text-base font-bold tracking-tight ${latestEntryType === 'IN' ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {latestEntryType === 'IN' ? 'Clocked In' : 'Clocked Out'}
+                </span>
               </div>
-            </div>
-            <div
-              className={`px-4 py-2 rounded-lg text-sm font-bold uppercase tracking-wider shadow-sm ${latestEntryType === "IN"
-                ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                : "bg-rose-100 text-rose-800 border border-rose-200"
-                }`}
-            >
-              {latestEntryType}
+              {/* Right: Timestamp */}
+              {latestEntryTime && (
+                <span className={`text-xs sm:text-sm font-semibold ${latestEntryType === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  {new Date(latestEntryTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  <span className="mx-1.5 opacity-40">·</span>
+                  {new Date(latestEntryTime).toLocaleDateString()}
+                </span>
+              )}
             </div>
           </div>
         )}

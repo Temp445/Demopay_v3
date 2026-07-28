@@ -9,7 +9,7 @@ import {
   Polyline,
   ZoomControl
 } from 'react-leaflet';
-import { Activity, RefreshCw, Users, MapPin, Clock, Target, AlertTriangle, PauseCircle, ArrowLeft, Search, Filter } from 'lucide-react';
+import { Activity, RefreshCw, Users, MapPin, Clock, Target, AlertTriangle, PauseCircle, ArrowLeft, Search, Filter, X } from 'lucide-react';
 import { useWorkLocationsStore } from '../../../stores/workLocationsStore';
 import { useLocationSettingsStore } from '../../../stores/locationSettingsStore';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -28,14 +28,36 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const activeWorkerIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
-});
+const getEmployeeColor = (name: string, code?: string) => {
+  const str = code || name || 'A';
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 70%, 40%)`;
+};
+
+const getEmployeeIcon = (name: string, code?: string) => {
+  const color = getEmployeeColor(name, code);
+
+  return new L.DivIcon({
+    html: `
+      <div style="
+        background-color: ${color};
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 2px solid white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+      "></div>
+    `,
+    className: '',
+    iconSize: [14, 14],
+    iconAnchor: [7, 7],
+    popupAnchor: [0, -7]
+  });
+};
 
 const workSiteIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
@@ -450,7 +472,10 @@ export default function LiveTrackingDashboard() {
             </div>
             {selectedWork && (
               <div className="mb-2 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5">
-                <div className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0" />
+                <div 
+                  className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-white shadow-sm" 
+                  style={{ backgroundColor: getEmployeeColor(selectedWork.employee_name || 'Worker', selectedWork.employee_code as string | undefined) }} 
+                />
                 <span className="text-xs text-blue-700 font-medium truncate">Viewing: <strong>{selectedWork.employee_name}</strong></span>
               </div>
             )}
@@ -463,8 +488,16 @@ export default function LiveTrackingDashboard() {
                 placeholder="Search by name or location..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-2 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full pl-8 pr-8 py-2 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-2.5 text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
 
             {/* --- Enterprise: Status Filter Tabs --- */}
@@ -516,7 +549,12 @@ export default function LiveTrackingDashboard() {
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex-1">
                           <div className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                            <div 
+                              className="w-2.5 h-2.5 rounded-full shadow-sm border border-white flex-shrink-0" 
+                              style={{ backgroundColor: getEmployeeColor(work.employee_name || 'Worker', work.employee_code as string | undefined) }} 
+                            />
                             {work.employee_name}
+                            {work.employee_code && <span className="text-xs text-gray-500 font-normal">({work.employee_code as string})</span>}
                             {work.status === 'paused' ? (
                               <span className="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full flex items-center gap-1 font-bold">
                                 <PauseCircle className="h-3 w-3" /> PAUSED
@@ -536,7 +574,14 @@ export default function LiveTrackingDashboard() {
                               </span>
                             ) : null}
                           </div>
-                          <div className="text-xs text-gray-500 mt-1">{work.location_name}</div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            <span className="font-medium text-gray-700">{work.location_name}</span>
+                            {(work.formatted_address || work.address) && (
+                              <span className="block mt-0.5 text-[11px] leading-tight">
+                                {work.formatted_address || [work.address, work.city, work.state].filter(Boolean).join(', ')}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         {!withinRadius && !signalLost && !isTraveling && !isOutside && (
                           <AlertTriangle className="h-4 w-4 text-red-600 flex-shrink-0" />
@@ -719,10 +764,13 @@ export default function LiveTrackingDashboard() {
 
                       {tracking && tracking.latitude && tracking.longitude && (
                         <>
-                          <Marker position={[Number(tracking.latitude), Number(tracking.longitude)]} icon={activeWorkerIcon}>
+                          <Marker position={[Number(tracking.latitude), Number(tracking.longitude)]} icon={getEmployeeIcon(work.employee_name || 'Worker', work.employee_code as string | undefined)}>
                             <Popup>
                               <div className="text-sm">
-                                <div className="font-semibold mb-1">{work.employee_name}</div>
+                                <div className="font-semibold mb-1">
+                                  {work.employee_name}
+                                  {work.employee_code && <span className="text-gray-500 font-normal ml-1">({work.employee_code as string})</span>}
+                                </div>
                                 {work.status === 'paused' && (
                                   <div className="text-xs font-bold text-yellow-600 mt-1 mb-1">Currently Auto-Paused</div>
                                 )}

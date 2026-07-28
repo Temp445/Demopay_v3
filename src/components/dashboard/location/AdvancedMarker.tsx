@@ -1,4 +1,4 @@
-﻿/**
+/**
  * AdvancedMarker.tsx
  *
  * A React wrapper for google.maps.marker.AdvancedMarkerElement, which is the
@@ -30,6 +30,7 @@ interface AdvancedMarkerProps {
   iconUrl?: string;
   iconSize?: [number, number];
   iconAnchor?: [number, number];
+  html?: string;
   zIndex?: number;
 }
 
@@ -45,6 +46,7 @@ export default function AdvancedMarker({
   iconUrl,
   iconSize,
   iconAnchor,
+  html,
   zIndex,
 }: AdvancedMarkerProps) {
   const markerRef = useRef<google.maps.marker.AdvancedMarkerElement | null>(null);
@@ -79,6 +81,15 @@ export default function AdvancedMarker({
       div.style.border = `${symbol.strokeWeight}px solid ${symbol.strokeColor}`;
       div.style.opacity = String(symbol.fillOpacity);
       contentEl = div;
+    } else if (html) {
+      const template = document.createElement("template");
+      template.innerHTML = html.trim();
+      const child = template.content.firstChild as HTMLElement;
+      if (iconAnchor && child) {
+        child.style.marginLeft = `-${iconAnchor[0]}px`;
+        child.style.marginTop = `-${iconAnchor[1]}px`;
+      }
+      contentEl = child;
     } else {
       // Default pin
       pinElement = new google.maps.marker.PinElement();

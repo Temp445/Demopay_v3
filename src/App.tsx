@@ -193,7 +193,7 @@ function App() {
                 <Route path="work-location" element={<EmployeeWorkPage />} />
                 <Route path="location-tracking" element={<LiveTrackingSwitch />} />
                 <Route path="work-location-assignment" element={<WorkLocationAssignmentPage />} />
-                <Route path="travel-approvals" element={<TravelApprovalsPage />} />
+                <Route path="travel-allowance-approvals" element={<TravelApprovalsPage />} />
                 <Route path="location-settings" element={<LocationSettingsPage />} />
                 {/* <Route path="billing" element={<BillingPage />} /> */}
 

@@ -64,7 +64,8 @@ export async function getWorkLocations(tenantId: string): Promise<WorkLocation[]
       *,
       employees!inner (
         name,
-        email
+        email,
+        employee_code
       )
     `)
     .eq('tenant_id', tenantId)
@@ -76,6 +77,7 @@ export async function getWorkLocations(tenantId: string): Promise<WorkLocation[]
     ...item,
     employee_name: item.employees?.name,
     employee_email: item.employees?.email,
+    employee_code: item.employees?.employee_code,
   }));
 }
 

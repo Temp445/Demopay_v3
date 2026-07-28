@@ -50,7 +50,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
   const locationSubItems: NavigationItem[] = [
     { name: 'Gate Pass', href: '/dashboard/gate-passes', icon: CreditCard },
     { name: 'Assigned Work Location', href: '/dashboard/work-location-assignment', icon: MapPin },
-    { name: 'Travel Allowance Approvals', href: '/dashboard/travel-approvals', icon: CheckCircle },
+    { name: 'Travel Allowance Approvals', href: '/dashboard/travel-allowance-approvals', icon: CheckCircle },
     ...(settings.live_tracking_enabled ? [{ name: 'Location Tracking', href: '/dashboard/location-tracking', icon: MapPinned }] : []),
     ...(employeeId ? [{ name: 'Work Location', href: '/dashboard/work-location', icon: MapPin }] : []),
     { name: 'Location Settings', href: '/dashboard/location-settings', icon: SlidersHorizontal },

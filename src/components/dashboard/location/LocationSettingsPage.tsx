@@ -242,15 +242,15 @@ export default function LocationSettingsPage() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto">
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-1">
           <div className="p-2 bg-blue-100 rounded-lg">
             <MapPin className="h-6 w-6 text-blue-600" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Location Settings</h1>
+          <h1 className="text-xl font-bold text-gray-900">Work Location Settings</h1>
         </div>
-        <p className="text-base text-gray-500 ml-14">
+        <p className="text-base text-gray-500 ml-1">
           Control how work location tracking behaves across the platform. Changes take effect immediately.
         </p>
       </div>
@@ -364,7 +364,7 @@ export default function LocationSettingsPage() {
 
         <div className={`rounded-xl border transition-all duration-200 p-5 ${localSettings.field_work_integration_enabled ? 'bg-white border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
           <div className="flex items-start gap-4">
-            <div className={`p-2.5 rounded-lg flex-shrink-0 ${localSettings.field_work_integration_enabled ? 'bg-blue-50' : 'bg-gray-100'}`}>
+            <div className={`p-2.5 hidden rounded-lg md:flex flex-shrink-0 ${localSettings.field_work_integration_enabled ? 'bg-blue-50' : 'bg-gray-100'}`}>
               <ReceiptIndianRupee className={`h-5 w-5 ${localSettings.field_work_integration_enabled ? 'text-blue-600' : 'text-gray-400'}`} />
             </div>
             <div className="flex-1 min-w-0">

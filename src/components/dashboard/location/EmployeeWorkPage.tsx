@@ -17,31 +17,29 @@ import type { WorkLocation } from '../../../types/workLocation';
 
 export default function EmployeeWorkPage() {
   const { currentTenant } = useTenant();
-  const { userId } = useUserProfileStore();
-  const { settings: locationSettings, fetchSettings: fetchLocationSettings, initialized: locationSettingsInitialized } = useLocationSettingsStore();
+  const userId = useUserProfileStore(state => state.userId);
+  const locationSettings = useLocationSettingsStore(state => state.settings);
+  const fetchLocationSettings = useLocationSettingsStore(state => state.fetchSettings);
+  const locationSettingsInitialized = useLocationSettingsStore(state => state.initialized);
 
-  const {
-    workLocations,
-    loading: wlLoading,
-    fetchEmployeeWorkLocations,
-    fetchWorkPauses,
-    startWork,
-    pauseWork,
-    resumeWork,
-    completeWork,
-  } = useWorkLocationsStore();
+  const workLocations = useWorkLocationsStore(state => state.workLocations);
+  const wlLoading = useWorkLocationsStore(state => state.loading);
+  const fetchEmployeeWorkLocations = useWorkLocationsStore(state => state.fetchEmployeeWorkLocations);
+  const fetchWorkPauses = useWorkLocationsStore(state => state.fetchWorkPauses);
+  const startWork = useWorkLocationsStore(state => state.startWork);
+  const pauseWork = useWorkLocationsStore(state => state.pauseWork);
+  const resumeWork = useWorkLocationsStore(state => state.resumeWork);
+  const completeWork = useWorkLocationsStore(state => state.completeWork);
 
   // Use the newly created direct-assign function
-  const { createAssignedGatePass } = useGatePassesStore();
+  const createAssignedGatePass = useGatePassesStore(state => state.createAssignedGatePass);
 
-  const {
-    currentStep,
-    activeLocationId,
-    loading: journeyLoading,
-    isBackgroundTracking,
-    fetchTodayLogs,
-    logEvent
-  } = useJourneyTrackingStore();
+  const currentStep = useJourneyTrackingStore(state => state.currentStep);
+  const activeLocationId = useJourneyTrackingStore(state => state.activeLocationId);
+  const journeyLoading = useJourneyTrackingStore(state => state.loading);
+  const isBackgroundTracking = useJourneyTrackingStore(state => state.isBackgroundTracking);
+  const fetchTodayLogs = useJourneyTrackingStore(state => state.fetchTodayLogs);
+  const logEvent = useJourneyTrackingStore(state => state.logEvent);
 
   const [employeeId, setEmployeeId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -479,10 +477,19 @@ export default function EmployeeWorkPage() {
       return step.replace(/_/g, ' ');
   };
 
-  if (isInitialLoad && (wlLoading || journeyLoading)) {
+  if (isInitialLoad) {
     return (
-      <div className="flex items-center justify-center py-16">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      <div className="p-6 max-w-5xl mx-auto space-y-6 animate-pulse">
+        <div className="flex flex-col md:flex-row justify-between mb-4">
+            <div className="h-8 bg-gray-200 rounded w-64 mb-2"></div>
+            <div className="h-4 bg-gray-200 rounded w-48"></div>
+        </div>
+        <div className="h-32 bg-gray-200 rounded-xl w-full border border-gray-100"></div>
+        <div className="flex gap-4 border-b border-gray-200 pb-2">
+            <div className="h-10 bg-gray-200 rounded w-40"></div>
+            <div className="h-10 bg-gray-200 rounded w-32"></div>
+        </div>
+        <div className="h-64 bg-gray-200 rounded-xl w-full border border-gray-100"></div>
       </div>
     );
   }

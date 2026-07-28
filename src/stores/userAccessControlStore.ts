@@ -107,7 +107,8 @@ export const restrictedEmployeeRoutes = [
   '/dashboard/formula-tester',
   '/dashboard/settings/shift-attendance-notifier',
   '/dashboard/payslip-sender',
-  '/dashboard/employees'
+  '/dashboard/employees',
+  '/dashboard/travel-allowance-approvals'
 ];
 
 export const restrictedReportingHeadRoutes = [
@@ -150,7 +151,8 @@ export const restrictedReportingHeadRoutes = [
   '/dashboard/location-tracking',
   '/dashboard/reporting',
   '/dashboard/work-location-approval',
-  '/dashboard/work-location-assignment'
+  '/dashboard/work-location-assignment',
+  '/dashboard/travel-allowance-approvals'
 ];
 
 export const useUserAccessControlStore = create<UserAccessControlStore>((set, get) => ({

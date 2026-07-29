@@ -86,7 +86,12 @@ export const useCompOffStore = create<CompOffState>((set, get) => ({
 
       const { data: newRequest, error } = await supabase
         .from('comp_off_requests')
-        .insert([{ ...data, tenant_id: tenantId, status: 'Pending' }])
+        .insert([{ 
+          ...data, 
+          tenant_id: tenantId, 
+          status: 'Approved',
+          approved_at: new Date().toISOString()
+        }])
         .select()
         .single();
 
@@ -98,7 +103,7 @@ export const useCompOffStore = create<CompOffState>((set, get) => ({
         success: true
       }));
 
-      // Notify Admins
+      // Since it's auto-approved, maybe we don't notify admins for approval, but we can still notify them it was credited
       await notifyAdminsLeaveRequest(newRequest.id, data.employee_id!);
     } catch (err: any) {
       set({ error: err.message, loading: false });

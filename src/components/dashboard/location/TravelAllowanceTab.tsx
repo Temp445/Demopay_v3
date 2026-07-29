@@ -2132,7 +2132,7 @@ export default function TravelAllowanceTab() {
                           {violation.violation_type.replace('_', ' ')}
                         </div>
                         <div className="text-sm text-red-700 mt-1.5 font-medium">
-                          Distance from center: {violation.distance_from_center}m
+                          Distance from center: {violation.distance_from_center >= 1000 ? (violation.distance_from_center / 1000).toFixed(2) + ' km' : violation.distance_from_center + ' m'}
                         </div>
                         <div className="text-xs text-red-500 mt-1 flex items-center gap-1">
                           <MapPin className="h-3 w-3" />

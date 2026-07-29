@@ -2,6 +2,13 @@ import { ReactNode } from "react";
 
 export type FilterMode = 'by_shift' | 'by_employee';
 
+export type LocationScenarioFilter = 
+  | 'all'
+  | 'in_out_outside'
+  | 'in_outside_in_office'
+  | 'in_office_out_outside'
+  | 'outside_only';
+
 // 1. Define the comprehensive status type
 export type AttendanceStatus = 
   | 'Present' 
@@ -102,6 +109,11 @@ export interface ProcessedTimeRecord {
   has_edits: boolean;
   edit_count: number;
   verification_method?: string;
+
+  // Location fields
+  clock_in_is_outside?: boolean;
+  clock_out_is_outside?: boolean;
+  location_scenario?: LocationScenarioFilter;
 }
 
 export interface ShiftFilterParams {
@@ -127,6 +139,7 @@ export interface TimeStampFilters {
     start: string;
     end: string;
   };
+  location_scenario?: LocationScenarioFilter;
 }
 
 export interface UpdateTimeStampRequest {

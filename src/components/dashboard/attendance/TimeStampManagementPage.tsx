@@ -11,6 +11,7 @@ import { supabase } from "../../../lib/supabase";
 import type {
   FilterMode,
   ProcessedTimeRecord,
+  LocationScenarioFilter,
 } from "../../../types/timeStampManagement";
 
 type ViewCategory = "all" | "incomplete" | "wrong_shift" | "unscheduled" | "regular";
@@ -56,8 +57,11 @@ export default function TimeStampManagementPage() {
 
   const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
 
+  const [locationFilter, setLocationFilter] = useState<LocationScenarioFilter>("all");
+
   const [employeeSearchText, setEmployeeSearchText] = useState("");
   const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
 
   const [requestDetails, setRequestDetails] = useState<Record<string, any>>({});
   const [tenantId, setTenantId] = useState<string | null>(null);
@@ -236,9 +240,15 @@ export default function TimeStampManagementPage() {
         (viewCategory === "unscheduled" && record.shift_status === "unscheduled") ||
         (viewCategory === "regular" && record.shift_status === "regular");
 
-      return matchesCategory;
+      // 4. Location Filter
+      let matchesLocation = true;
+      if (locationFilter !== "all") {
+        matchesLocation = record.location_scenario === locationFilter;
+      }
+
+      return matchesCategory && matchesLocation;
     });
-  }, [timeRecords, searchTerm, employeeNameFilter, viewCategory, filterMode, processFilter]);
+  }, [timeRecords, searchTerm, employeeNameFilter, viewCategory, filterMode, processFilter, locationFilter]);
 
   // Derived completely from source records to provide the global badge accurate count
   const unprocessedRecords = useMemo(() => {
@@ -672,33 +682,65 @@ export default function TimeStampManagementPage() {
             </div>
 
             {/* Search + Filter Row */}
-            <div className="px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
-              {filterMode === "by_shift" && (
-                <div className="flex-1 relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Search className="h-4 w-4 text-gray-400" />
+            <div className="px-4 py-2.5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex-1 flex items-center gap-2">
+                {filterMode === "by_shift" && (
+                  <div className="flex-1 min-w-[200px] relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Search className="h-4 w-4 text-gray-400" />
+                    </div>
+                    <input
+                      type="text"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="block w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-gray-50"
+                      placeholder="Search name / code..."
+                    />
                   </div>
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="block w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-gray-50"
-                    placeholder="Search name / code..."
-                  />
+                )}
+                
+                <button
+                  onClick={() => setShowMoreFilters(!showMoreFilters)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border transition-colors shrink-0 ${
+                    showMoreFilters || locationFilter !== "all" || processFilter !== "all"
+                      ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                      : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                  }`}
+                >
+                  <Filter className="h-4 w-4" />
+                  <span>{showMoreFilters ? 'Hide Filters' : 'More Filters'}</span>
+                  {(locationFilter !== "all" || processFilter !== "all") && (
+                    <span className="flex h-2 w-2 rounded-full bg-indigo-600 absolute top-0 right-0 -mt-1 -mr-1"></span>
+                  )}
+                </button>
+              </div>
+              
+              {/* Filter Dropdowns */}
+              {showMoreFilters && (
+                <div className="flex items-center gap-2 shrink-0 overflow-x-auto w-full sm:w-auto">
+                  <select
+                    value={locationFilter}
+                    onChange={(e) => setLocationFilter(e.target.value as LocationScenarioFilter)}
+                    className="text-xs border border-gray-200 rounded-lg py-2.5 pl-2 pr-6 bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-700 font-medium whitespace-nowrap"
+                  >
+                    <option value="all">All Locations</option>
+                    <option value="in_out_outside">IN & OUT outside</option>
+                    <option value="in_outside_in_office">Multiple IN (Outside -&gt; Office)</option>
+                    <option value="in_office_out_outside">IN office, OUT outside</option>
+                    <option value="outside_only">IN outside (No OUT)</option>
+                  </select>
+
+                  <select
+                    value={processFilter}
+                    onChange={(e) => setProcessFilter(e.target.value as any)}
+                    className="text-xs border border-gray-200 rounded-lg py-2.5 pl-2 pr-6 bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-700 font-medium"
+                  >
+                    <option value="all">All Records</option>
+                    <option value="processed">Processed</option>
+                    <option value="unprocessed">Unprocessed</option>
+                  </select>
                 </div>
               )}
-              <div className="flex items-center gap-1.5 shrink-0">
-                {/* <Filter className="h-3.5 w-3.5 text-gray-400" /> */}
-                <select
-                  value={processFilter}
-                  onChange={(e) => setProcessFilter(e.target.value as ProcessFilter)}
-                  className="text-xs border border-gray-200 rounded-lg py-2.5 pl-2 pr-6 bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-700 font-medium"
-                >
-                  <option value="all">All Records</option>
-                  <option value="processed">Processed</option>
-                  <option value="unprocessed">Unprocessed</option>
-                </select>
-              </div>
             </div>
 
             {error && (
@@ -842,16 +884,31 @@ export default function TimeStampManagementPage() {
                           <div className="grid grid-cols-2 border-t border-gray-300 divide-x divide-gray-300">
                             <div className="px-4 py-2.5">
                               <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-800 mb-0.5">Clock In</p>
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <Clock className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
                                 <span className="text-xs font-semibold text-gray-800">{formatDateTime(record.clock_in)}</span>
+                                {record.clock_in_is_outside && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-fuchsia-100 text-fuchsia-800">
+                                    Outside
+                                  </span>
+                                )}
+                                {record.location_scenario === 'in_outside_in_office' && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-amber-100 text-amber-800" title="Multiple IN punches (Outside -&gt; Office)">
+                                    Multiple IN
+                                  </span>
+                                )}
                               </div>
                             </div>
                             <div className="px-4 py-2.5">
                               <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-800 mb-0.5">Clock Out</p>
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <Clock className={`h-3.5 w-3.5 shrink-0 ${record.clock_out ? "text-indigo-400" : "text-gray-400"}`} />
                                 <span className={`text-xs font-semibold ${record.clock_out ? "text-gray-800" : "text-gray-400"}`}>{formatDateTime(record.clock_out)}</span>
+                                {record.clock_out_is_outside && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-fuchsia-100 text-fuchsia-800">
+                                    Outside
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1042,8 +1099,35 @@ export default function TimeStampManagementPage() {
                               </td>
                             )}
 
-                            <td className="px-4 py-3 sm:px-0 2xl:px-2 sm:py-4 whitespace-nowrap text-[12px] 2xl:text-sm text-gray-900">{formatDateTime(record.clock_in)}</td>
-                            <td className="px-4 py-3 sm:px-0 2xl:px-2 sm:py-4 whitespace-nowrap text-[12px] 2xl:text-sm text-gray-900">{formatDateTime(record.clock_out)}</td>
+                            <td className="px-4 py-3 sm:px-0 2xl:px-2 sm:py-4 whitespace-nowrap text-[12px] 2xl:text-sm text-gray-900">
+                              <div className="flex flex-col gap-1.5 items-start">
+                                <span>{formatDateTime(record.clock_in)}</span>
+                                {(record.clock_in_is_outside || record.location_scenario === 'in_outside_in_office') && (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {record.clock_in_is_outside && (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-200">
+                                        Outside
+                                      </span>
+                                    )}
+                                    {record.location_scenario === 'in_outside_in_office' && (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-200" title="Multiple IN punches (Outside -&gt; Office)">
+                                        Multiple IN
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 sm:px-0 2xl:px-2 sm:py-4 whitespace-nowrap text-[12px] 2xl:text-sm text-gray-900">
+                              <div className="flex flex-col gap-1.5 items-start">
+                                <span>{formatDateTime(record.clock_out)}</span>
+                                {record.clock_out_is_outside && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-200">
+                                    Outside
+                                  </span>
+                                )}
+                              </div>
+                            </td>
                             <td className="px-4 py-3 sm:px-0 2xl:px-2 sm:py-4 ">
                               {requestInfo && Array.isArray(requestInfo) ? (
                                 <div className="flex flex-col gap-1.5">

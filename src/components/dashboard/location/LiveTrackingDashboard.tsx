@@ -68,6 +68,53 @@ const workSiteIcon = new L.Icon({
   shadowSize: [41, 41]
 });
 
+const LiveTrackingRoute = ({
+  start,
+  end,
+  pathOptions,
+  shouldFetchOptimized
+}: {
+  start: [number, number];
+  end: [number, number];
+  pathOptions: any;
+  shouldFetchOptimized: boolean;
+}) => {
+  const [routedPositions, setRoutedPositions] = useState<[number, number][] | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (shouldFetchOptimized) {
+      const fetchRoute = async () => {
+        try {
+          const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=geojson`);
+          const data = await response.json();
+          if (data.code === 'Ok' && data.routes.length > 0 && active) {
+            const coords = data.routes[0].geometry.coordinates.map((c: [number, number]) => [c[1], c[0]]);
+            setRoutedPositions(coords);
+          }
+        } catch (error) {
+          console.error("OSRM route fetch failed", error);
+        }
+      };
+      fetchRoute();
+    } else {
+      setRoutedPositions(null);
+    }
+    return () => { active = false; };
+  }, [shouldFetchOptimized, start[0], start[1], end[0], end[1]]);
+
+  if (routedPositions) {
+     return <Polyline positions={routedPositions} pathOptions={{ ...pathOptions, dashArray: undefined }} />;
+  }
+
+  return (
+    <Polyline
+      positions={[start, end]}
+      pathOptions={pathOptions}
+    />
+  );
+};
+
 export default function LiveTrackingDashboard() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -101,19 +148,11 @@ export default function LiveTrackingDashboard() {
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (currentTenant) {
-      loadData();
-    }
-  }, [currentTenant]);
 
-  const loadData = async () => {
+
+
+  const fetchActiveState = useCallback(async () => {
     if (!currentTenant) return;
-    await fetchWorkLocations(currentTenant.id);
-  };
-
-  useEffect(() => {
-    const fetchActiveState = async () => {
       const { data: outsideData } = await supabase
         .from('outside_office_approvals')
         .select(`*, employees!employee_id(name, employee_code, email)`)
@@ -240,12 +279,27 @@ export default function LiveTrackingDashboard() {
           setSelectedWork(targetLocation);
         }
       }
-    };
+    }, [workLocations, targetWorkId, currentTenant]);
 
+  useEffect(() => {
     if (workLocations.length > 0 || currentTenant) {
       fetchActiveState();
     }
-  }, [workLocations, targetWorkId, currentTenant]);
+  }, [workLocations, targetWorkId, currentTenant, fetchActiveState]);
+
+
+
+  const loadData = async () => {
+    if (!currentTenant) return;
+    await fetchWorkLocations(currentTenant.id);
+    await fetchActiveState();
+  };
+
+  useEffect(() => {
+    if (currentTenant) {
+      loadData();
+    }
+  }, [currentTenant, fetchWorkLocations, fetchActiveState]);
 
   // Automatically center the map whenever `selectedWork` changes
   useEffect(() => {
@@ -257,7 +311,8 @@ export default function LiveTrackingDashboard() {
         mapRef.current.setView([Number(selectedWork.latitude), Number(selectedWork.longitude)], 15);
       }
     }
-  }, [selectedWork, latestTracking]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWork]);
 
   // Real-time Subscription with Debounced State Updates
   useEffect(() => {
@@ -387,6 +442,10 @@ export default function LiveTrackingDashboard() {
     if (!tracking || !tracking.recorded_at) return false;
     if (tracking.event_type === 'GPS_SIGNAL_LOST') return true;
 
+    const nonTrackingEvents = ['REACHED_ENDPOINT', 'PAUSE_WORK', 'COMPLETE_WORK'];
+    if (nonTrackingEvents.includes(tracking.event_type)) return false;
+    if (!locationSettings?.radius_monitoring_enabled && ['START_WORK', 'RESUME_WORK'].includes(tracking.event_type)) return false;
+
     const maxDelayMins = (locationSettings?.journey_tracking_interval_mins || 5) + 2;
     return differenceInMinutes(currentTime, parseISO(tracking.recorded_at)) >= maxDelayMins;
   };
@@ -396,7 +455,8 @@ export default function LiveTrackingDashboard() {
     return activeWorks.filter(work => {
       const tracking = latestTracking.get(work.id);
       const signalLost = isSignalLost(tracking);
-      const isTraveling = work.status === 'assigned';
+      const isReached = tracking?.event_type === 'REACHED_LOCATION' || (tracking?.event_type === 'LIVE_TRACK_WORK' && work.status === 'assigned');
+      const isTraveling = work.status === 'assigned' && !isReached;
       const isPaused = work.status === 'paused';
 
       // Status filter
@@ -531,7 +591,8 @@ export default function LiveTrackingDashboard() {
                   const isOutside = (work as any).is_outside_office;
                   const withinRadius = tracking ? (isOutside ? true : isWithinRadius(work, tracking)) : true;
                   const signalLost = isSignalLost(tracking);
-                  const isTraveling = work.status === 'assigned';
+                  const isReached = tracking?.event_type === 'REACHED_LOCATION';
+                  const isTraveling = work.status === 'assigned' && !isReached;
 
                   return (
                     <button
@@ -559,7 +620,12 @@ export default function LiveTrackingDashboard() {
                               <span className="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full flex items-center gap-1 font-bold">
                                 <PauseCircle className="h-3 w-3" /> PAUSED
                               </span>
-                            ) : work.status === 'assigned' ? (
+                            ) : isReached ? (
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 font-bold ${signalLost ? 'bg-orange-100 text-orange-800' : 'bg-teal-100 text-teal-800'
+                                }`}>
+                                ARRIVED {signalLost ? '(OFFLINE)' : ''}
+                              </span>
+                            ) : isTraveling ? (
                               <span className={`text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 font-bold ${signalLost ? 'bg-orange-100 text-orange-800' : 'bg-purple-100 text-purple-800'
                                 }`}>
                                 TRAVELING {signalLost ? '(OFFLINE)' : ''}
@@ -594,10 +660,10 @@ export default function LiveTrackingDashboard() {
                             <Clock className="h-3 w-3" />
                             {signalLost ? 'Signal lost at ' : 'Last update '} {format(new Date(tracking.recorded_at), 'hh:mm:ss a')}
                           </div>
-                          {tracking.calculated_distance !== undefined && !isTraveling && !isOutside && (
-                            <div className={`flex items-center gap-1 text-xs ${signalLost ? 'text-gray-400' : withinRadius ? 'text-green-600' : 'text-red-600'}`}>
+                          {tracking.calculated_distance !== undefined && !isTraveling && !isOutside && !withinRadius && (
+                            <div className={`flex items-center gap-1 text-xs ${signalLost ? 'text-gray-400' : 'text-red-600'}`}>
                               <Target className="h-3 w-3" />
-                              Gap from center: {tracking.calculated_distance.toFixed(1)}m
+                              Gap from center: {tracking.calculated_distance >= 1000 ? (tracking.calculated_distance / 1000).toFixed(2) + ' km' : tracking.calculated_distance.toFixed(1) + ' m'}
                             </div>
                           )}
                         </div>
@@ -729,7 +795,8 @@ export default function LiveTrackingDashboard() {
                   const isOutside = (work as any).is_outside_office;
                   const withinRadius = tracking ? (isOutside ? true : isWithinRadius(work, tracking)) : true;
                   const signalLost = isSignalLost(tracking);
-                  const isTraveling = work.status === 'assigned';
+                  const isReached = tracking?.event_type === 'REACHED_LOCATION' || (tracking?.event_type === 'LIVE_TRACK_WORK' && work.status === 'assigned');
+                  const isTraveling = work.status === 'assigned' && !isReached;
 
                   const workLat = Number(work.latitude);
                   const workLng = Number(work.longitude);
@@ -777,16 +844,16 @@ export default function LiveTrackingDashboard() {
                                 {signalLost && (
                                   <div className="text-xs font-bold text-gray-500 mt-1 mb-1">GPS Signal Lost / Offline</div>
                                 )}
-                                <div className={`text-xs mb-1 font-bold ${signalLost ? 'text-gray-500' : isTraveling ? 'text-blue-600' : isOutside ? 'text-purple-600' : withinRadius ? 'text-green-600' : 'text-red-600'
+                                <div className={`text-xs mb-1 font-bold ${signalLost ? 'text-gray-500' : isTraveling ? 'text-blue-600' : isReached ? 'text-teal-600' : isOutside ? 'text-purple-600' : withinRadius ? 'text-green-600' : 'text-red-600'
                                   }`}>
-                                  {isOutside ? 'Remote Work Location' : isTraveling ? 'En Route to Site' : withinRadius ? 'Within allowed area' : 'Outside allowed area'}
+                                  {isOutside ? 'Remote Work Location' : isTraveling ? 'En Route to Site' : isReached ? 'Arrived at Site' : withinRadius ? 'Within allowed area' : 'Outside allowed area'}
                                 </div>
                                 <div className={`text-xs ${signalLost ? 'text-gray-400' : 'text-gray-500'}`}>
                                   {signalLost ? 'Signal lost at: ' : 'Last update: '} {format(new Date(tracking.recorded_at), 'hh:mm:ss a')}
                                 </div>
-                                {tracking.calculated_distance !== undefined && !isOutside && (
+                                {tracking.calculated_distance !== undefined && !isOutside && !withinRadius && (
                                   <div className={`text-xs ${signalLost ? 'text-gray-400' : 'text-gray-500'}`}>
-                                    Distance from center: {tracking.calculated_distance.toFixed(1)}m
+                                    Distance from center: {tracking.calculated_distance >= 1000 ? (tracking.calculated_distance / 1000).toFixed(2) + ' km' : tracking.calculated_distance.toFixed(1) + ' m'}
                                   </div>
                                 )}
                               </div>
@@ -794,17 +861,16 @@ export default function LiveTrackingDashboard() {
                           </Marker>
 
                           {!isOutside && (
-                            <Polyline
-                              positions={[
-                                [workLat, workLng],
-                                [Number(tracking.latitude), Number(tracking.longitude)]
-                              ]}
+                            <LiveTrackingRoute
+                              start={[Number(tracking.latitude), Number(tracking.longitude)]}
+                              end={[workLat, workLng]}
                               pathOptions={{
-                                color: signalLost ? '#9ca3af' : isTraveling ? '#3b82f6' : withinRadius ? '#4ade80' : '#ef4444',
+                                color: signalLost ? '#9ca3af' : isTraveling ? '#3b82f6' : isReached ? '#14b8a6' : withinRadius ? '#4ade80' : '#ef4444',
                                 dashArray: '5, 10',
-                                weight: 2,
+                                weight: 5,
                                 opacity: 0.7
                               }}
+                              shouldFetchOptimized={activeWorks.length <= 5 || selectedWork?.id === work.id}
                             />
                           )}
                         </>

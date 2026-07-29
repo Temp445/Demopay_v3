@@ -11,8 +11,8 @@ interface GoogleMapsMapViewerProps {
   latitude: number;
   longitude: number;
   locationName: string;
-  address?: string;
   showNavigation?: boolean;
+  autoFocusPath?: boolean;
   currentLat?: number;
   currentLng?: number;
   height?: string;
@@ -26,6 +26,7 @@ export default function GoogleMapsMapViewer({
   locationName,
   address,
   showNavigation = false,
+  autoFocusPath = false,
   currentLat,
   currentLng,
   height = '400px',
@@ -70,13 +71,13 @@ export default function GoogleMapsMapViewer({
   const onMapLoad = useCallback((mapInstance: google.maps.Map) => {
     mapRef.current = mapInstance;
     setMap(mapInstance);
-    if (currentPosition) {
+    if (autoFocusPath && currentPosition) {
       const bounds = new google.maps.LatLngBounds();
       bounds.extend(center);
       bounds.extend(currentPosition);
       mapInstance.fitBounds(bounds, 50);
     }
-  }, [currentPosition]);
+  }, [currentPosition, autoFocusPath]);
 
   const openInGoogleMaps = () => {
     if (showNavigation && currentLat && currentLng) {
@@ -172,15 +173,42 @@ export default function GoogleMapsMapViewer({
               <AdvancedMarker
                 map={map}
                 position={currentPosition}
-                iconUrl="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png"
-                iconSize={[25, 41]}
-                iconAnchor={[12, 41]}
+                html={`
+                  <div style="position: relative; width: 14px; height: 14px; display: flex; align-items: center; justify-content: center;">
+                    <div style="
+                      position: absolute;
+                      width: 100%;
+                      height: 100%;
+                      background-color: #3B82F6;
+                      border-radius: 50%;
+                      animation: my-location-pulse 2s ease-out infinite;
+                    "></div>
+                    <style>
+                      @keyframes my-location-pulse {
+                        0% { transform: scale(1); opacity: 0.8; }
+                        100% { transform: scale(3.5); opacity: 0; }
+                      }
+                    </style>
+                    <div style="
+                      position: relative;
+                      background-color: #3B82F6;
+                      width: 14px;
+                      height: 14px;
+                      border-radius: 50%;
+                      border: 2px solid white;
+                      box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+                      z-index: 2;
+                    "></div>
+                  </div>
+                `}
+                iconAnchor={[7, 7]}
               />
               
               {directionsResponse ? (
                 <DirectionsRenderer
                   directions={directionsResponse}
                   options={{
+                    preserveViewport: !autoFocusPath,
                     suppressMarkers: true,
                     polylineOptions: {
                       strokeColor: '#3B82F6',

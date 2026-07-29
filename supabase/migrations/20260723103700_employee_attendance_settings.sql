@@ -1,8 +1,13 @@
 -- Migration: employee_attendance_settings
+-- Adds configuration columns for Field Travel Tracking to attendance_validation_config
 
--- 1. Add capture_image_while_face_clockin to attendance_validation_config
-ALTER TABLE public.attendance_validation_config 
-ADD COLUMN IF NOT EXISTS capture_image_while_face_clockin BOOLEAN DEFAULT false;
+ALTER TABLE public.attendance_validation_config
+  ADD COLUMN IF NOT EXISTS enable_travel_tracking BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS gps_sampling_interval_mins INTEGER DEFAULT 5,
+  ADD COLUMN IF NOT EXISTS min_movement_threshold_meters INTEGER DEFAULT 20,
+  ADD COLUMN IF NOT EXISTS capture_image_while_face_clockin BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS device_tracking_applicability text DEFAULT 'common' CHECK (device_tracking_applicability IN ('common', 'specific'));
+
 
 -- 2. Create employee_attendance_settings table
 CREATE TABLE IF NOT EXISTS public.employee_attendance_settings (

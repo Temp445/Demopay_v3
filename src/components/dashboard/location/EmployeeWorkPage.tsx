@@ -923,7 +923,8 @@ export default function EmployeeWorkPage() {
                     radius={selectedLocation.allowed_radius_meters}
                     currentLat={currentUIPosition?.lat}
                     currentLng={currentUIPosition?.lng}
-                    showNavigation={!!currentUIPosition && selectedLocation.id === activeLocationId && ['TRAVELING', 'WORKING', 'PAUSED'].includes(currentStep)}
+                    showNavigation={!!currentUIPosition}
+                    autoFocusPath={!!currentUIPosition && selectedLocation.id === activeLocationId && ['TRAVELING', 'WORKING', 'PAUSED'].includes(currentStep)}
                 />
             </div>
           </div>

@@ -20,13 +20,39 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const currentLocationIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
+const currentLocationIcon = new L.DivIcon({
+  className: 'custom-div-icon',
+  html: `
+    <div style="position: relative; width: 14px; height: 14px; display: flex; align-items: center; justify-content: center;">
+      <div style="
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background-color: #3B82F6;
+        border-radius: 50%;
+        animation: location-map-pulse 2s ease-out infinite;
+      "></div>
+      <style>
+        @keyframes location-map-pulse {
+          0% { transform: scale(1); opacity: 0.8; }
+          100% { transform: scale(3.5); opacity: 0; }
+        }
+      </style>
+      <div style="
+        position: relative;
+        background-color: #3B82F6;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 2px solid white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+        z-index: 2;
+      "></div>
+    </div>
+  `,
+  iconSize: [14, 14],
+  iconAnchor: [7, 7],
+  popupAnchor: [0, -10]
 });
 
 const destinationIcon = new L.Icon({
@@ -44,6 +70,7 @@ interface LocationMapViewerProps {
   locationName: string;
   address?: string;
   showNavigation?: boolean;
+  autoFocusPath?: boolean;
   currentLat?: number;
   currentLng?: number;
   height?: string;
@@ -67,6 +94,7 @@ export default function LocationMapViewer({
   locationName,
   address,
   showNavigation = false,
+  autoFocusPath = false,
   currentLat,
   currentLng,
   height = '400px',
@@ -119,6 +147,7 @@ export default function LocationMapViewer({
   };
 
   const getMapBounds = (): [number, number][] | undefined => {
+    if (!autoFocusPath) return undefined;
     if (showNavigation && routedPositions.length > 1) return routedPositions;
     if (showNavigation && currentPosition) return [center, currentPosition];
     return undefined;
@@ -226,7 +255,7 @@ export default function LocationMapViewer({
               {routedPositions.length > 1 && (
                 <Polyline
                   positions={routedPositions}
-                  pathOptions={{ color: '#3B82F6', weight: 4, opacity: 0.8 }} // Solid line for roads
+                  pathOptions={{ color: '#3B82F6', weight: 6, opacity: 0.8 }} // Solid line for roads
                 />
               )}
             </>

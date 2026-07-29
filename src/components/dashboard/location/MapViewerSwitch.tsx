@@ -8,6 +8,7 @@ interface MapViewerSwitchProps {
   locationName: string;
   address?: string;
   showNavigation?: boolean;
+  autoFocusPath?: boolean;
   currentLat?: number;
   currentLng?: number;
   height?: string;

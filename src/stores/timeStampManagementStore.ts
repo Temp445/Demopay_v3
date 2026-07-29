@@ -13,6 +13,7 @@ import {
 } from './utils/storeUtils';
 import { validateAttendance, recordAttendanceHistory } from '../lib/attendanceValidation';
 import { validateAttendanceRequests } from '../lib/attendanceRequestValidation';
+import { getHolidays } from '../lib/holidays';
 
 import type {
   ProcessedTimeRecord,
@@ -377,7 +378,73 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
             }
          }
          return minDifference <= 300 ? closestShift?.id : null;
+         return minDifference <= 300 ? closestShift?.id : null;
       };
+
+      // --- NEW: Fetch all timestamps for this day upfront to analyze location scenarios ---
+      const dayStartLocal = new Date(`${params.shift_date}T00:00:00`);
+      const fetchStart = new Date(dayStartLocal.getTime() - 24 * 60 * 60 * 1000);
+      const dayEndExtended = new Date(dayStartLocal.getTime() + 36 * 60 * 60 * 1000); 
+
+      const { data: timestamps, error: tsError } = await supabase
+        .from('attendance_timestamp')
+        .select(`*, employees(name, email, employee_code, department:departments (name))`)
+        .eq('tenant_id', auth.tenantId)
+        .gte('timestamp', fetchStart.toISOString())
+        .lte('timestamp', dayEndExtended.toISOString())
+        .order('timestamp', { ascending: true });
+
+      if (tsError) throw tsError;
+
+      const locationScenarioMap: Record<string, { clockInOutside: boolean, clockOutOutside: boolean, scenario: LocationScenarioFilter }> = {};
+      const groupedByEmployeeAndDate: Record<string, Record<string, any[]>> = {};
+
+      (timestamps || []).forEach(ts => {
+        const dateObj = new Date(ts.timestamp);
+        const kolkataTime = new Date(dateObj.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+        const yyyy = kolkataTime.getFullYear();
+        const mm = String(kolkataTime.getMonth() + 1).padStart(2, '0');
+        const dd = String(kolkataTime.getDate()).padStart(2, '0');
+        const actualDate = `${yyyy}-${mm}-${dd}`;
+        
+        if (!groupedByEmployeeAndDate[ts.employee_id]) {
+            groupedByEmployeeAndDate[ts.employee_id] = {};
+        }
+        if (!groupedByEmployeeAndDate[ts.employee_id][actualDate]) {
+            groupedByEmployeeAndDate[ts.employee_id][actualDate] = [];
+        }
+        groupedByEmployeeAndDate[ts.employee_id][actualDate].push(ts);
+      });
+
+      Object.keys(groupedByEmployeeAndDate).forEach(empId => {
+          const punches = groupedByEmployeeAndDate[empId][params.shift_date] || [];
+          const inPunches = punches.filter(p => p.entry === 'IN').sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          const outPunches = punches.filter(p => p.entry === 'OUT').sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+          const clockInOutside = inPunches.length > 0 && inPunches[0].office_location_status === 'Outside Office';
+          const clockOutOutside = outPunches.length > 0 && outPunches[outPunches.length - 1].office_location_status === 'Outside Office';
+          
+          let scenario: LocationScenarioFilter = 'all';
+          if (inPunches.length > 1 && clockInOutside) {
+              const subsequentInOffice = inPunches.slice(1).some(p => p.office_location_status !== 'Outside Office');
+              if (subsequentInOffice) {
+                  scenario = 'in_outside_in_office';
+              } else if (clockOutOutside) {
+                  scenario = 'in_out_outside';
+              } else {
+                  scenario = 'outside_only';
+              }
+          } else if (clockInOutside && clockOutOutside) {
+              scenario = 'in_out_outside';
+          } else if (!clockInOutside && clockOutOutside) {
+              scenario = 'in_office_out_outside';
+          } else if (clockInOutside && !clockOutOutside) {
+              scenario = 'outside_only';
+          }
+
+          locationScenarioMap[empId] = { clockInOutside, clockOutOutside, scenario };
+      });
+      // --- END NEW ---
 
       const filteredLogs = (attendanceLogs || []).filter(log => {
         const isScheduledForThisShift = scheduleMap.get(log.employee_id)?.has(params.shift_id);
@@ -431,27 +498,15 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
             shift_status: shiftStatus,
             actual_shift: currentShiftName,
             assigned_shifts: getAssignedShiftNames(log.employee_id),
-            matched_shift_id: log.shift_id || params.shift_id 
+            matched_shift_id: log.shift_id || params.shift_id,
+            clock_in_is_outside: locationScenarioMap[log.employee_id]?.clockInOutside || false,
+            clock_out_is_outside: locationScenarioMap[log.employee_id]?.clockOutOutside || false,
+            location_scenario: locationScenarioMap[log.employee_id]?.scenario || 'all'
           });
         });
       }
 
       const fallbackRecords: ProcessedTimeRecord[] = [];
-
-      // Start 24 hours earlier to catch the previous day's IN punch for night shifts
-      const dayStartLocal = new Date(`${params.shift_date}T00:00:00`);
-      const fetchStart = new Date(dayStartLocal.getTime() - 24 * 60 * 60 * 1000);
-      const dayEndExtended = new Date(dayStartLocal.getTime() + 36 * 60 * 60 * 1000); // 36 hours from target date
-
-      const { data: timestamps, error: tsError } = await supabase
-        .from('attendance_timestamp')
-        .select(`*, employees(name, email, employee_code, department:departments (name))`)
-        .eq('tenant_id', auth.tenantId)
-        .gte('timestamp', fetchStart.toISOString())
-        .lte('timestamp', dayEndExtended.toISOString())
-        .order('timestamp', { ascending: true });
-
-      if (tsError) throw tsError;
 
       const groupedByEmployee: Record<string, any> = {};
       const employeeLastPunch: Record<string, { entry: string, timestamp: string, date: string }> = {};
@@ -728,6 +783,70 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
         return { status: 'regular', shiftId: Array.from(assignedShifts)[0] };
       };
 
+      // --- NEW: Fetch all timestamps for this employee upfront to analyze location scenarios ---
+      const startTSStr = new Date(`${params.start_date}T00:00:00`);
+      const fetchStartTSStr = new Date(startTSStr.getTime() - 24 * 60 * 60 * 1000);
+      const endTSStr = new Date(`${params.end_date}T23:59:59`);
+      const endExtendedStr = new Date(endTSStr.getTime() + 12 * 60 * 60 * 1000);
+
+      const { data: employeeTimestamps, error: empTsError } = await supabase
+        .from('attendance_timestamp')
+        .select(`*, employees (name, employee_code, department:departments (name))`)
+        .eq('tenant_id', auth.tenantId)
+        .eq('employee_id', params.employee_id)
+        .gte('timestamp', fetchStartTSStr.toISOString())
+        .lte('timestamp', endExtendedStr.toISOString())
+        .order('timestamp', { ascending: true });
+
+      if (empTsError) throw empTsError;
+
+      const locationScenarioMap: Record<string, { clockInOutside: boolean, clockOutOutside: boolean, scenario: LocationScenarioFilter }> = {};
+      const groupedByDate: Record<string, any[]> = {};
+
+      (employeeTimestamps || []).forEach(ts => {
+        const dateObj = new Date(ts.timestamp);
+        const kolkataTime = new Date(dateObj.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+        const yyyy = kolkataTime.getFullYear();
+        const mm = String(kolkataTime.getMonth() + 1).padStart(2, '0');
+        const dd = String(kolkataTime.getDate()).padStart(2, '0');
+        const actualDate = `${yyyy}-${mm}-${dd}`;
+        
+        if (!groupedByDate[actualDate]) {
+            groupedByDate[actualDate] = [];
+        }
+        groupedByDate[actualDate].push(ts);
+      });
+
+      Object.keys(groupedByDate).forEach(date => {
+          const punches = groupedByDate[date] || [];
+          const inPunches = punches.filter(p => p.entry === 'IN').sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          const outPunches = punches.filter(p => p.entry === 'OUT').sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+          const clockInOutside = inPunches.length > 0 && inPunches[0].office_location_status === 'Outside Office';
+          const clockOutOutside = outPunches.length > 0 && outPunches[outPunches.length - 1].office_location_status === 'Outside Office';
+          
+          let scenario: LocationScenarioFilter = 'all';
+          if (inPunches.length > 1 && clockInOutside) {
+              const subsequentInOffice = inPunches.slice(1).some(p => p.office_location_status !== 'Outside Office');
+              if (subsequentInOffice) {
+                  scenario = 'in_outside_in_office';
+              } else if (clockOutOutside) {
+                  scenario = 'in_out_outside';
+              } else {
+                  scenario = 'outside_only';
+              }
+          } else if (clockInOutside && clockOutOutside) {
+              scenario = 'in_out_outside';
+          } else if (!clockInOutside && clockOutOutside) {
+              scenario = 'in_office_out_outside';
+          } else if (clockInOutside && !clockOutOutside) {
+              scenario = 'outside_only';
+          }
+
+          locationScenarioMap[date] = { clockInOutside, clockOutOutside, scenario };
+      });
+      // --- END NEW ---
+
       const { data: attendanceLogs, error: logsError } = await supabase
         .from('attendance_logs')
         .select(`*, employees (name, email, employee_code, department:departments (name))`)
@@ -778,7 +897,10 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
             verification_method: log.verification_method,
             shift_status: determination.status,
             assigned_shifts: getAssignedShiftNames(log.date),
-            matched_shift_id: effectiveShiftId
+            matched_shift_id: effectiveShiftId,
+            clock_in_is_outside: locationScenarioMap[log.date]?.clockInOutside || false,
+            clock_out_is_outside: locationScenarioMap[log.date]?.clockOutOutside || false,
+            location_scenario: locationScenarioMap[log.date]?.scenario || 'all'
           });
         });
       }
@@ -859,7 +981,7 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
           const daySettings = getSettingsForDate(date, determination.shiftId);
 
           fallbackRecords.push({
-            id: `ts_${params.employee_id}_${date}`,
+            id: `fallback-${date}`,
             employee_id: params.employee_id,
             employee_name: r.employee?.name || 'Unknown',
             employee_code: r.employee?.employee_code || 'N/A',
@@ -874,7 +996,10 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
             verification_method: 'timestamp',
             shift_status: determination.status,
             assigned_shifts: getAssignedShiftNames(date),
-            matched_shift_id: determination.shiftId // Store ID
+            matched_shift_id: determination.shiftId,
+            clock_in_is_outside: locationScenarioMap[date]?.clockInOutside || false,
+            clock_out_is_outside: locationScenarioMap[date]?.clockOutOutside || false,
+            location_scenario: locationScenarioMap[date]?.scenario || 'all'
           });
         });
       }
@@ -1254,6 +1379,34 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
       const { data: user } = await supabase.auth.getUser();
       if (!user.user) throw createAuthError();
 
+      // Fetch active Comp Off leave type
+      const { data: leaveTypes } = await supabase
+        .from('leave_types')
+        .select('id, name')
+        .eq('tenant_id', auth.tenantId)
+        .eq('is_active', true);
+
+      const compOffLeaveType = leaveTypes?.find(lt => 
+        lt.name.toLowerCase().includes('comp off') || 
+        lt.name.toLowerCase().includes('compensatory')
+      );
+      const compOffLeaveTypeId = compOffLeaveType?.id;
+
+      // Fetch holidays if there is a comp off leave type
+      const holidayDates = new Set<string>();
+      if (compOffLeaveTypeId && records.length > 0) {
+        const dates = records.map(r => r.date.split('T')[0]);
+        const minDate = dates.reduce((a, b) => a < b ? a : b);
+        const maxDate = dates.reduce((a, b) => a > b ? a : b);
+        
+        try {
+          const holidays = await getHolidays(minDate, maxDate);
+          holidays.forEach((h: any) => holidayDates.add(h.date));
+        } catch (err) {
+          console.error("Failed to fetch holidays for comp off processing", err);
+        }
+      }
+
       const validatedPayload = [];
       const validationResultsMap = new Map(); 
 
@@ -1328,6 +1481,40 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
               new Date(log.date), 
               vResult
             );
+          }
+
+          // Auto-credit Comp Off
+          if (compOffLeaveTypeId && log.clock_in) {
+            const [year, month, day] = log.date.split('-').map(Number);
+            const dateObj = new Date(year, month - 1, day);
+            const isSunday = dateObj.getDay() === 0;
+            const isHoliday = holidayDates.has(log.date);
+
+            if (isSunday || isHoliday) {
+              // Determine credit amount based on final status
+              let creditAmount = 1.0;
+              const halfDayStatuses = ['Half Day', 'First Off', 'Second Off'];
+              if (halfDayStatuses.includes(log.status)) {
+                creditAmount = 0.5;
+              } else if (log.status === 'Absent') {
+                creditAmount = 0.0;
+              }
+
+              console.log(`[Auto-Credit Comp Off] Attempting to credit ${creditAmount} for employee ${log.employee_id} on ${log.date}. Leave type: ${compOffLeaveTypeId}`);
+              const { error: creditErr } = await supabase.rpc('auto_credit_comp_off', {
+                p_tenant_id: auth.tenantId,
+                p_employee_id: log.employee_id,
+                p_date: log.date,
+                p_leave_type_id: compOffLeaveTypeId,
+                p_credit_amount: creditAmount
+              });
+              
+              if (creditErr) {
+                console.error('[Auto-Credit Comp Off] RPC Failed:', creditErr);
+              } else {
+                console.log(`[Auto-Credit Comp Off] Successfully processed credit for ${log.date}`);
+              }
+            }
           }
         }
       }

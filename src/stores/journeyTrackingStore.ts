@@ -152,8 +152,14 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
       // Handle Background Tracking State Changes
       if (['START_JOURNEY', 'START_RETURN_JOURNEY'].includes(eventType)) {
         get().startBackgroundTracking(tenantId, employeeId, settings.journey_tracking_interval_mins);
-      } else if (['REACHED_LOCATION', 'REACHED_ENDPOINT'].includes(eventType)) {
-        get().stopBackgroundTracking();
+      } else if (['REACHED_LOCATION'].includes(eventType)) {
+          if (settings.radius_monitoring_enabled) {
+              get().startBackgroundTracking(tenantId, employeeId, settings.work_radius_tracking_interval_mins);
+          } else {
+              get().startBackgroundTracking(tenantId, employeeId, settings.journey_tracking_interval_mins);
+          }
+      } else if (['REACHED_ENDPOINT'].includes(eventType)) {
+          get().stopBackgroundTracking();
       } else if (['START_WORK', 'RESUME_WORK'].includes(eventType)) {
         if (settings.radius_monitoring_enabled) {
           get().startBackgroundTracking(tenantId, employeeId, settings.work_radius_tracking_interval_mins);
@@ -183,7 +189,7 @@ export const useJourneyTrackingStore = create<JourneyTrackingState>((set, get) =
       try {
         const step = get().currentStep;
         let pEvent: JourneyEventType = 'LIVE_TRACK_JOURNEY';
-        if (step === 'WORKING' || step === 'PAUSED') {
+        if (step === 'WORKING' || step === 'PAUSED' || step === 'REACHED_LOCATION') {
           pEvent = 'LIVE_TRACK_WORK';
         }
 

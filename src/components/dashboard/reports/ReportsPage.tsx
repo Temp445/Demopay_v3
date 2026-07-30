@@ -198,7 +198,7 @@ export default function ReportsPage() {
 
             {/* SUBTYPE BUTTONS GRID */}
             <div className="p-4 border-b border-gray-200">
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="flex flex-wrap gap-2">
                 {canViewAllData && reportType === 'employee' && (
                   <>
                     <button

@@ -268,7 +268,13 @@ export default function TransactionReport({
       setColumns([...defaultColumns, ...selectedSortedColumns]);
 
     } else if (reportData.length > 0) {
-      const keys = Object.keys(reportData[0]).filter(k => k !== 'employeeId' && (subtype !== 'dailyAttendance' || k !== 'punches'));
+      const excludeKeys = new Set([
+        'employeeId', 
+        'dailyRecords', 
+        ...(subtype === 'dailyAttendance' ? ['punches'] : []),
+        ...(subtype === 'attendance' ? ['lateMinutes', 'earlyDepartureMinutes', 'overtimeMinutes'] : [])
+      ]);
+      const keys = Object.keys(reportData[0]).filter(k => !excludeKeys.has(k));
       setColumns(keys);
     }
   }, [reportData, selectedComponents, subtype]);
@@ -333,6 +339,42 @@ export default function TransactionReport({
     updateSelectedComponents(newSelection);
   };
 
+  const { exportData, exportColumns } = useMemo(() => {
+    if (subtype === 'attendance') {
+      if (detailMode) {
+        return { exportData: enhancedReportData, exportColumns: columns };
+      } else {
+        const aggColumns = ['employeeCode', 'name', 'department', 'totalWorkingHours', 'presentDays', 'absentDays', 'lateDays', 'earlyExitDays', 'permissionDays', 'firstOffDays', 'secondOffDays'];
+        return { exportData: groupedAttendance, exportColumns: aggColumns };
+      }
+    } else if (subtype === 'weeklyAttendance') {
+      if (detailMode) {
+        const flatData: any[] = [];
+        enhancedReportData.forEach(row => {
+          if (row.dailyRecords && Array.isArray(row.dailyRecords)) {
+            row.dailyRecords.forEach((dr: any) => {
+              flatData.push({
+                employeeCode: row.employeeCode,
+                name: row.name,
+                department: row.department,
+                date: dr.date,
+                status: dr.status,
+                clockIn: dr.clockIn || '-',
+                clockOut: dr.clockOut || '-',
+                workingHours: dr.workingHours || 0
+              });
+            });
+          }
+        });
+        const detColumns = ['employeeCode', 'name', 'department', 'date', 'status', 'clockIn', 'clockOut', 'workingHours'];
+        return { exportData: flatData, exportColumns: detColumns };
+      } else {
+        return { exportData: enhancedReportData, exportColumns: columns };
+      }
+    }
+    return { exportData: enhancedReportData, exportColumns: columns };
+  }, [subtype, detailMode, enhancedReportData, columns, groupedAttendance]);
+
   /* ---------------- RENDER ---------------- */
   // Special rendering for payslip report
   if (subtype === 'payslip') {
@@ -345,9 +387,9 @@ export default function TransactionReport({
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <h2 className="text-xl font-semibold text-gray-900">{getReportTitle()}</h2>
-        <div className="flex space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
           {subtype === 'monthly' && (availableEarnings.length + availableDeductions.length) > 0 && (
             <div className="relative" ref={componentDropdownRef}>
               <button
@@ -394,7 +436,7 @@ export default function TransactionReport({
             </div>
           )}
 
-          <ReportActions data={enhancedReportData} columns={columns} title={getReportTitle()} />
+          <ReportActions data={exportData} columns={exportColumns} title={getReportTitle()} />
           {(isAttendance || subtype === 'weeklyAttendance') && (
             <button
               onClick={() => setDetailMode(m => !m)}
@@ -456,7 +498,7 @@ export default function TransactionReport({
                       <td className="px-4 py-4 text-sm font-semibold text-rose-600">{emp.secondOffDays}</td>
                     </tr>
                     {detailMode && (
-                      <tr><td colSpan={11} className="bg-gray-50 px-4 py-4"><ReportTable data={emp.records} columns={['date', 'status', 'request', 'clockIn', 'clockOut', 'workingHours', 'lateMinutes', 'overtimeMinutes']} /></td></tr>
+                      <tr><td colSpan={11} className="bg-gray-50 px-4 py-4"><ReportTable data={emp.records} columns={['date', 'status', 'request', 'clockIn', 'clockOut', 'workingHours']} /></td></tr>
                     )}
                   </React.Fragment>
                 ))}

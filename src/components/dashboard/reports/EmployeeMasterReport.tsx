@@ -82,7 +82,7 @@ export default function EmployeeMasterReport({ subtype, filters }: EmployeeMaste
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <h2 className="text-xl font-semibold text-gray-900">{getReportTitle()}</h2>
         
         {/* Replaced the hardcoded Print button with ReportActions */}

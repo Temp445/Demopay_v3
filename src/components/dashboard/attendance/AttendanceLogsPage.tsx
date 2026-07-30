@@ -35,6 +35,7 @@ type AttendanceLog = {
   clock_in: string | null;
   clock_out: string | null;
   status: AttendanceStatus;
+  location_status?: string | null;
 };
 
 const calculateTotalHours = (clockIn: string | null, clockOut: string | null) => {
@@ -72,8 +73,12 @@ export default function AttendanceLogsPage() {
   const [search, setSearch] = useState('');
   const [sortField, setSortField] = useState<'name' | 'date'>('date');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [showLocation, setShowLocation] = useState(false);
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+  });
+  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
 
   // Modal State
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
@@ -257,7 +262,6 @@ export default function AttendanceLogsPage() {
     const todayStr = new Date().toISOString().split('T')[0];
 
     uniqueDates.forEach((date) => {
-      if (isHoliday(date)) return;
 
       employees.forEach((emp) => {
         if (['Relieved', 'Terminated', 'Suspended'].includes(emp.status || '') && emp.status_date) {
@@ -282,7 +286,7 @@ export default function AttendanceLogsPage() {
         if (existingLog) {
           fullGrid.push(existingLog);
         } else {
-          if (date <= todayStr) {
+          if (date <= todayStr && !isHoliday(date)) {
             fullGrid.push({
               id: `virtual-absent-${emp.id}-${date}`,
               employee: emp,
@@ -290,6 +294,7 @@ export default function AttendanceLogsPage() {
               clock_in: null,
               clock_out: null,
               status: 'Absent',
+              location_status: null,
             });
           }
         }
@@ -385,87 +390,192 @@ export default function AttendanceLogsPage() {
   }
 
   return (
-    <div className="md:p-6 w-full bg-gray-50 min-h-screen">
+    <div className="w-full min-h-screen">
       <div className="max-w-7xl mx-auto">
-        <div className="mb-6 p-2 sm:mb-8 md:flex flex-col md:flex-row md:justify-between md:items-end gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Attendance Logs</h1>
+        
+        {/* Header & Filter Bar */}
+        <div className="bg-white rounded-2xl shadow-sm border p-4 sm:p-6 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Attendance Logs</h1>
+              <p className="text-sm text-gray-500 mt-1">Manage and review employee attendance records</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={handleExport}
+                className="flex justify-center items-center gap-2 border px-4 py-2 border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
+              >
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">Export CSV</span>
+              </button>
+            </div>
           </div>
-          
-          <div className="grid grid-cols-2 sm:flex sm:flex-row items-stretch sm:items-end gap-3 w-full md:w-auto">
-            <div className="flex-1">
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-4 items-end">
+            <div className="md:col-span-3">
+              <label className="text-xs font-bold text-gray-500 uppercase">Search</label>
+              <div className="relative mt-1">
+                <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                  placeholder="Name or Code..."
+                />
+              </div>
+            </div>
+            
+            <div className="md:col-span-2">
               <label className="text-xs font-bold text-gray-500 uppercase">Start Date</label>
               <input 
                 type="date" 
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="block mt-1 p-2 w-full border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" 
+                className="w-full mt-1 p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500" 
               />
             </div>
-            <div className="flex-1">
+            <div className="md:col-span-2">
               <label className="text-xs font-bold text-gray-500 uppercase">End Date</label>
               <input 
                 type="date" 
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
                 min={startDate}
-                className="block mt-1 p-2 w-full border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" 
+                className="w-full mt-1 p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500" 
               />
             </div>
-            <button 
-              onClick={handleExport}
-              className="mt-2 sm:mt-0 hidden md:flex justify-center items-center gap-2 border px-4 py-2 border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
-            >
-              <Download className="w-4 h-4" />
-              Export
-            </button>
+            
+            <div className="md:col-span-2">
+              <label className="text-xs font-bold text-gray-500 uppercase">Sort by</label>
+              <select value={sortField} onChange={(e) => setSortField(e.target.value as any)} className="w-full mt-1 p-2 text-sm border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="date">Date</option>
+                <option value="name">Employee</option>
+              </select>
+            </div>
+            
+            <div className="md:col-span-3 flex gap-2 h-[38px]">
+              <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value as any)} className="flex-1 p-2 text-sm border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="desc">Newest First</option>
+                <option value="asc">Oldest First</option>
+              </select>
+              <button 
+                onClick={() => setShowLocation(!showLocation)}
+                className="flex-1 flex justify-center items-center border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
+                title="Toggle Location Details"
+              >
+                {showLocation ? 'Less Details' : 'More Details'}
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-6 border grid grid-cols-2 md:flex flex-wrap gap-4 items-end">
-          <div className="w-full sm:flex-1 col-span-2">
-            <label className="text-xs font-bold text-gray-500 uppercase">Search</label>
-            <div className="relative mt-1">
-              <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-blue-500 transition"
-                placeholder="Name or Code..."
-              />
-            </div>
-          </div>
-          <div className="w-full sm:w-40 flex-shrink-0">
-            <label className="text-xs font-bold text-gray-500 uppercase">Sort</label>
-            <select value={sortField} onChange={(e) => setSortField(e.target.value as any)} className="w-full mt-1 p-2 border rounded-lg outline-none">
-              <option value="date">Date</option>
-              <option value="name">Employee</option>
-            </select>
-          </div>
-          <div className="w-full sm:w-40 flex-shrink-0">
-            <label className="text-xs font-bold text-gray-500 uppercase">Order</label>
-            <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value as any)} className="w-full mt-1 p-2 border rounded-lg outline-none">
-              <option value="desc">Newest</option>
-              <option value="asc">Oldest</option>
-            </select>
-          </div>
+        {/* Mobile View */}
+        <div className="block md:hidden space-y-4 mb-6">
+          {paginatedLogs.length > 0 ? (
+            paginatedLogs.map((log) => {
+              const canEditStatus = log.clock_in && log.clock_out;
+              
+              return (
+                <div 
+                  key={log.id}
+                  onClick={() => {
+                    if (shouldRestrictData) return; 
+                    if (log.employee?.id) {
+                      setSelectedEmployeeId(log.employee.id);
+                      setSelectedDate(log.date);
+                      setIsModalOpen(true);
+                    }
+                  }}
+                  className={`bg-white p-4 rounded-2xl shadow-sm border relative ${shouldRestrictData ? '' : 'cursor-pointer active:bg-gray-50'}`}
+                >
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <div className="font-bold text-gray-900 text-base">{log.employee.name}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{log.employee.employee_code}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-medium text-gray-700">{new Date(log.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
+                      <div className="text-xs text-gray-400">{new Date(log.date).getFullYear()}</div>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-3 mb-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Time In - Out</div>
+                      <div className="text-sm font-medium text-gray-800">
+                        {log.clock_in ? new Date(log.clock_in).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '--'} 
+                        <span className="text-gray-400 mx-1">→</span>
+                        {log.clock_out ? new Date(log.clock_out).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '--'}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Total Hours</div>
+                      <div className="text-sm font-bold text-indigo-600">{calculateTotalHours(log.clock_in, log.clock_out)}</div>
+                    </div>
+                  </div>
+
+                  {showLocation && (
+                    <div className="mb-4 text-sm flex items-center justify-between p-3 border border-gray-100 rounded-xl bg-gray-50/50">
+                      <span className="text-gray-500 font-medium text-xs uppercase">Location</span>
+                      {log.location_status ? (
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${log.location_status === 'Outside Office' ? 'bg-red-100 text-red-800 border border-red-200' : 'bg-green-100 text-green-800 border border-green-200'}`}>
+                          {log.location_status?.toLowerCase() === 'normal' || log.location_status?.toLowerCase() === 'office' ? 'Office' : log.location_status}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 font-medium">--</span>
+                      )}
+                    </div>
+                  )}
+                  
+                  <div className="flex justify-between items-center w-full">
+                    <select
+                      value={log.status}
+                      onChange={(e) => handleStatusChange(log, e.target.value as AttendanceStatus)}
+                      onClick={(e) => e.stopPropagation()} 
+                      disabled={!canEditStatus || shouldRestrictData}
+                      className={`
+                        px-3 py-2 rounded-xl text-center text-xs font-bold uppercase border appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full transition
+                        ${getStatusStyles(log.status)}
+                        ${(!canEditStatus || shouldRestrictData) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'}
+                      `}
+                    >
+                      <option value="Present">Present</option>
+                      <option value="Permission">Permission</option>
+                      <option value="Late">Late</option>
+                      <option value="Early Exit">Early Exit</option>
+                      <option value="Half Day">Half Day</option>
+                      <option value="First Off">First Off</option>
+                      <option value="Second Off">Second Off</option>
+                      <option value="Absent">Absent</option>
+                    </select>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+             <div className="bg-white p-8 rounded-2xl shadow-sm border text-center text-gray-500 font-medium">
+               No attendance records found for this date range.
+             </div>
+          )}
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+        {/* Desktop View */}
+        <div className="hidden md:block bg-white rounded-2xl shadow-sm border overflow-hidden mb-6">
           <div className="overflow-x-auto">
             <table className="w-full text-left whitespace-nowrap">
-              <thead className="bg-gray-50 border-b">
+              <thead className="bg-gray-50/80 border-b">
                 <tr>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Employee Code</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Employee</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Date</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Clock In/Out</th>
+                  {showLocation && <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Location</th>}
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Total Hours</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y">
+              <tbody className="divide-y divide-gray-100">
                 {paginatedLogs.length > 0 ? (
                   paginatedLogs.map((log) => {
                     const canEditStatus = log.clock_in && log.clock_out;
@@ -475,7 +585,6 @@ export default function AttendanceLogsPage() {
                         key={log.id} 
                         onClick={() => {
                           if (shouldRestrictData) return; 
-
                           if (log.employee?.id) {
                             setSelectedEmployeeId(log.employee.id);
                             setSelectedDate(log.date);
@@ -483,7 +592,7 @@ export default function AttendanceLogsPage() {
                           }
                         }} 
                         className={`
-                          transition
+                          transition duration-150
                           ${shouldRestrictData ? '' : 'cursor-pointer hover:bg-gray-50'}
                         `}
                       >
@@ -493,14 +602,28 @@ export default function AttendanceLogsPage() {
                         <td className="px-6 py-4">
                           <div className="font-semibold text-gray-900">{log.employee.name}</div>
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                        <td className="px-6 py-4 text-sm text-gray-600 font-medium">
                           {new Date(log.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-600">
-                          {log.clock_in ? new Date(log.clock_in).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '--'} - 
-                          {log.clock_out ? new Date(log.clock_out).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '--'}
+                          <span className="bg-gray-100 px-2 py-1 rounded-md border text-gray-700 font-medium">
+                            {log.clock_in ? new Date(log.clock_in).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '--'} 
+                            <span className="mx-1 text-gray-400">→</span> 
+                            {log.clock_out ? new Date(log.clock_out).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '--'}
+                          </span>
                         </td>
-                        <td className="px-6 py-4 text-sm font-medium text-gray-700">
+                        {showLocation && (
+                          <td className="px-6 py-4 text-sm text-gray-600">
+                            {log.location_status ? (
+                              <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold border ${log.location_status === 'Outside Office' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
+                                {log.location_status?.toLowerCase() === 'normal' || log.location_status?.toLowerCase() === 'office' ? 'Office' : log.location_status}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 font-medium">--</span>
+                            )}
+                          </td>
+                        )}
+                        <td className="px-6 py-4 text-sm font-semibold text-gray-700">
                           {calculateTotalHours(log.clock_in, log.clock_out)}
                         </td>
                         <td className="px-6 py-4">
@@ -510,9 +633,9 @@ export default function AttendanceLogsPage() {
                             onClick={(e) => e.stopPropagation()} 
                             disabled={!canEditStatus || shouldRestrictData}
                             className={`
-                              px-3 py-1 rounded-full text-center text-xs font-bold uppercase border appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500
+                              px-3 py-1.5 rounded-full text-center text-xs font-bold uppercase border appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 transition
                               ${getStatusStyles(log.status)}
-                              ${(!canEditStatus || shouldRestrictData) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                              ${(!canEditStatus || shouldRestrictData) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'}
                             `}
                           >
                             <option value="Present">Present</option>
@@ -520,8 +643,6 @@ export default function AttendanceLogsPage() {
                             <option value="Late">Late</option>
                             <option value="Early Exit">Early Exit</option>
                             <option value="Half Day">Half Day</option>
-                              {/* <option value="First Half Absent">First Half Absent</option>
-                              <option value="Second Half Absent">Second Half Absent</option> */}
                             <option value="First Off">First Off</option>
                             <option value="Second Off">Second Off</option>
                             <option value="Absent">Absent</option>
@@ -532,7 +653,7 @@ export default function AttendanceLogsPage() {
                   })
                 ) : (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500 font-medium">
                       No attendance records found for this date range.
                     </td>
                   </tr>
@@ -540,30 +661,31 @@ export default function AttendanceLogsPage() {
               </tbody>
             </table>
           </div>
+        </div>
 
-          <div className="px-4 sm:px-6 py-4 bg-gray-50 border-t flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-sm text-gray-500 text-center sm:text-left">
-              Showing <span className="font-medium">{processedLogs.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}</span> to <span className="font-medium">{Math.min(currentPage * itemsPerPage, processedLogs.length)}</span> of <span className="font-medium">{processedLogs.length}</span> results
+        {/* Pagination Footer */}
+        <div className="bg-white rounded-2xl shadow-sm border px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="text-sm text-gray-500 text-center sm:text-left">
+            Showing <span className="font-bold text-gray-900">{processedLogs.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}</span> to <span className="font-bold text-gray-900">{Math.min(currentPage * itemsPerPage, processedLogs.length)}</span> of <span className="font-bold text-gray-900">{processedLogs.length}</span> results
+          </div>
+          <div className="flex gap-2 w-full sm:w-auto justify-center sm:justify-end">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="p-2 px-3 border rounded-lg bg-white disabled:opacity-50 hover:bg-gray-50 transition font-medium text-gray-700 shadow-sm"
+            >
+              Previous
+            </button>
+            <div className="flex items-center px-4 text-sm font-bold text-gray-700 bg-gray-50 rounded-lg border">
+              Page {currentPage} of {Math.max(1, totalPages)}
             </div>
-            <div className="flex gap-2 w-full sm:w-auto justify-center sm:justify-end">
-              <button
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="p-2 border rounded-md bg-white disabled:opacity-50 hover:bg-gray-50 transition"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <div className="flex items-center px-4 text-sm font-medium text-gray-700">
-                Page {currentPage} of {Math.max(1, totalPages)}
-              </div>
-              <button
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages || totalPages === 0}
-                className="p-2 border rounded-md bg-white disabled:opacity-50 hover:bg-gray-50 transition"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages || totalPages === 0}
+              className="p-2 px-3 border rounded-lg bg-white disabled:opacity-50 hover:bg-gray-50 transition font-medium text-gray-700 shadow-sm"
+            >
+              Next
+            </button>
           </div>
         </div>
       </div>

@@ -184,8 +184,8 @@ export default function LocationSettingsPage() {
       return;
     }
 
-    if (Number(localSettings.journey_tracking_interval_mins) < 5) {
-      toast.error('Journey Tracking Interval must be at least 5 minutes.');
+    if (Number(localSettings.journey_tracking_interval_mins) < 1) {
+      toast.error('Journey Tracking Interval must be at least 1 minute.');
       return;
     }
 
@@ -275,7 +275,7 @@ export default function LocationSettingsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">Journey Tracking Interval (Minutes)</label>
               <input
                 type="number"
-                min="5"
+                min="1"
                 max="60"
                 value={localSettings.journey_tracking_interval_mins || ''}
                 onChange={(e) => {

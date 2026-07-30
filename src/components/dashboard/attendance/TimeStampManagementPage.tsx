@@ -58,10 +58,10 @@ export default function TimeStampManagementPage() {
   const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
 
   const [locationFilter, setLocationFilter] = useState<LocationScenarioFilter>("all");
+  const [dayTypeFilter, setDayTypeFilter] = useState<"all" | "holiday_weekoff">("all");
 
   const [employeeSearchText, setEmployeeSearchText] = useState("");
   const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
-  const [showMoreFilters, setShowMoreFilters] = useState(false);
 
   const [requestDetails, setRequestDetails] = useState<Record<string, any>>({});
   const [tenantId, setTenantId] = useState<string | null>(null);
@@ -196,6 +196,7 @@ export default function TimeStampManagementPage() {
     setProcessFilter("all");
     setEmployeeSearchText("");
     setEmployeeFilter((prev) => ({ ...prev, employee_id: "" }));
+    setDayTypeFilter("all");
   };
 
   const filteredRecords = useMemo(() => {
@@ -246,9 +247,15 @@ export default function TimeStampManagementPage() {
         matchesLocation = record.location_scenario === locationFilter;
       }
 
-      return matchesCategory && matchesLocation;
+      // 5. Day Type Filter
+      let matchesDayType = true;
+      if (dayTypeFilter === "holiday_weekoff") {
+        matchesDayType = record.is_holiday || record.is_weekoff || false;
+      }
+
+      return matchesCategory && matchesLocation && matchesDayType;
     });
-  }, [timeRecords, searchTerm, employeeNameFilter, viewCategory, filterMode, processFilter, locationFilter]);
+  }, [timeRecords, searchTerm, employeeNameFilter, viewCategory, filterMode, processFilter, locationFilter, dayTypeFilter]);
 
   // Derived completely from source records to provide the global badge accurate count
   const unprocessedRecords = useMemo(() => {
@@ -262,7 +269,8 @@ export default function TimeStampManagementPage() {
     const wrongShift = timeRecords.filter((r) => r.shift_status === "wrong_shift").length;
     const unscheduled = timeRecords.filter((r) => r.shift_status === "unscheduled").length;
     const regular = timeRecords.filter((r) => r.shift_status === "regular").length;
-    return { all: timeRecords.length, incomplete, wrongShift, unscheduled, regular };
+    const holidayWeekoff = timeRecords.filter((r) => r.is_holiday || r.is_weekoff).length;
+    return { all: timeRecords.length, incomplete, wrongShift, unscheduled, regular, holidayWeekoff };
   }, [timeRecords]);
 
   const getSelectableRecords = () => {
@@ -698,49 +706,41 @@ export default function TimeStampManagementPage() {
                     />
                   </div>
                 )}
-                
-                <button
-                  onClick={() => setShowMoreFilters(!showMoreFilters)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border transition-colors shrink-0 ${
-                    showMoreFilters || locationFilter !== "all" || processFilter !== "all"
-                      ? "bg-indigo-50 text-indigo-700 border-indigo-200"
-                      : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-                  }`}
-                >
-                  <Filter className="h-4 w-4" />
-                  <span>{showMoreFilters ? 'Hide Filters' : 'More Filters'}</span>
-                  {(locationFilter !== "all" || processFilter !== "all") && (
-                    <span className="flex h-2 w-2 rounded-full bg-indigo-600 absolute top-0 right-0 -mt-1 -mr-1"></span>
-                  )}
-                </button>
               </div>
               
               {/* Filter Dropdowns */}
-              {showMoreFilters && (
-                <div className="flex items-center gap-2 shrink-0 overflow-x-auto w-full sm:w-auto">
-                  <select
-                    value={locationFilter}
-                    onChange={(e) => setLocationFilter(e.target.value as LocationScenarioFilter)}
-                    className="text-xs border border-gray-200 rounded-lg py-2.5 pl-2 pr-6 bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-700 font-medium whitespace-nowrap"
-                  >
-                    <option value="all">All Locations</option>
-                    <option value="in_out_outside">IN & OUT outside</option>
-                    <option value="in_outside_in_office">Multiple IN (Outside -&gt; Office)</option>
-                    <option value="in_office_out_outside">IN office, OUT outside</option>
-                    <option value="outside_only">IN outside (No OUT)</option>
-                  </select>
+              <div className="flex items-center gap-2 shrink-0 overflow-x-auto w-full sm:w-auto mt-3 sm:mt-0">
+                <select
+                  value={locationFilter}
+                  onChange={(e) => setLocationFilter(e.target.value as LocationScenarioFilter)}
+                  className="text-xs border border-gray-200 rounded-lg py-2.5 pl-2 pr-6 bg-gray-50 text-gray-700 font-medium whitespace-nowrap"
+                >
+                  <option value="all">All Clock IN/OUT</option>
+                  <option value="in_out_outside">IN & OUT outside</option>
+                  <option value="in_outside_in_office">Multiple IN (Outside -&gt; Office)</option>
+                  <option value="in_office_out_outside">IN office, OUT outside</option>
+                  <option value="outside_only">IN outside (No OUT)</option>
+                </select>
 
-                  <select
-                    value={processFilter}
-                    onChange={(e) => setProcessFilter(e.target.value as any)}
-                    className="text-xs border border-gray-200 rounded-lg py-2.5 pl-2 pr-6 bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-700 font-medium"
-                  >
-                    <option value="all">All Records</option>
-                    <option value="processed">Processed</option>
-                    <option value="unprocessed">Unprocessed</option>
-                  </select>
-                </div>
-              )}
+                <select
+                  value={dayTypeFilter}
+                  onChange={(e) => setDayTypeFilter(e.target.value as any)}
+                  className="text-xs border border-gray-200 rounded-lg py-2.5 pl-2 pr-6 bg-gray-50 text-gray-700 font-medium"
+                >
+                  <option value="all">All Days</option>
+                  <option value="holiday_weekoff">Holiday / Weekoff</option>
+                </select>
+                
+                <select
+                  value={processFilter}
+                  onChange={(e) => setProcessFilter(e.target.value as any)}
+                  className="text-xs border border-gray-200 rounded-lg py-2.5 pl-2 pr-6 bg-gray-50 text-gray-700 font-medium"
+                >
+                  <option value="all">All Records</option>
+                  <option value="processed">Processed</option>
+                  <option value="unprocessed">Unprocessed</option>
+                </select>
+              </div>
             </div>
 
             {error && (
@@ -836,6 +836,12 @@ export default function TimeStampManagementPage() {
                                     )}
                                     {isFromTimestamp && !record.has_edits && (
                                       <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold border border-amber-200 bg-amber-50 text-amber-700">#</span>
+                                    )}
+                                    {record.is_holiday && (
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-100 text-blue-700 border border-blue-200">Holiday</span>
+                                    )}
+                                    {record.is_weekoff && (
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-100 text-blue-700 border border-blue-200">Weekoff</span>
                                     )}
                                   </div>
                                   <p className="text-xs text-gray-600 mt-0.5 truncate">{record.employee_code} · {record.department}</p>
@@ -1028,6 +1034,16 @@ export default function TimeStampManagementPage() {
                                   {isFromTimestamp && !record.has_edits && (
                                     <span className="ml-2 inline-flex items-center px-1.5 rounded-full text-[10px] font-medium border text-amber-800" title="Unprocessed record from raw timestamp data">
                                       #
+                                    </span>
+                                  )}
+                                  {record.is_holiday && (
+                                    <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800 border border-blue-200" title="Holiday">
+                                      Holiday
+                                    </span>
+                                  )}
+                                  {record.is_weekoff && (
+                                    <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800 border border-blue-200" title="Weekoff">
+                                      Weekoff
                                     </span>
                                   )}
                                 </div>

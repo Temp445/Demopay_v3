@@ -69,17 +69,19 @@ const LiveEmployeeRoute = ({
   destination: { lat: number; lng: number }; 
   isLost: boolean 
 }) => {
+  const { isLoaded } = useGoogleMaps();
   const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
   const lastFetchedOrigin = useRef<{ lat: number; lng: number } | null>(null);
 
   useEffect(() => {
-    if (!window.google?.maps?.DirectionsService || !window.google?.maps?.geometry) return;
+    // Wait until the Maps JS API (including DirectionsService) is fully loaded
+    if (!isLoaded || !window.google?.maps?.DirectionsService) return;
 
     // Only refetch if we haven't fetched yet, OR if they moved more than 100 meters
     let shouldFetch = false;
     if (!lastFetchedOrigin.current) {
       shouldFetch = true;
-    } else {
+    } else if (window.google.maps.geometry) {
       const distance = window.google.maps.geometry.spherical.computeDistanceBetween(
         new window.google.maps.LatLng(lastFetchedOrigin.current.lat, lastFetchedOrigin.current.lng),
         new window.google.maps.LatLng(origin.lat, origin.lng)
@@ -87,6 +89,8 @@ const LiveEmployeeRoute = ({
       if (distance > 100) { // 100 meters threshold to prevent API spam
         shouldFetch = true;
       }
+    } else {
+      shouldFetch = true;
     }
 
     if (shouldFetch) {
@@ -96,30 +100,41 @@ const LiveEmployeeRoute = ({
         origin,
         destination,
         travelMode: window.google.maps.TravelMode.DRIVING,
-        drivingOptions: {
-          departureTime: new Date(), // Request traffic-aware routing
-          trafficModel: window.google.maps.TrafficModel.BEST_GUESS
-        }
       }, (result, status) => {
         if (status === window.google.maps.DirectionsStatus.OK && result) {
           setDirections(result);
+        } else {
+          console.warn('[LiveEmployeeRoute] Directions API status:', status);
         }
       });
     }
-  }, [origin.lat, origin.lng, destination.lat, destination.lng]);
+  }, [isLoaded, origin.lat, origin.lng, destination.lat, destination.lng]);
 
-  if (!directions) return null;
+  if (directions) {
+    return (
+      <DirectionsRenderer
+        directions={directions}
+        options={{
+          suppressMarkers: true,
+          polylineOptions: {
+            strokeColor: isLost ? '#9ca3af' : '#3b82f6',
+            strokeWeight: 6,
+            strokeOpacity: 0.85,
+          }
+        }}
+      />
+    );
+  }
 
+  // Fallback dotted line while directions are loading
   return (
-    <DirectionsRenderer
-      directions={directions}
+    <PolylineF
+      path={[origin, destination]}
       options={{
-        suppressMarkers: true,
-        polylineOptions: {
-          strokeColor: isLost ? '#9ca3af' : '#3b82f6', // Blue if traveling
-          strokeWeight: 6,
-          strokeOpacity: 0.8,
-        }
+        strokeColor: '#3b82f6',
+        strokeWeight: 2,
+        strokeOpacity: 0.5,
+        icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: '15px' }]
       }}
     />
   );
@@ -146,6 +161,8 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all'|'traveling'|'working'|'paused'|'offline'>('all');
   const pendingUpdatesRef = useRef<Map<string, any>>(new Map());
+  // Ref so the realtime subscription can read the latest active list without stale closure
+  const activeWorksRef = useRef<WorkLocation[]>([]);
 
   const onMapLoad = useCallback((m: google.maps.Map) => { mapRef.current = m; setMap(m); }, []);
 
@@ -163,54 +180,108 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
 
   useEffect(() => {
     const fetchActiveState = async () => {
-      const candidates = workLocations.filter(wl => ['assigned','in_progress','paused'].includes(wl.status));
+      if (!currentTenant) return;
+
+      // ── 1. Outside-office workers (clocked in outside via gate pass) ─────────
+      const { data: outsideData } = await supabase
+        .from('outside_office_approvals')
+        .select('*, employees!employee_id(name, employee_code, email)')
+        .eq('tenant_id', currentTenant.id)
+        .in('status', ['pending', 'approved'])
+        .is('clock_out_time', null)
+        .is('inside_office_clock_in_time', null);
+
+      const outsideOfficeMocks = (outsideData || []).map((req: any) => ({
+        id: `outside_${req.id}`,
+        employee_id: req.employee_id,
+        employee_name: req.employees?.name || 'Outside Worker',
+        employee_code: req.employees?.employee_code || '',
+        employee_email: req.employees?.email || '',
+        location_name: 'Outside Office',
+        formatted_address: req.attendance_location || 'Remote Work',
+        latitude: 0,
+        longitude: 0,
+        allowed_radius_meters: 50,
+        status: 'in_progress',
+        created_at: req.clock_in_time,
+        is_outside_office: true,
+      } as WorkLocation & { is_outside_office: true }));
+
+      // ── 2. Regular work-location candidates ──────────────────────────────────
+      const candidates: WorkLocation[] = [
+        ...workLocations.filter(wl => ['assigned', 'in_progress', 'paused'].includes(wl.status)),
+        ...outsideOfficeMocks,
+      ];
+
       const newMap = new Map<string, any>();
       const trulyActive: WorkLocation[] = [];
+
       for (const work of candidates) {
         try {
-          const { data, error } = await supabase
-            .from('journey_tracking_logs')
-            .select('*')
-            .eq('work_location_id', work.id)
-            .order('timestamp', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (data && !error) {
-            let lat = data.latitude;
-            let lng = data.longitude;
-            
-            if (!lat || !lng) {
-              const { data: locData } = await supabase
-                .from('journey_tracking_logs')
-                .select('latitude, longitude')
-                .eq('work_location_id', work.id)
-                .not('latitude', 'is', null)
-                .not('longitude', 'is', null)
-                .order('timestamp', { ascending: false })
-                .limit(1)
-                .maybeSingle();
-              if (locData) {
-                lat = locData.latitude;
-                lng = locData.longitude;
+          if ((work as any).is_outside_office) {
+            // Outside-office: GPS comes from attendance_travel_logs
+            const { data: travelData } = await supabase
+              .from('attendance_travel_logs')
+              .select('latitude, longitude, recorded_at')
+              .eq('employee_id', work.employee_id)
+              .gte('recorded_at', work.created_at)
+              .order('recorded_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            trulyActive.push(work);
+            if (travelData) {
+              newMap.set(work.id, {
+                latitude: travelData.latitude,
+                longitude: travelData.longitude,
+                recorded_at: travelData.recorded_at,
+                event_type: 'LIVE_TRACK_JOURNEY',
+              });
+            }
+          } else {
+            // Regular work-location: prefer newest of journey_tracking_logs vs work_location_tracking
+            const [{ data: journeyData }, { data: workData }] = await Promise.all([
+              supabase.from('journey_tracking_logs').select('*').eq('work_location_id', work.id)
+                .order('timestamp', { ascending: false }).limit(1).maybeSingle(),
+              supabase.from('work_location_tracking').select('*').eq('work_location_id', work.id)
+                .order('created_at', { ascending: false }).limit(1).maybeSingle(),
+            ]);
+
+            let latestData: any = journeyData;
+            let isWorkData = false;
+            if (workData && journeyData) {
+              if (new Date(workData.created_at) > new Date(journeyData.timestamp)) {
+                latestData = workData; isWorkData = true;
               }
+            } else if (workData) {
+              latestData = workData; isWorkData = true;
             }
 
-            if (work.status === 'assigned') {
-              const ok = ['START_JOURNEY','LIVE_TRACK_JOURNEY','REACHED_LOCATION','GPS_SIGNAL_LOST','GPS_SIGNAL_RESTORED','LIVE_TRACK_WORK','HEARTBEAT'];
-              if (!ok.includes(data.event_type)) continue;
+            if (latestData) {
+              const lat = latestData.latitude;
+              const lng = latestData.longitude;
+              const eventType = isWorkData ? 'LIVE_TRACK_WORK' : latestData.event_type;
+              const recordedAt = isWorkData ? latestData.created_at : latestData.timestamp;
+
+              if (work.status === 'assigned') {
+                const ok = ['START_JOURNEY','LIVE_TRACK_JOURNEY','REACHED_LOCATION','GPS_SIGNAL_LOST','GPS_SIGNAL_RESTORED','LIVE_TRACK_WORK','HEARTBEAT'];
+                if (!ok.includes(eventType)) continue;
+              }
+              trulyActive.push(work);
+              newMap.set(work.id, { latitude: lat, longitude: lng, recorded_at: recordedAt, event_type: eventType });
+            } else if (work.status === 'in_progress' || work.status === 'paused') {
+              trulyActive.push(work);
             }
-            trulyActive.push(work);
-            newMap.set(work.id, { latitude: lat, longitude: lng, recorded_at: data.timestamp, event_type: data.event_type });
-          } else if (work.status === 'in_progress' || work.status === 'paused') {
-            trulyActive.push(work);
           }
         } catch (e) { console.error('tracking fetch error', work.id, e); }
       }
+
+      activeWorksRef.current = trulyActive;
       setActiveWorks(trulyActive);
       setLatestTracking(newMap);
     };
-    if (workLocations.length > 0) fetchActiveState();
-  }, [workLocations]);
+    fetchActiveState();
+  }, [workLocations, currentTenant]);
 
   useEffect(() => {
     if (selectedWork && mapRef.current) {
@@ -242,8 +313,10 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
         return m; 
       });
     }, 500);
+
     const sub = supabase
-      .channel('google-live:journey_tracking_logs')
+      .channel('google-live:tracking')
+      // Regular journey logs
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'journey_tracking_logs', filter: `tenant_id=eq.${currentTenant.id}` }, (payload) => {
         const nl = payload.new as any;
         if (!nl.work_location_id) return;
@@ -255,7 +328,36 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
           event_type: nl.event_type 
         });
         if (nl.event_type === 'START_JOURNEY' || nl.event_type === 'COMPLETE_WORK') fetchWorkLocations(currentTenant.id);
-      }).subscribe();
+      })
+      // Work-location radius tracking
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'work_location_tracking', filter: `tenant_id=eq.${currentTenant.id}` }, (payload) => {
+        const nl = payload.new as any;
+        if (!nl.work_location_id) return;
+        const prev = pendingUpdatesRef.current.get(nl.work_location_id);
+        pendingUpdatesRef.current.set(nl.work_location_id, {
+          latitude: nl.latitude || prev?.latitude,
+          longitude: nl.longitude || prev?.longitude,
+          recorded_at: nl.created_at,
+          event_type: 'LIVE_TRACK_WORK',
+        });
+      })
+      // Outside-office GPS pings
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'attendance_travel_logs', filter: `tenant_id=eq.${currentTenant.id}` }, (payload) => {
+        const nl = payload.new as any;
+        const outsideWorker = activeWorksRef.current.find(
+          w => (w as any).is_outside_office && w.employee_id === nl.employee_id
+        );
+        if (!outsideWorker) return;
+        const prev = pendingUpdatesRef.current.get(outsideWorker.id);
+        pendingUpdatesRef.current.set(outsideWorker.id, {
+          latitude: nl.latitude || prev?.latitude,
+          longitude: nl.longitude || prev?.longitude,
+          recorded_at: nl.recorded_at,
+          event_type: 'LIVE_TRACK_JOURNEY',
+        });
+      })
+      .subscribe();
+
     return () => { clearInterval(flushTimer); supabase.removeChannel(sub); };
   }, [currentTenant?.id, autoRefresh, fetchWorkLocations]);
 
@@ -268,12 +370,29 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
       }
       return { lat: Number(selectedWork.latitude), lng: Number(selectedWork.longitude) };
     }
-    const al = activeWorks.reduce((s,w) => s + Number(w.latitude), 0) / activeWorks.length;
-    const ag = activeWorks.reduce((s,w) => s + Number(w.longitude), 0) / activeWorks.length;
-    return (isNaN(al)||isNaN(ag)) ? { lat: 13.0827, lng: 80.2707 } : { lat: al, lng: ag };
+    
+    let sumLat = 0, sumLng = 0, count = 0;
+    activeWorks.forEach(w => {
+      const isOutside = (w as any).is_outside_office;
+      if (isOutside) {
+        const t = latestTracking.get(w.id);
+        if (t?.latitude && t?.longitude && Number(t.latitude) !== 0 && Number(t.longitude) !== 0) {
+          sumLat += Number(t.latitude);
+          sumLng += Number(t.longitude);
+          count++;
+        }
+      } else if (Number(w.latitude) !== 0 && Number(w.longitude) !== 0) {
+        sumLat += Number(w.latitude);
+        sumLng += Number(w.longitude);
+        count++;
+      }
+    });
+    
+    return count > 0 ? { lat: sumLat / count, lng: sumLng / count } : { lat: 13.0827, lng: 80.2707 };
   };
 
   const inRadius = (work: WorkLocation, tr: any) => {
+    if ((work as any).is_outside_office) return true; // no fixed site to check
     if (!tr?.latitude || !tr?.longitude) return true;
     const R = 6371e3, p1 = Number(work.latitude)*Math.PI/180, p2 = Number(tr.latitude)*Math.PI/180;
     const dp = (Number(tr.latitude)-Number(work.latitude))*Math.PI/180;
@@ -290,14 +409,29 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
     if (nonTrackingEvents.includes(tr.event_type)) return false;
     if (!locationSettings?.radius_monitoring_enabled && ['START_WORK', 'RESUME_WORK'].includes(tr.event_type)) return false;
 
-    return differenceInMinutes(currentTime, parseISO(tr.recorded_at)) >= (locationSettings?.journey_tracking_interval_mins || 5) + 2;
+    // Use the correct interval for each phase so working employees aren't
+    // incorrectly flagged offline when their tracker fires every
+    // work_radius_tracking_interval_mins (which is typically larger than
+    // journey_tracking_interval_mins).
+    const workingPhaseEvents = ['START_WORK', 'RESUME_WORK', 'LIVE_TRACK_WORK', 'REACHED_LOCATION'];
+    const isWorkingPhase = workingPhaseEvents.includes(tr.event_type) && locationSettings?.radius_monitoring_enabled;
+    const expectedIntervalMins = isWorkingPhase
+      ? (locationSettings?.work_radius_tracking_interval_mins || 15)
+      : (locationSettings?.journey_tracking_interval_mins || 5);
+
+    // Allow 2 extra minutes of grace beyond the configured interval
+    return differenceInMinutes(currentTime, parseISO(tr.recorded_at)) >= expectedIntervalMins + 2;
   };
 
   const filteredWorks = useMemo(() => activeWorks.filter(work => {
+    const isOutside = (work as any).is_outside_office;
     const tr = latestTracking.get(work.id);
     const lost = signalLost(tr);
-    const isReached = tr?.event_type === 'REACHED_LOCATION' || (tr?.event_type === 'LIVE_TRACK_WORK' && work.status === 'assigned');
-    const traveling = work.status === 'assigned' && !isReached;
+    const hasStartedWorkingEvents = ['START_WORK', 'LIVE_TRACK_WORK', 'RESUME_WORK'];
+    const hasStartedWorking = hasStartedWorkingEvents.includes(tr?.event_type || '');
+    const isReached = tr?.event_type === 'REACHED_LOCATION';
+    // Outside-office workers are always treated as 'working' (remote)
+    const traveling = !isOutside && work.status === 'assigned' && !isReached && !hasStartedWorking;
     const paused = work.status === 'paused';
     if (filterStatus === 'traveling' && !traveling) return false;
     if (filterStatus === 'working' && (traveling || paused || lost)) return false;
@@ -384,11 +518,12 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
             ) : (
               <div className="space-y-3 max-h-[calc(100vh-360px)] overflow-y-auto pr-2">
                 {filteredWorks.map(work => {
+                  const isOutside = (work as any).is_outside_office;
                   const tr = latestTracking.get(work.id);
                   const within = inRadius(work, tr);
                   const lost = signalLost(tr);
                   const isReached = tr?.event_type === 'REACHED_LOCATION' || (tr?.event_type === 'LIVE_TRACK_WORK' && work.status === 'assigned');
-                  const traveling = work.status === 'assigned' && !isReached;
+                  const traveling = !isOutside && work.status === 'assigned' && !isReached;
                   return (
                     <button key={work.id} onClick={() => { setSelectedWork(work); }} className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${selectedWork?.id===work.id?'border-blue-500 bg-blue-50':lost?'border-gray-200 bg-gray-50 opacity-80':'border-gray-200 hover:border-gray-300 bg-white'}`}>
                       <div className="flex items-start justify-between mb-2">
@@ -400,21 +535,27 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
                             />
                             {work.employee_name}
                             {work.employee_code && <span className="text-xs text-gray-500 font-normal">({work.employee_code as string})</span>}
+                            {isOutside && <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-bold">REMOTE</span>}
                             {work.status==='paused'&&<span className="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full flex items-center gap-1 font-bold"><PauseCircle className="h-3 w-3"/>PAUSED</span>}
                             {traveling&&<span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${lost?'bg-orange-100 text-orange-800':'bg-purple-100 text-purple-800'}`}>TRAVELING{lost?' (OFFLINE)':''}</span>}
                             {isReached&&<span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${lost?'bg-orange-100 text-orange-800':'bg-teal-100 text-teal-800'}`}>ARRIVED{lost?' (OFFLINE)':''}</span>}
-                            {!traveling&&!isReached&&!work.status.includes('pause')&&lost&&<span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-bold">OFFLINE</span>}
+                            {!traveling&&!isReached&&!isOutside&&!work.status.includes('pause')&&lost&&<span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-bold">OFFLINE</span>}
+                            {!traveling&&!isReached&&!isOutside&&!work.status.includes('pause')&&!lost&&(
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${within ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                {within ? 'WORKING' : 'OUTSIDE RADIUS'}
+                              </span>
+                            )}
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
                             <span className="font-medium text-gray-700">{work.location_name}</span>
-                            {(work.formatted_address || work.address) && (
+                            {(work.formatted_address || (work as any).address) && (
                               <span className="block mt-0.5 text-[11px] leading-tight">
-                                {work.formatted_address || [work.address, work.city, work.state].filter(Boolean).join(', ')}
+                                {work.formatted_address || [(work as any).address, (work as any).city, (work as any).state].filter(Boolean).join(', ')}
                               </span>
                             )}
                           </div>
                         </div>
-                        {!within&&!lost&&!traveling&&<AlertTriangle className="h-4 w-4 text-red-600 flex-shrink-0"/>}
+                        {!isOutside&&!within&&!lost&&!traveling&&<AlertTriangle className="h-4 w-4 text-red-600 flex-shrink-0"/>}
                       </div>
                       {tr ? (
                         <div className={`flex items-center gap-1 text-xs ${lost?'text-gray-400':'text-gray-600'}`}>
@@ -442,30 +583,45 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
                 <TrafficLayer />
 
                 {(selectedWork ? [selectedWork] : activeWorks).map(work => {
+                  const isOutside = (work as any).is_outside_office;
+                  const isEmployeeCurrentlyRemote = activeWorks.some(w => (w as any).is_outside_office && w.employee_id === work.employee_id);
+                  
                   const tr = latestTracking.get(work.id);
                   const within = inRadius(work, tr);
                   const lost = signalLost(tr);
-                  const isReached = tr?.event_type === 'REACHED_LOCATION' || (tr?.event_type === 'LIVE_TRACK_WORK' && work.status === 'assigned');
-                  const traveling = work.status === 'assigned' && !isReached;
+                  const hasStartedWorkingEvents = ['START_WORK', 'LIVE_TRACK_WORK', 'RESUME_WORK'];
+                  const hasStartedWorking = hasStartedWorkingEvents.includes(tr?.event_type || '');
+                  const isReached = tr?.event_type === 'REACHED_LOCATION';
+                  const traveling = !isOutside && work.status === 'assigned' && !isReached && !hasStartedWorking;
                   const wp = { lat: Number(work.latitude), lng: Number(work.longitude) };
                   return (
                     <div key={work.id}>
-                      <AdvancedMarker map={map} position={wp} onClick={() => setActiveInfo(work.id)} iconUrl="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png" iconSize={[25,41]} iconAnchor={[12,41]}/>
-                      {activeInfo===work.id&&<InfoWindowF position={wp} onCloseClick={() => setActiveInfo(null)}><div className="text-sm"><div className="font-semibold mb-1">{work.location_name}</div><div className="text-gray-600">Employee: {work.employee_name}</div><div className="text-xs font-bold text-red-600 mt-1">Assigned Site</div></div></InfoWindowF>}
-                      <CircleF center={wp} radius={Number(work.allowed_radius_meters)} options={{ strokeColor: lost?'gray':traveling?'#3b82f6':within?'green':'red', fillColor: lost?'gray':traveling?'#3b82f6':within?'green':'red', fillOpacity:0.1, strokeWeight:2 }}/>
+                      {/* Fixed site marker + radius circle — skip for outside-office workers (no fixed site) */}
+                      {!isOutside && (
+                        <>
+                          <AdvancedMarker map={map} position={wp} onClick={() => setActiveInfo(work.id)} iconUrl="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png" iconSize={[25,41]} iconAnchor={[12,41]}/>
+                          {activeInfo===work.id&&<InfoWindowF position={wp} onCloseClick={() => setActiveInfo(null)}><div className="text-sm"><div className="font-semibold mb-1">{work.location_name}</div><div className="text-gray-600">Employee: {work.employee_name}</div><div className="text-xs font-bold text-red-600 mt-1">Assigned Site</div></div></InfoWindowF>}
+                          <CircleF center={wp} radius={Number(work.allowed_radius_meters)} options={{ strokeColor: lost?'gray':traveling?'#3b82f6':within?'green':'red', fillColor: lost?'gray':traveling?'#3b82f6':within?'green':'red', fillOpacity:0.1, strokeWeight:2 }}/>
+                        </>
+                      )}
                       {tr?.latitude&&tr?.longitude&&(
                         <>
-                          <AdvancedMarker map={map} position={{ lat:Number(tr.latitude), lng:Number(tr.longitude) }} onClick={() => setActiveInfo(`emp-${work.id}`)} html={getEmployeeMarkerHtml(work.employee_name || 'Worker', work.employee_code as string | undefined, (traveling || isReached) && !lost)} iconAnchor={[7,7]}/>
-                          {activeInfo===`emp-${work.id}`&&<InfoWindowF position={{ lat:Number(tr.latitude), lng:Number(tr.longitude) }} onCloseClick={() => setActiveInfo(null)}><div className="text-sm"><div className="font-semibold mb-1">{work.employee_name}{work.employee_code && <span className="text-gray-500 font-normal ml-1">({work.employee_code as string})</span>}</div><div className={`text-xs font-bold mb-1 ${traveling?'text-blue-600':isReached?'text-teal-600':within?'text-green-600':'text-red-600'}`}>{traveling?'En Route to Site':isReached?'Arrived at Site':within?'Within allowed area':'Outside allowed area'}</div><div className="text-xs text-gray-500">Last update: {format(new Date(tr.recorded_at),'hh:mm:ss a')}</div></div></InfoWindowF>}
-                          
-                          {traveling && companySettings?.enable_directions_api ? (
-                            <LiveEmployeeRoute
-                              origin={{ lat: Number(tr.latitude), lng: Number(tr.longitude) }}
-                              destination={wp}
-                              isLost={lost}
-                            />
-                          ) : (
-                            <PolylineF path={[wp,{ lat:Number(tr.latitude), lng:Number(tr.longitude) }]} options={{ strokeColor: lost?'#9ca3af':traveling?'#3b82f6':isReached?'#14b8a6':within?'#4ade80':'#ef4444', strokeWeight:2, strokeOpacity:0.7, icons:[{ icon:{ path:'M 0,-1 0,1', strokeOpacity:1, scale:3 }, offset:'0', repeat:'15px' }] }}/>
+                          <AdvancedMarker map={map} position={{ lat:Number(tr.latitude), lng:Number(tr.longitude) }} onClick={() => setActiveInfo(`emp-${work.id}`)} html={getEmployeeMarkerHtml(work.employee_name || 'Worker', work.employee_code as string | undefined, !lost)} iconAnchor={[7,7]}/>
+                          {activeInfo===`emp-${work.id}`&&<InfoWindowF position={{ lat:Number(tr.latitude), lng:Number(tr.longitude) }} onCloseClick={() => setActiveInfo(null)}><div className="text-sm"><div className="font-semibold mb-1">{work.employee_name}{work.employee_code && <span className="text-gray-500 font-normal ml-1">({work.employee_code as string})</span>}</div><div className={`text-xs font-bold mb-1 ${isOutside?'text-purple-600':traveling?'text-blue-600':isReached?'text-teal-600':within?'text-green-600':'text-red-600'}`}>{isOutside?'Remote Worker (Outside Office)':traveling?'En Route to Site':isReached?'Arrived at Site':within?'Within allowed area':'Outside allowed area'}</div><div className="text-xs text-gray-500">Last update: {format(new Date(tr.recorded_at),'hh:mm:ss a')}</div></div></InfoWindowF>}
+
+                          {/* No route line if the employee is currently working remotely, even for their stale assignments */}
+                          {!isEmployeeCurrentlyRemote && (
+                            traveling && companySettings?.enable_directions_api ? (
+                              <LiveEmployeeRoute
+                                origin={{ lat: Number(tr.latitude), lng: Number(tr.longitude) }}
+                                destination={wp}
+                                isLost={lost}
+                              />
+                            ) : !traveling ? (
+                              <PolylineF path={[wp,{ lat:Number(tr.latitude), lng:Number(tr.longitude) }]} options={{ strokeColor: lost?'#9ca3af':isReached?'#14b8a6':within?'#4ade80':'#ef4444', strokeWeight:2, strokeOpacity:0.7, icons:[{ icon:{ path:'M 0,-1 0,1', strokeOpacity:1, scale:3 }, offset:'0', repeat:'15px' }] }}/>
+                            ) : (
+                              <PolylineF path={[{ lat:Number(tr.latitude), lng:Number(tr.longitude) },wp]} options={{ strokeColor:'#3b82f6', strokeWeight:2, strokeOpacity:0.7, icons:[{ icon:{ path:'M 0,-1 0,1', strokeOpacity:1, scale:3 }, offset:'0', repeat:'15px' }] }}/>
+                            )
                           )}
                         </>
                       )}
@@ -477,6 +633,7 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
             <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-gray-600">
               <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded-full"/>Assigned Work Site</div>
               <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500 rounded-full"/>Employee Live Location</div>
+              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-purple-500 rounded-full"/>Remote (Outside Office)</div>
               <div className="flex items-center gap-1"><div className="w-4 h-4 border-2 border-green-500 rounded-full"/>Allowed Radius</div>
               <div className="flex items-center gap-1"><div className="w-4 h-0 border-t-2 border-dashed border-gray-400"/>Distance Gap Line</div>
             </div>

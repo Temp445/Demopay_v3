@@ -37,6 +37,7 @@ export interface AttendanceLog {
   face_confidence: number | null;
   tenant_id: string;
   shift_id?: string | null; // Added to match the DB schema
+  location_status?: string | null;
 
   employee?: {
     name: string;
@@ -114,6 +115,10 @@ export interface ProcessedTimeRecord {
   clock_in_is_outside?: boolean;
   clock_out_is_outside?: boolean;
   location_scenario?: LocationScenarioFilter;
+  
+  // Holiday and Weekoff fields
+  is_holiday?: boolean;
+  is_weekoff?: boolean;
 }
 
 export interface ShiftFilterParams {

@@ -410,14 +410,33 @@ export default function LiveTrackingDashboard() {
 
   const calculateMapCenter = (): [number, number] => {
     if (activeWorks.length === 0) return [13.0827, 80.2707];
-    if (selectedWork) return [Number(selectedWork.latitude), Number(selectedWork.longitude)];
+    if (selectedWork) {
+      const t = latestTracking.get(selectedWork.id);
+      if (t?.latitude && t?.longitude) {
+        return [Number(t.latitude), Number(t.longitude)];
+      }
+      return [Number(selectedWork.latitude), Number(selectedWork.longitude)];
+    }
 
-    const avgLat = activeWorks.reduce((sum, w) => sum + Number(w.latitude), 0) / activeWorks.length;
-    const avgLng = activeWorks.reduce((sum, w) => sum + Number(w.longitude), 0) / activeWorks.length;
+    let sumLat = 0, sumLng = 0, count = 0;
+    activeWorks.forEach(w => {
+      const isOutside = (w as any).is_outside_office;
+      if (isOutside) {
+        const t = latestTracking.get(w.id);
+        if (t?.latitude && t?.longitude && Number(t.latitude) !== 0 && Number(t.longitude) !== 0) {
+          sumLat += Number(t.latitude);
+          sumLng += Number(t.longitude);
+          count++;
+        }
+      } else if (Number(w.latitude) !== 0 && Number(w.longitude) !== 0) {
+        sumLat += Number(w.latitude);
+        sumLng += Number(w.longitude);
+        count++;
+      }
+    });
 
-    if (isNaN(avgLat) || isNaN(avgLng)) return [13.0827, 80.2707];
-
-    return [avgLat, avgLng];
+    if (count === 0 || isNaN(sumLat) || isNaN(sumLng)) return [13.0827, 80.2707];
+    return [sumLat / count, sumLng / count];
   };
 
   const isWithinRadius = (work: WorkLocation, tracking: any) => {
@@ -455,8 +474,10 @@ export default function LiveTrackingDashboard() {
     return activeWorks.filter(work => {
       const tracking = latestTracking.get(work.id);
       const signalLost = isSignalLost(tracking);
-      const isReached = tracking?.event_type === 'REACHED_LOCATION' || (tracking?.event_type === 'LIVE_TRACK_WORK' && work.status === 'assigned');
-      const isTraveling = work.status === 'assigned' && !isReached;
+      const hasStartedWorkingEvents = ['START_WORK', 'LIVE_TRACK_WORK', 'RESUME_WORK'];
+      const hasStartedWorking = hasStartedWorkingEvents.includes(tracking?.event_type || '');
+      const isReached = tracking?.event_type === 'REACHED_LOCATION';
+      const isTraveling = work.status === 'assigned' && !isReached && !hasStartedWorking;
       const isPaused = work.status === 'paused';
 
       // Status filter
@@ -638,7 +659,11 @@ export default function LiveTrackingDashboard() {
                               <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full flex items-center gap-1 font-bold">
                                 REMOTE
                               </span>
-                            ) : null}
+                            ) : (
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 font-bold ${withinRadius ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                {withinRadius ? 'WORKING' : 'OUTSIDE RADIUS'}
+                              </span>
+                            )}
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
                             <span className="font-medium text-gray-700">{work.location_name}</span>
@@ -759,7 +784,10 @@ export default function LiveTrackingDashboard() {
                       };
                     })
                   ]}
-                  routes={(selectedWork ? [selectedWork] : activeWorks).filter(w => !(w as any).is_outside_office).map(work => {
+                  routes={(selectedWork ? [selectedWork] : activeWorks).filter(w => {
+                    const isEmployeeCurrentlyRemote = activeWorks.some(aw => (aw as any).is_outside_office && aw.employee_id === w.employee_id);
+                    return !isEmployeeCurrentlyRemote;
+                  }).map(work => {
                     const tracking = latestTracking.get(work.id);
                     if (!tracking) return null;
                     return {
@@ -795,8 +823,10 @@ export default function LiveTrackingDashboard() {
                   const isOutside = (work as any).is_outside_office;
                   const withinRadius = tracking ? (isOutside ? true : isWithinRadius(work, tracking)) : true;
                   const signalLost = isSignalLost(tracking);
-                  const isReached = tracking?.event_type === 'REACHED_LOCATION' || (tracking?.event_type === 'LIVE_TRACK_WORK' && work.status === 'assigned');
-                  const isTraveling = work.status === 'assigned' && !isReached;
+                  const hasStartedWorkingEvents = ['START_WORK', 'LIVE_TRACK_WORK', 'RESUME_WORK'];
+                  const hasStartedWorking = hasStartedWorkingEvents.includes(tracking?.event_type || '');
+                  const isReached = tracking?.event_type === 'REACHED_LOCATION';
+                  const isTraveling = work.status === 'assigned' && !isReached && !hasStartedWorking;
 
                   const workLat = Number(work.latitude);
                   const workLng = Number(work.longitude);

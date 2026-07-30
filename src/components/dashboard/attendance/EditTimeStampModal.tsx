@@ -239,10 +239,35 @@ export default function EditTimeStampModal({ record, isOpen, onClose, onSuccess,
                   <div key={log.id} className="bg-gray-50 rounded p-3 text-sm">
                     <div className="flex justify-between items-start mb-2">
                        <span className="text-gray-500 text-xs">{formatDateTime(log.edited_at)}</span>
+                       <span className="text-gray-500 text-xs font-medium">Edited by: {log.edited_by_name || 'System'}</span>
                     </div>
-                     <div className="text-xs">
-                      <p className="text-gray-600">Reason:</p>
-                      <p className="text-gray-900">{log.reason_for_change}</p>
+                     <div className="text-xs space-y-2">
+                      <div>
+                        <span className="text-gray-500 font-medium">Reason: </span>
+                        <span className="text-gray-900">{log.reason_for_change}</span>
+                      </div>
+                      
+                      {(log.original_clock_in !== log.modified_clock_in || log.original_clock_out !== log.modified_clock_out) && (
+                        <div className="bg-white p-2 rounded border border-gray-200 mt-2 space-y-1">
+                          <p className="font-semibold text-gray-500 mb-1 text-[10px] uppercase tracking-wider">Changes Made</p>
+                          {log.original_clock_in !== log.modified_clock_in && (
+                            <div className="flex items-center gap-2 text-gray-700">
+                              <span className="w-16 font-medium">Clock In:</span>
+                              <span className="line-through text-gray-400">{log.original_clock_in ? formatDateTime(log.original_clock_in) : '--'}</span>
+                              <span className="text-indigo-500 font-bold">→</span>
+                              <span className="font-medium text-gray-900">{log.modified_clock_in ? formatDateTime(log.modified_clock_in) : '--'}</span>
+                            </div>
+                          )}
+                          {log.original_clock_out !== log.modified_clock_out && (
+                            <div className="flex items-center gap-2 text-gray-700">
+                              <span className="w-16 font-medium">Clock Out:</span>
+                              <span className="line-through text-gray-400">{log.original_clock_out ? formatDateTime(log.original_clock_out) : '--'}</span>
+                              <span className="text-indigo-500 font-bold">→</span>
+                              <span className="font-medium text-gray-900">{log.modified_clock_out ? formatDateTime(log.modified_clock_out) : '--'}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

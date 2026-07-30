@@ -302,7 +302,11 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
       }
 
       const queryStart = new Date(shiftStart.getTime() - 2 * 60 * 60 * 1000);
-      const queryEnd = new Date(shiftEnd.getTime() + 4 * 60 * 60 * 1000);
+        const queryEnd = new Date(shiftEnd.getTime() + 4 * 60 * 60 * 1000);
+
+      // Fetch holidays for the shift date
+      const holidaysList = await getHolidays(params.shift_date, params.shift_date);
+      const holidayDates = new Set(holidaysList.map((h: any) => h.date));
 
       const { data: attendanceLogs, error: logsError } = await supabase
         .from('attendance_logs')
@@ -499,6 +503,8 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
             actual_shift: currentShiftName,
             assigned_shifts: getAssignedShiftNames(log.employee_id),
             matched_shift_id: log.shift_id || params.shift_id,
+            is_holiday: holidayDates.has(log.date),
+            is_weekoff: new Date(log.date).getDay() === 0,
             clock_in_is_outside: locationScenarioMap[log.employee_id]?.clockInOutside || false,
             clock_out_is_outside: locationScenarioMap[log.employee_id]?.clockOutOutside || false,
             location_scenario: locationScenarioMap[log.employee_id]?.scenario || 'all'
@@ -621,7 +627,9 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
           shift_status: shiftStatus,
           actual_shift: currentShiftName,
           assigned_shifts: getAssignedShiftNames(record.employee_id),
-          matched_shift_id: params.shift_id // Default to current view's shift
+          matched_shift_id: params.shift_id,
+          is_holiday: holidayDates.has(record.date),
+          is_weekoff: new Date(record.date).getDay() === 0,
         });
       });
 
@@ -679,6 +687,10 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
         .eq('employee_id', params.employee_id)
         .gte('schedule_date', params.start_date)
         .lte('schedule_date', params.end_date);
+        
+      // Fetch holidays for the date range
+      const holidaysList = await getHolidays(params.start_date, params.end_date);
+      const holidayDates = new Set(holidaysList.map((h: any) => h.date));
 
       const shiftNameMap = new Map(get().shifts.map(s => [s.id, s.name]));
 
@@ -898,6 +910,8 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
             shift_status: determination.status,
             assigned_shifts: getAssignedShiftNames(log.date),
             matched_shift_id: effectiveShiftId,
+            is_holiday: holidayDates.has(log.date),
+            is_weekoff: new Date(log.date).getDay() === 0,
             clock_in_is_outside: locationScenarioMap[log.date]?.clockInOutside || false,
             clock_out_is_outside: locationScenarioMap[log.date]?.clockOutOutside || false,
             location_scenario: locationScenarioMap[log.date]?.scenario || 'all'
@@ -996,7 +1010,9 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
             verification_method: 'timestamp',
             shift_status: determination.status,
             assigned_shifts: getAssignedShiftNames(date),
-            matched_shift_id: determination.shiftId,
+            matched_shift_id: determination.shiftId || '',
+            is_holiday: holidayDates.has(date),
+            is_weekoff: new Date(date).getDay() === 0,
             clock_in_is_outside: locationScenarioMap[date]?.clockInOutside || false,
             clock_out_is_outside: locationScenarioMap[date]?.clockOutOutside || false,
             location_scenario: locationScenarioMap[date]?.scenario || 'all'
@@ -1101,7 +1117,8 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
         status: status,
         notes: request.reason_for_change || request.notes || null,
         created_by: userData.user.id,
-        shift_id: targetShiftId || null
+        shift_id: targetShiftId || null,
+        location_status: 'Normal'
       };
 
       const { data: insertedLog, error: logError } = await supabase
@@ -1446,6 +1463,9 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
           validationResultsMap.set(`${record.employee_id}_${record.date.split('T')[0]}`, vResult);
         }
 
+        const isOutside = record.clock_in_is_outside || record.clock_out_is_outside;
+        const locationStatus = isOutside ? 'Outside Office' : 'Normal';
+
         validatedPayload.push({
           tenant_id: auth.tenantId,
           employee_id: record.employee_id,
@@ -1455,7 +1475,8 @@ export const useTimeStampManagementStore = create<TimeStampManagementStore>((set
           status: finalStatus, 
           created_by: user.user.id,
           verification_method: record.verification_method ?? 'manual',
-          shift_id: record.matched_shift_id || null
+          shift_id: record.matched_shift_id || null,
+          location_status: locationStatus
         });
       }
 

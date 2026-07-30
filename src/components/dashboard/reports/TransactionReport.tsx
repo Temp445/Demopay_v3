@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { AlertCircle, FileText, ChevronDown } from 'lucide-react';
+import { AlertCircle, FileText, ChevronDown, LayoutList, Table2 } from 'lucide-react';
 import { useReportsStore } from '../../../stores/reportsStore';
 import { supabase } from '../../../lib/supabase';
 import ReportTable from './ReportTable';
@@ -30,18 +30,18 @@ type LeaveRequest = {
   employee: { employee_code: string } | null;
 };
 
-export default function TransactionReport({ 
-  subtype, 
+export default function TransactionReport({
+  subtype,
   filters,
   externalSelectedComponents,
-  onComponentsChange 
+  onComponentsChange
 }: TransactionReportProps) {
   const { transactionReports, loading, error, fetchTransactionReport } = useReportsStore();
-  
+
   const [columns, setColumns] = useState<string[]>([]);
   const [availableEarnings, setAvailableEarnings] = useState<string[]>([]);
   const [availableDeductions, setAvailableDeductions] = useState<string[]>([]);
-  
+
   const [localSelectedComponents, setLocalSelectedComponents] = useState<string[]>([]);
   const selectedComponents = externalSelectedComponents || localSelectedComponents;
 
@@ -51,11 +51,12 @@ export default function TransactionReport({
       onComponentsChange(newSelection);
     }
   };
-  
+
   const [showComponentDropdown, setShowComponentDropdown] = useState(false);
   const componentDropdownRef = useRef<HTMLDivElement>(null);
-  
+
   const [expandedEmployee, setExpandedEmployee] = useState<string | null>(null);
+  const [detailMode, setDetailMode] = useState(false);
 
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [patterns, setPatterns] = useState<RecurringPattern[]>([]);
@@ -69,15 +70,15 @@ export default function TransactionReport({
   // --- HELPER: Formats keys ---
   const formatColumnName = (key: string) => {
     if (!key) return '';
-    
+
     // Custom formatting for LOP Days
     if (key === 'lopDays') return 'LOP';
-    if (key === 'totalWorkingDays') return 'Work Days'; 
-    if (key === 'paidWorkingDays') return 'Paid Days';  
+    if (key === 'totalWorkingDays') return 'Work Days';
+    if (key === 'paidWorkingDays') return 'Paid Days';
 
     let cleanKey = key.replace(/\s+/g, ' ').trim();
     cleanKey = cleanKey.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
-    return cleanKey.split(' ').map(word => 
+    return cleanKey.split(' ').map(word =>
       word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
     ).join(' ');
   };
@@ -168,16 +169,41 @@ export default function TransactionReport({
     }
     const result: any[] = [];
     uniqueEmployees.forEach((empInfo, empCode) => {
-      const empStats = { ...empInfo, presentDays: 0, absentDays: 0, totalDays: 0, records: [] as any[] };
+      const empStats = { 
+        ...empInfo, 
+        presentDays: 0, 
+        absentDays: 0, 
+        lateDays: 0,
+        permissionDays: 0,
+        earlyExitDays: 0,
+        firstOffDays: 0,
+        secondOffDays: 0,
+        totalWorkingHours: 0,
+        totalDays: 0, 
+        records: [] as any[] 
+      };
       targetDates.forEach(date => {
         empStats.totalDays += 1;
         const key = `${empCode}_${date}`;
         let status = 'Absent', request = '-', record = null, isPresent = false;
         if (recordMap.has(key)) {
           record = recordMap.get(key);
-          if (record.status === 'Present' || record.status === 'Half Day' || record.status === 'Late') isPresent = true;
+          const activeStatuses = ['Present', 'Half Day', 'Late', 'Early Exit', 'Permission', 'First Off', 'Second Off'];
+          if (activeStatuses.includes(record.status)) isPresent = true;
         }
-        if (isPresent) { status = record.status; empStats.presentDays += 1; empStats.records.push({ ...record, request: request }); }
+        if (isPresent) { 
+          status = record.status; 
+          
+          if (status === 'Present') empStats.presentDays += 1;
+          else if (status === 'Late') empStats.lateDays += 1;
+          else if (status === 'Permission') empStats.permissionDays += 1;
+          else if (status === 'Early Exit') empStats.earlyExitDays += 1;
+          else if (status === 'First Off') empStats.firstOffDays += 1;
+          else if (status === 'Second Off') empStats.secondOffDays += 1;
+          
+          empStats.totalWorkingHours += (record.workingHours || 0);
+          empStats.records.push({ ...record, request: request }); 
+        }
         else {
           if (isHoliday(date)) return;
           const leaveName = getLeaveStatus(empCode, date);
@@ -198,19 +224,19 @@ export default function TransactionReport({
     if (reportData.length > 0 && subtype === 'monthly') {
       // UPDATED: Added 'lopDays' to the default list of columns
       const defaultColumns = [
-  'employeeCode', 
-  'name', 
-  'department', 
-  'payPeriod', 
-  'totalWorkingDays', // Add this
-  'lopDays', 
-  'paidWorkingDays',  // Add this
-  'earnings', 
-  'deductions', 
-  'netAmount', 
-  'paymentDate', 
-  'status'
-];
+        'employeeCode',
+        'name',
+        'department',
+        'payPeriod',
+        'totalWorkingDays', // Add this
+        'lopDays',
+        'paidWorkingDays',  // Add this
+        'earnings',
+        'deductions',
+        'netAmount',
+        'paymentDate',
+        'status'
+      ];
       const earningSet = new Set<string>();
       const deductionSet = new Set<string>();
 
@@ -221,7 +247,7 @@ export default function TransactionReport({
         if (row.deduction_components && Array.isArray(row.deduction_components)) {
           row.deduction_components.forEach((comp: any) => { if (comp.name) deductionSet.add(comp.name); });
         }
-        
+
         // Manually check for Bonus and Overtime
         if (row.bonus !== undefined && row.bonus !== null) earningSet.add('Bonus');
         if (row.overtime_amount !== undefined && row.overtime_amount !== null) earningSet.add('Overtime Amount');
@@ -242,14 +268,17 @@ export default function TransactionReport({
       setColumns([...defaultColumns, ...selectedSortedColumns]);
 
     } else if (reportData.length > 0) {
-      setColumns(Object.keys(reportData[0]));
+      const keys = Object.keys(reportData[0]).filter(k => k !== 'employeeId' && (subtype !== 'dailyAttendance' || k !== 'punches'));
+      setColumns(keys);
     }
   }, [reportData, selectedComponents, subtype]);
 
   const getReportTitle = () => {
     switch (subtype) {
       case 'monthly': return 'Monthly Salary Report';
-      case 'attendance': return 'Attendance Report';
+      case 'attendance': return 'Monthly Attendance Report';
+      case 'weeklyAttendance': return 'Weekly Attendance Report';
+      case 'dailyAttendance': return 'Daily Attendance Report';
       case 'leave': return 'Leave Balance Report';
       case 'overtime': return 'Overtime Report';
       case 'bonus': return 'Bonus Payment Report';
@@ -263,20 +292,25 @@ export default function TransactionReport({
   /* ---------------- DATA PROCESSING ---------------- */
   const enhancedReportData = useMemo(() => {
     return reportData.map((row: any) => {
-      if (subtype !== 'monthly') return row;
       const enhancedRow = { ...row };
       
+      if (subtype === 'dailyAttendance' && Array.isArray(row.punches)) {
+        enhancedRow.punches = row.punches.map((p: any) => `${p.type}: ${p.time} (${p.location})`).join(', ');
+      }
+
+      if (subtype !== 'monthly') return enhancedRow;
+
       selectedComponents.forEach(compName => {
         // 1. Try finding in arrays
         const sComp = row.salary_components?.find((c: any) => c.name === compName);
         const dComp = row.deduction_components?.find((c: any) => c.name === compName);
-        
+
         let amount = sComp?.amount || dComp?.amount;
 
         // 2. If not in arrays, check top-level keys for Bonus/Overtime
         if (amount === undefined) {
-           if (compName === 'Bonus') amount = row.bonus;
-           if (compName === 'Overtime Amount') amount = row.overtime_amount;
+          if (compName === 'Bonus') amount = row.bonus;
+          if (compName === 'Overtime Amount') amount = row.overtime_amount;
         }
 
         enhancedRow[compName] = amount || 0;
@@ -287,8 +321,8 @@ export default function TransactionReport({
 
   const handleComponentToggle = (componentName: string) => {
     const isSelected = selectedComponents.includes(componentName);
-    const newSelection = isSelected 
-      ? selectedComponents.filter(c => c !== componentName) 
+    const newSelection = isSelected
+      ? selectedComponents.filter(c => c !== componentName)
       : [...selectedComponents, componentName];
     updateSelectedComponents(newSelection);
   };
@@ -361,6 +395,19 @@ export default function TransactionReport({
           )}
 
           <ReportActions data={enhancedReportData} columns={columns} title={getReportTitle()} />
+          {(isAttendance || subtype === 'weeklyAttendance') && (
+            <button
+              onClick={() => setDetailMode(m => !m)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm font-medium transition-colors ${
+                detailMode
+                  ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {detailMode ? <LayoutList className="h-4 w-4" /> : <Table2 className="h-4 w-4" />}
+              {detailMode ? 'Detail Mode' : 'Normal Mode'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -368,50 +415,129 @@ export default function TransactionReport({
         <div className="px-4 py-5 sm:px-6 bg-gray-50 border-b border-gray-200">
           <h3 className="text-lg leading-6 font-medium text-gray-900">Report Details</h3>
           <p className="mt-1 max-w-2xl text-sm text-gray-500">
-            Generated on {new Date().toLocaleString('en-GB')} 
+            Generated on {new Date().toLocaleString('en-GB')}
             {filters.department && ` | Department: ${filters.department}`}
             {filters.startDate && ` | Period: ${filters.startDate} to ${filters.endDate}`}
           </p>
         </div>
-        
+
         {isAttendance ? (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Emp Code</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Department</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Present Days</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Absent Days</th>
-                  <th className="px-4 py-3" />
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Hrs</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Present</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Absent</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Late</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Early Exit</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Permission</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">First Off</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Second Off</th>
                 </tr>
               </thead>
               <tbody className="divide-y bg-white">
                 {groupedAttendance.map(emp => (
                   <React.Fragment key={emp.employeeCode}>
                     <tr className="hover:bg-gray-50">
+                      <td className="px-4 py-4 text-sm font-semibold text-gray-900">{emp.employeeCode}</td>
                       <td className="px-4 py-4 text-sm font-medium text-gray-900">{emp.name}</td>
                       <td className="px-4 py-4 text-sm text-gray-500">{emp.department}</td>
+                      <td className="px-4 py-4 text-sm font-bold text-gray-900">{emp.totalWorkingHours.toFixed(2)}</td>
                       <td className="px-4 py-4 text-sm font-semibold text-green-600">{emp.presentDays}</td>
                       <td className="px-4 py-4 text-sm font-semibold text-red-600">{emp.absentDays}</td>
-                      <td className="px-4 py-4 text-right">
-                        <button className="text-indigo-600 hover:text-indigo-900 text-sm font-medium" onClick={() => setExpandedEmployee(expandedEmployee === emp.employeeCode ? null : emp.employeeCode)}>
-                          {expandedEmployee === emp.employeeCode ? 'Hide Details' : 'View Records'}
-                        </button>
-                      </td>
+                      <td className="px-4 py-4 text-sm font-semibold text-yellow-600">{emp.lateDays}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-orange-600">{emp.earlyExitDays}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-teal-600">{emp.permissionDays}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-rose-600">{emp.firstOffDays}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-rose-600">{emp.secondOffDays}</td>
                     </tr>
-                    {expandedEmployee === emp.employeeCode && (
-                      <tr><td colSpan={5} className="bg-gray-50 px-4 py-4"><ReportTable data={emp.records} columns={['date', 'status', 'request', 'clockIn', 'clockOut', 'workingHours', 'lateMinutes', 'overtimeMinutes']} /></td></tr>
+                    {detailMode && (
+                      <tr><td colSpan={11} className="bg-gray-50 px-4 py-4"><ReportTable data={emp.records} columns={['date', 'status', 'request', 'clockIn', 'clockOut', 'workingHours', 'lateMinutes', 'overtimeMinutes']} /></td></tr>
                     )}
                   </React.Fragment>
                 ))}
               </tbody>
             </table>
           </div>
+        ) : subtype === 'weeklyAttendance' ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Emp Code</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Department</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Hrs</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Present</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Absent</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Late</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Early Exit</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Permission</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">First Off</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Second Off</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y bg-white">
+                {reportData.length === 0 ? (
+                  <tr><td colSpan={11} className="px-4 py-8 text-center text-sm text-gray-500">No data for this week. Try adjusting the date range.</td></tr>
+                ) : (
+                  reportData.map((row: any, i: number) => (
+                    <React.Fragment key={i}>
+                      <tr className="hover:bg-gray-50">
+                        <td className="px-4 py-4 text-sm font-semibold text-gray-900">{row.employeeCode}</td>
+                        <td className="px-4 py-4 text-sm font-medium text-gray-900">{row.name}</td>
+                        <td className="px-4 py-4 text-sm text-gray-500">{row.department}</td>
+                        <td className="px-4 py-4 text-sm font-bold text-gray-900">{row.totalWorkingHours?.toFixed(2) ?? '-'}</td>
+                        <td className="px-4 py-4 text-sm font-semibold text-green-600">{row.present ?? 0}</td>
+                        <td className="px-4 py-4 text-sm font-semibold text-red-600">{row.absent ?? 0}</td>
+                        <td className="px-4 py-4 text-sm font-semibold text-yellow-600">{row.late ?? 0}</td>
+                        <td className="px-4 py-4 text-sm font-semibold text-orange-600">{row.earlyExit ?? 0}</td>
+                        <td className="px-4 py-4 text-sm font-semibold text-teal-600">{row.permission ?? 0}</td>
+                        <td className="px-4 py-4 text-sm font-semibold text-rose-600">{row.firstOff ?? 0}</td>
+                        <td className="px-4 py-4 text-sm font-semibold text-rose-600">{row.secondOff ?? 0}</td>
+                      </tr>
+                      {detailMode && row.dailyRecords && row.dailyRecords.length > 0 && (
+                        <tr>
+                          <td colSpan={11} className="bg-gray-50 px-6 py-3">
+                            <table className="min-w-full text-xs">
+                              <thead>
+                                <tr className="text-gray-500 uppercase">
+                                  <th className="px-3 py-2 text-left">Date</th>
+                                  <th className="px-3 py-2 text-left">Status</th>
+                                  <th className="px-3 py-2 text-left">Clock In</th>
+                                  <th className="px-3 py-2 text-left">Clock Out</th>
+                                  <th className="px-3 py-2 text-left">Working Hrs</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {row.dailyRecords.map((rec: any, j: number) => (
+                                  <tr key={j} className="hover:bg-gray-100">
+                                    <td className="px-3 py-2">{rec.date}</td>
+                                    <td className="px-3 py-2">{rec.status}</td>
+                                    <td className="px-3 py-2">{rec.clockIn ?? '-'}</td>
+                                    <td className="px-3 py-2">{rec.clockOut ?? '-'}</td>
+                                    <td className="px-3 py-2">{rec.workingHours?.toFixed(2) ?? '-'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <ReportTable data={enhancedReportData} columns={columns} />
         )}
-        
+
         {Object.keys(summary).length > 0 && (
           <div className="px-4 py-5 sm:px-6 bg-gray-50 border-t border-gray-200">
             <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">Summary</h3>

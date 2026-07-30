@@ -88,6 +88,39 @@ export interface AttendanceReport {
   overtimeMinutes: number;
 }
 
+export interface WeeklyAttendanceReport {
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  department: string;
+  totalWorkingHours: number;
+  present: number;
+  absent: number;
+  late: number;
+  earlyExit: number;
+  permission: number;
+  firstOff: number;
+  secondOff: number;
+  dailyRecords: { date: string; status: string; clockIn?: string; clockOut?: string; workingHours?: number }[];
+}
+
+export interface DailyAttendanceReport {
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  department: string;
+  date: string;
+  status: string;
+  clockIn: string;
+  clockOut: string;
+  totalWorkingHours: number;
+  punches: {
+    type: string; // 'IN' or 'OUT'
+    time: string;
+    location: string;
+  }[];
+}
+
 export interface TimestampMismatchReport {
   empId: string;
   employeeCode: string;
@@ -666,6 +699,249 @@ async function getAttendanceReport(startDate?: string, endDate?: string, departm
     totalOvertimeMinutes: reportData.reduce((sum, item) => sum + item.overtimeMinutes, 0),
     averageWorkingHours: parseFloat((reportData.reduce((sum, item) => sum + item.workingHours, 0) /
       (reportData.length || 1)).toFixed(2))
+  };
+
+  return { data: reportData, summary };
+}
+
+export async function getWeeklyAttendanceReport(startDate?: string, endDate?: string, department?: string, employeeId?: string, tenantId?: string): Promise<{ data: WeeklyAttendanceReport[], summary: Record<string, number> }> {
+  let employeeQuery = supabase
+    .from('employees')
+    .select('id, name, departments(name), employee_code')
+    .eq('tenant_id', tenantId);
+
+  if (department) employeeQuery = employeeQuery.eq('departments.name', department);
+  if (employeeId) employeeQuery = employeeQuery.eq('id', employeeId);
+
+  const { data: employees, error: employeeError } = await employeeQuery;
+  if (employeeError) throw new Error(employeeError.message);
+
+  const reportData: WeeklyAttendanceReport[] = [];
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  for (const employee of employees) {
+    // 1. Fetch status + clock times from attendance_logs
+    let logsQuery = supabase
+      .from('attendance_logs')
+      .select('date, status, clock_in, clock_out')
+      .eq('employee_id', employee.id);
+    if (startDate) logsQuery = logsQuery.gte('date', startDate);
+    if (endDate) logsQuery = logsQuery.lte('date', endDate);
+    const { data: logs } = await logsQuery;
+
+    // Build two maps: status and full log details per date
+    const logMap = new Map<string, string>();
+    const logDetailMap = new Map<string, any>();
+    (logs || []).forEach((log: any) => {
+      if (log.date) {
+        logMap.set(log.date, log.status || '');
+        logDetailMap.set(log.date, log);
+      }
+    });
+
+    // 2. Fetch timestamps for total working hours calculation
+    let tsQuery = supabase
+      .from('attendance_timestamp')
+      .select('timestamp, entry')
+      .eq('employee_id', employee.id)
+      .order('timestamp', { ascending: true });
+    if (startDate) tsQuery = tsQuery.gte('timestamp', `${startDate}T00:00:00`);
+    if (endDate) tsQuery = tsQuery.lte('timestamp', `${endDate}T23:59:59`);
+    const { data: timestamps } = await tsQuery;
+
+    let totalWorkingHours = 0;
+    let lastIn: Date | null = null;
+    (timestamps || []).forEach((ts: any) => {
+      const time = new Date(ts.timestamp);
+      if (ts.entry === 'IN') {
+        lastIn = time;
+      } else if (ts.entry === 'OUT' && lastIn) {
+        totalWorkingHours += (time.getTime() - lastIn.getTime()) / (1000 * 60 * 60);
+        lastIn = null;
+      }
+    });
+
+    // 3. Iterate all working days in range (Mon–Sat, up to today)
+    let present = 0, absent = 0, late = 0, earlyExit = 0, permission = 0, firstOff = 0, secondOff = 0;
+    const dailyRecords: { date: string; status: string; clockIn?: string; clockOut?: string; workingHours?: number }[] = [];
+
+    if (startDate && endDate) {
+      let curr = new Date(startDate + 'T00:00:00');
+      const end = new Date(endDate + 'T00:00:00');
+      while (curr <= end) {
+        const dayOfWeek = curr.getDay();
+        const dateStr = curr.toISOString().split('T')[0];
+        // Skip Sundays and future dates
+        if (dayOfWeek !== 0 && dateStr <= todayStr) {
+          const status = logMap.get(dateStr) || 'Absent';
+          if (status === 'Present') present++;
+          else if (status === 'Absent') absent++;
+          else if (status === 'Late') { present++; late++; }
+          else if (status === 'Early Exit') { present++; earlyExit++; }
+          else if (status === 'Permission') { present++; permission++; }
+          else if (status === 'First Off') firstOff++;
+          else if (status === 'Second Off') secondOff++;
+          else if (status === 'Half Day') present++;
+          else if (status !== '') present++;
+          else absent++;
+
+          const logDetail = logDetailMap.get(dateStr);
+          let dayHours: number | undefined;
+          if (logDetail?.clock_in && logDetail?.clock_out) {
+            const ci = new Date(logDetail.clock_in);
+            const co = new Date(logDetail.clock_out);
+            dayHours = parseFloat(((co.getTime() - ci.getTime()) / (1000 * 60 * 60)).toFixed(2));
+          }
+
+          dailyRecords.push({
+            date: dateStr,
+            status,
+            clockIn: logDetail?.clock_in
+              ? new Date(logDetail.clock_in).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+              : undefined,
+            clockOut: logDetail?.clock_out
+              ? new Date(logDetail.clock_out).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+              : undefined,
+            workingHours: dayHours
+          });
+        }
+        curr.setDate(curr.getDate() + 1);
+      }
+    }
+
+    reportData.push({
+      employeeId: employee.id,
+      employeeCode: employee.employee_code || '-',
+      name: employee.name,
+      department: employee.departments?.name || '-',
+      totalWorkingHours: parseFloat(totalWorkingHours.toFixed(2)),
+      present,
+      absent,
+      late,
+      earlyExit,
+      permission,
+      firstOff,
+      secondOff,
+      dailyRecords
+    });
+  }
+
+  const summary = {
+    totalEmployees: reportData.length,
+    totalPresent: reportData.reduce((s, r) => s + r.present, 0),
+    totalAbsent: reportData.reduce((s, r) => s + r.absent, 0),
+    totalWorkingHours: parseFloat(reportData.reduce((s, r) => s + r.totalWorkingHours, 0).toFixed(2))
+  };
+
+  return { data: reportData, summary };
+}
+
+export async function getDailyAttendanceReport(startDate?: string, endDate?: string, department?: string, employeeId?: string, tenantId?: string): Promise<{ data: DailyAttendanceReport[], summary: Record<string, number> }> {
+  let employeeQuery = supabase
+    .from('employees')
+    .select('id, name, departments(name), employee_code')
+    .eq('tenant_id', tenantId);
+
+  if (department) employeeQuery = employeeQuery.eq('departments.name', department);
+  if (employeeId) employeeQuery = employeeQuery.eq('id', employeeId);
+
+  const { data: employees, error: employeeError } = await employeeQuery;
+  if (employeeError) throw new Error(employeeError.message);
+
+  const reportData: DailyAttendanceReport[] = [];
+
+  for (const employee of employees) {
+    let timestampQuery = supabase
+      .from('attendance_timestamp')
+      .select('*')
+      .eq('employee_id', employee.id)
+      .order('timestamp', { ascending: true });
+
+    if (startDate && endDate) {
+      timestampQuery = timestampQuery
+        .gte('timestamp', startDate)
+        .lte('timestamp', `${endDate}T23:59:59Z`);
+    }
+
+    const { data: timestamps, error: timestampError } = await timestampQuery;
+    if (timestampError) continue;
+
+    let logsQuery = supabase
+      .from('attendance_logs')
+      .select('date, status')
+      .eq('employee_id', employee.id);
+    if (startDate && endDate) {
+      logsQuery = logsQuery.gte('date', startDate).lte('date', endDate);
+    }
+    const { data: logsData } = await logsQuery;
+    const logsMap = new Map<string, string>();
+    if (logsData) {
+      logsData.forEach((l: any) => logsMap.set(l.date, l.status || 'Present'));
+    }
+
+    const dateMap = new Map<string, any[]>();
+    timestamps.forEach(ts => {
+      const date = ts.timestamp.split('T')[0];
+      if (!dateMap.has(date)) dateMap.set(date, []);
+      dateMap.get(date)!.push(ts);
+    });
+
+    const dates: string[] = [];
+    if (startDate && endDate) {
+      let curr = new Date(startDate);
+      const end = new Date(endDate);
+      while (curr <= end) {
+        dates.push(curr.toISOString().split('T')[0]);
+        curr.setDate(curr.getDate() + 1);
+      }
+    } else {
+      dates.push(new Date().toISOString().split('T')[0]);
+    }
+
+    for (const date of dates) {
+      const dayPunches = dateMap.get(date) || [];
+      const status = logsMap.get(date) || (dayPunches.length > 0 ? 'Present' : 'Absent');
+      let totalHours = 0;
+      let lastIn: Date | null = null;
+      let firstIn: Date | null = null;
+      let lastOut: Date | null = null;
+      
+      const punches = dayPunches.map(p => {
+        const time = new Date(p.timestamp);
+        if (p.entry === 'IN') {
+          if (!firstIn) firstIn = time;
+          lastIn = time;
+        } else if (p.entry === 'OUT' && lastIn) {
+          totalHours += (time.getTime() - lastIn.getTime()) / (1000 * 60 * 60);
+          lastOut = time;
+          lastIn = null;
+        }
+        return {
+          type: p.entry,
+          time: time.toLocaleTimeString(),
+          location: p.location_address || (p.latitude ? `${p.latitude}, ${p.longitude}` : '-')
+        };
+      });
+
+      reportData.push({
+        employeeId: employee.id,
+        employeeCode: employee.employee_code || '-',
+        name: employee.name,
+        department: employee.departments?.name || '-',
+        date: date,
+        status: status,
+        clockIn: firstIn ? firstIn.toLocaleTimeString() : '-',
+        clockOut: lastOut ? lastOut.toLocaleTimeString() : '-',
+        totalWorkingHours: parseFloat(totalHours.toFixed(2)),
+        punches: punches
+      });
+    }
+  }
+
+  const summary = {
+    totalEmployees: new Set(reportData.map(item => item.employeeId)).size,
+    totalRecords: reportData.length,
+    totalWorkingHours: parseFloat(reportData.reduce((sum, item) => sum + item.totalWorkingHours, 0).toFixed(2))
   };
 
   return { data: reportData, summary };
@@ -1856,4 +2132,157 @@ export async function getMusterRollReport(startDate: string, endDate: string, de
   });
 
   return { data: reportData, summary: {} };
+}
+
+
+export interface OutsideAttendanceReportData {
+  empId: string;
+  employeeCode: string;
+  name: string;
+  department: string;
+  date: string;
+  clockInTime: string | null;
+  clockOutTime: string | null;
+  clockInLocation: string | null;
+  clockOutLocation: string | null;
+  status: string;
+}
+
+export async function getOutsideAttendanceReport(startDate?: string, endDate?: string, department?: string, employeeId?: string, tenantId?: string): Promise<{ data: OutsideAttendanceReportData[], summary: Record<string, number> }> {
+  // 1. Fetch Employees First
+  let selectClause = 'id, name, departments(name), employee_code';
+  if (department) {
+    selectClause = 'id, name, departments!inner(name), employee_code';
+  }
+
+  let employeeQuery = supabase
+    .from('employees')
+    .select(selectClause);
+
+  if (tenantId) employeeQuery = employeeQuery.eq('tenant_id', tenantId);
+  if (department) employeeQuery = employeeQuery.eq('departments.name', department);
+  if (employeeId) employeeQuery = employeeQuery.eq('id', employeeId);
+
+  const { data: employees, error: employeeError } = await employeeQuery;
+  if (employeeError) throw new Error(employeeError.message);
+
+  const employeeIds = employees?.map((e: any) => e.id) || [];
+  if (employeeIds.length === 0) {
+    return { data: [], summary: { totalOutsidePunches: 0, totalEmployeesAffected: 0 } };
+  }
+
+  // 2. Fetch Attendance Logs where location_status = 'Outside Office'
+  let logsQuery = supabase
+    .from('attendance_logs')
+    .select('*')
+    .eq('location_status', 'Outside Office')
+    .in('employee_id', employeeIds);
+
+  if (tenantId) logsQuery = logsQuery.eq('tenant_id', tenantId);
+  if (startDate && endDate) {
+    logsQuery = logsQuery.gte('date', startDate).lte('date', endDate);
+  }
+
+  const { data: logs, error: logsError } = await logsQuery;
+  if (logsError) throw new Error(logsError.message);
+
+  if (!logs || logs.length === 0) {
+    return { data: [], summary: { totalOutsidePunches: 0, totalEmployeesAffected: 0 } };
+  }
+
+  // 3. Fetch Timestamps for these specific logs to get details
+  const logDates = logs.map((l: any) => l.date);
+  const minDate = logDates.reduce((a: string, b: string) => a < b ? a : b, logDates[0]);
+  const maxDate = logDates.reduce((a: string, b: string) => a > b ? a : b, logDates[0]);
+
+  let tsQuery = supabase
+    .from('attendance_timestamp')
+    .select('*')
+    .in('employee_id', employeeIds);
+
+  if (tenantId) tsQuery = tsQuery.eq('tenant_id', tenantId);
+  if (minDate && maxDate) {
+    tsQuery = tsQuery.gte('timestamp', minDate).lte('timestamp', `${maxDate}T23:59:59Z`);
+  }
+
+  const { data: timestamps, error: tsError } = await tsQuery;
+  if (tsError) throw new Error(tsError.message);
+
+  const reportData: OutsideAttendanceReportData[] = [];
+  let summary = {
+    totalOutsidePunches: 0,
+    totalEmployeesAffected: new Set<string>(),
+  };
+
+  const tsByEmployeeAndDate = (timestamps || []).reduce((acc: any, ts: any) => {
+    const empId = ts.employee_id;
+    const date = ts.timestamp.split('T')[0];
+    if (!acc[empId]) acc[empId] = {};
+    if (!acc[empId][date]) acc[empId][date] = [];
+    acc[empId][date].push(ts);
+    return acc;
+  }, {});
+
+  for (const log of logs) {
+    const emp = employees?.find((e: any) => e.id === log.employee_id);
+    if (!emp) continue;
+
+    const date = log.date;
+    const punches = tsByEmployeeAndDate[emp.id]?.[date] || [];
+
+    const inPunches = punches.filter((x: any) => x.entry === 'IN');
+    const outPunches = punches.filter((x: any) => x.entry === 'OUT');
+
+    const firstIn = inPunches.length > 0 ? inPunches[0] : null;
+    const lastOut = outPunches.length > 0 ? outPunches[outPunches.length - 1] : null;
+
+    const clockInOutside = firstIn?.office_location_status === 'Outside Office';
+    const clockOutOutside = lastOut?.office_location_status === 'Outside Office';
+
+    let status = 'Outside Office';
+    if (clockInOutside && clockOutOutside) status = 'IN & OUT outside';
+    else if (clockInOutside && !lastOut) status = 'IN outside (No OUT)';
+    else if (clockInOutside && !clockOutOutside) status = 'IN outside, OUT office';
+    else if (!clockInOutside && clockOutOutside) status = 'IN office, OUT outside';
+    else if (punches.length === 0) status = 'Outside Office (No Timestamp Details)';
+
+    if (clockInOutside && !clockOutOutside) {
+      const subsequentInOffice = inPunches.slice(1).some((x: any) => x.office_location_status !== 'Outside Office');
+      if (subsequentInOffice) {
+        status = 'Multiple IN (Outside -> Office)';
+      }
+    }
+
+    if (status !== 'IN & OUT outside') {
+      continue;
+    }
+
+    const deptName = emp.departments ?
+      (Array.isArray(emp.departments) ? emp.departments[0]?.name : (emp.departments as any).name)
+      : '-';
+
+    reportData.push({
+      empId: emp.id,
+      employeeCode: emp.employee_code || '-',
+      name: emp.name,
+      department: deptName || '-',
+      date,
+      clockInTime: log.clock_in ? new Date(log.clock_in).toLocaleTimeString() : '-',
+      clockOutTime: log.clock_out ? new Date(log.clock_out).toLocaleTimeString() : '-',
+      clockInLocation: firstIn?.location_address || (firstIn?.latitude ? `${firstIn.latitude}, ${firstIn.longitude}` : '-'),
+      clockOutLocation: lastOut?.location_address || (lastOut?.latitude ? `${lastOut.latitude}, ${lastOut.longitude}` : '-'),
+      status
+    });
+
+    summary.totalOutsidePunches++;
+    summary.totalEmployeesAffected.add(emp.id);
+  }
+
+  return {
+    data: reportData,
+    summary: {
+      totalOutsidePunches: summary.totalOutsidePunches,
+      totalEmployeesAffected: summary.totalEmployeesAffected.size
+    }
+  };
 }

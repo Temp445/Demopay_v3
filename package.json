@@ -28,6 +28,7 @@
     "face-api.js": "^0.22.2",
     "form-data": "^4.0.4",
     "html2canvas": "^1.4.1",
+    "html2pdf.js": "^0.14.0",
     "jspdf": "^3.0.2",
     "jspdf-autotable": "^5.0.2",
     "leaflet": "^1.9.4",

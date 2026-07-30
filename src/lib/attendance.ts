@@ -14,6 +14,7 @@ export interface AttendanceLog {
   tenant_id?: string;
   created_at?: string;
   updated_at?: string;
+  location_status?: string | null;
 }
 
 export interface AttendanceSettings {

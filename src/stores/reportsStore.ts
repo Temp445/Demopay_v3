@@ -70,6 +70,8 @@ interface ReportsStore {
   fetchTransactionReport: (subtype: string, filters: any) => Promise<void>;
   getMonthlySalaryReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: any[], summary: any }>;
   getAttendanceReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: any[], summary: any }>;
+  getWeeklyAttendanceReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: WeeklyAttendanceReport[], summary: any }>;
+  getDailyAttendanceReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: DailyAttendanceReport[], summary: any }>;
   getLeaveReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: any[], summary: any }>;
   getOvertimeReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: any[], summary: any }>;
   getBonusReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: any[], summary: any }>;
@@ -77,6 +79,7 @@ interface ReportsStore {
   getPermissionBalanceReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: any[], summary: any }>;
   getMusterRollReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: any[], summary: any }>;
   getTimestampMismatchReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: TimestampMismatchReport[], summary: Record<string, number> }>;
+  getOutsideAttendanceReport: (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => Promise<{ data: any[], summary: Record<string, number> }>;
 
   // Statutory Report methods
   fetchStatutoryReport: (subtype: string, filters: any) => Promise<void>;
@@ -175,7 +178,7 @@ export const useReportsStore = create<ReportsStore>()(
           selectClause = `*, departments!inner(name), roles(name), cadres!inner(name)`;
         }
 
-        let query = supabase  
+        let query = supabase
           .from('employees')
           .select(selectClause)
           .eq('tenant_id', auth.tenantId);
@@ -183,7 +186,7 @@ export const useReportsStore = create<ReportsStore>()(
         if (department) {
           query = query.eq('departments.name', department);
         }
-        
+
         if (cadre) {
           query = query.eq('cadres.name', cadre);
         }
@@ -191,7 +194,7 @@ export const useReportsStore = create<ReportsStore>()(
         if (employeeId) {
           query = query.eq('id', employeeId);
         }
-         query = query.order('employee_code', { ascending: true }); // Sort by employee_code
+        query = query.order('employee_code', { ascending: true }); // Sort by employee_code
         const { data, error } = await query;
 
         if (error) {
@@ -325,7 +328,7 @@ export const useReportsStore = create<ReportsStore>()(
       //     return [];
       //   }
       // },
- 
+
       getEmployeeSalaryReport: async (department, employeeId) => {
         try {
           const auth = await validateAuth();
@@ -396,7 +399,7 @@ export const useReportsStore = create<ReportsStore>()(
           return [];
         }
       },
- 
+
       getEmployeeTaxReport: async (department, employeeId) => {
         const auth = await validateAuth();
         if (!auth.isAuthenticated || !auth.tenantId) {
@@ -610,6 +613,18 @@ export const useReportsStore = create<ReportsStore>()(
               summary = result.summary;
               break;
             }
+            case 'weeklyAttendance': {
+              const result = await get().getWeeklyAttendanceReport(startDate, endDate, department, employee, auth.tenantId);
+              data = result.data;
+              summary = result.summary;
+              break;
+            }
+            case 'dailyAttendance': {
+              const result = await get().getDailyAttendanceReport(startDate, endDate, department, employee, auth.tenantId);
+              data = result.data;
+              summary = result.summary;
+              break;
+            }
             case 'attendance': {
               const result = await get().getAttendanceReport(startDate, endDate, department, employee, auth.tenantId);
               data = result.data;
@@ -620,7 +635,7 @@ export const useReportsStore = create<ReportsStore>()(
               // Trigger backend sync before fetching report data
               // Use year from startDate if available, otherwise current year
               const syncYear = startDate ? new Date(startDate).getFullYear() : new Date().getFullYear();
-              
+
               if (!isNaN(syncYear)) {
                 try {
                   // We use useLeaveStore.getState() to access the action inside another store action
@@ -630,7 +645,7 @@ export const useReportsStore = create<ReportsStore>()(
                   console.error('Leave sync failed before report:', e);
                 }
               }
-              
+
               const result = await get().getLeaveReport(startDate, endDate, department, employee, auth.tenantId);
               data = result.data;
               summary = result.summary;
@@ -668,6 +683,12 @@ export const useReportsStore = create<ReportsStore>()(
             }
             case 'timestampMismatch': {
               const result = await get().getTimestampMismatchReport(startDate, endDate, department, employee, auth.tenantId);
+              data = result.data;
+              summary = result.summary;
+              break;
+            }
+            case 'outsideAttendance': {
+              const result = await get().getOutsideAttendanceReport(startDate, endDate, department, employee, auth.tenantId);
               data = result.data;
               summary = result.summary;
               break;
@@ -724,7 +745,7 @@ export const useReportsStore = create<ReportsStore>()(
         if (department) {
           filteredData = data.filter(entry => entry.employee?.department?.name === department);
         }
- 
+
         // 2. Get UnpaidLeaveDays and AbsentDays component IDs
         const { data: calcComponents } = await supabase
           .from('payroll_components')
@@ -734,7 +755,7 @@ export const useReportsStore = create<ReportsStore>()(
 
         const unpaidLeaveComponentId = calcComponents?.find(c => c.name === 'UnpaidLeaveDays')?.id;
         const absentDaysComponentId = calcComponents?.find(c => c.name === 'AbsentDays')?.id;
-        
+
         /*
         // 2. Identification of LOP Leave Type ID
         const { data: allLeaveTypes } = await supabase
@@ -749,9 +770,9 @@ export const useReportsStore = create<ReportsStore>()(
 
         // 3. Process Report Data
         const reportData = await Promise.all(filteredData.map(async (entry) => {
-          
+
           let lopDays = 0;
- 
+
           // Define Period Dates
           const periodStart = new Date(entry.period_start);
           const periodEnd = new Date(entry.period_end);
@@ -775,7 +796,7 @@ export const useReportsStore = create<ReportsStore>()(
             const absentDays = absentDaysComponentId ? (entry.calculation_components[absentDaysComponentId] ?? 0) : 0;
             lopDays = unpaidDays + absentDays;
           }
-          
+
           /*
           // --- Calculate LOP Days ---
           if (lopTypeIds.length > 0) {
@@ -864,6 +885,16 @@ export const useReportsStore = create<ReportsStore>()(
         };
 
         return { data: reportData, summary };
+      },
+
+      getWeeklyAttendanceReport: async (startDate, endDate, department, employeeId, tenantId) => {
+        const { getWeeklyAttendanceReport } = await import('../lib/reports');
+        return getWeeklyAttendanceReport(startDate, endDate, department, employeeId, tenantId);
+      },
+
+      getDailyAttendanceReport: async (startDate, endDate, department, employeeId, tenantId) => {
+        const { getDailyAttendanceReport } = await import('../lib/reports');
+        return getDailyAttendanceReport(startDate, endDate, department, employeeId, tenantId);
       },
 
       getAttendanceReport: async (startDate, endDate, department, employeeId, tenantId) => {
@@ -1049,7 +1080,7 @@ export const useReportsStore = create<ReportsStore>()(
             .select('leave_type_id, start_date, end_date, status')
             .eq('employee_id', employee.id)
             .eq('tenant_id', tenantId)
-            .in('status', ['Approved','Pending']);
+            .in('status', ['Approved', 'Pending']);
 
           if (startDate && endDate) {
             leaveRequestQuery = leaveRequestQuery
@@ -1118,7 +1149,7 @@ export const useReportsStore = create<ReportsStore>()(
 
             const usedDays = stats.approved;
             const pendingRequests = stats.pending;
- 
+
             reportData.push({
               employeeId: employee.id,
               employeeCode: employee.employee_code || '-',
@@ -1142,7 +1173,7 @@ export const useReportsStore = create<ReportsStore>()(
 
         return { data: reportData, summary };
       },
-      
+
       getOvertimeReport: async (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => {
         let query = supabase
           .from('ot_processed_data')
@@ -1182,10 +1213,10 @@ export const useReportsStore = create<ReportsStore>()(
         if (error) throw new Error(error.message);
 
         let filteredData = data || [];
-        
+
         // Manual filtering for department if nested join filter is tricky
         if (department) {
-          filteredData = filteredData.filter((row: any) => 
+          filteredData = filteredData.filter((row: any) =>
             row.employee?.department?.name === department
           );
         }
@@ -1507,7 +1538,7 @@ export const useReportsStore = create<ReportsStore>()(
         return { data: reportData, summary };
       },
 
-getPermissionBalanceReport: async (
+      getPermissionBalanceReport: async (
         startDate: string,
         endDate: string,
         department: string,
@@ -1706,13 +1737,13 @@ getPermissionBalanceReport: async (
           averagePermissionBalance:
             reportData.length > 0
               ? parseFloat(
-                  (
-                    reportData.reduce(
-                      (sum, item) => sum + item.permissionBalance,
-                      0,
-                    ) / reportData.length
-                  ).toFixed(2),
-                )
+                (
+                  reportData.reduce(
+                    (sum, item) => sum + item.permissionBalance,
+                    0,
+                  ) / reportData.length
+                ).toFixed(2),
+              )
               : 0,
         };
 
@@ -1878,139 +1909,139 @@ getPermissionBalanceReport: async (
         return { data: reportData, summary };
       },
 
-   getProvidentFundReport: async (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => {
-    let employeeQuery = supabase
-      .from('employees')
-      .select('id, name, department:departments!inner(name), employee_code')
-      .eq('tenant_id', tenantId);
+      getProvidentFundReport: async (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => {
+        let employeeQuery = supabase
+          .from('employees')
+          .select('id, name, department:departments!inner(name), employee_code')
+          .eq('tenant_id', tenantId);
 
-    if (department) employeeQuery = employeeQuery.eq('departments.name', department);
-    if (employeeId) employeeQuery = employeeQuery.eq('id', employeeId);
+        if (department) employeeQuery = employeeQuery.eq('departments.name', department);
+        if (employeeId) employeeQuery = employeeQuery.eq('id', employeeId);
 
-    const { data: employees, error: employeeError } = await employeeQuery;
-    if (employeeError) throw new Error(employeeError.message);
+        const { data: employees, error: employeeError } = await employeeQuery;
+        if (employeeError) throw new Error(employeeError.message);
 
-    const reportData: any[] = [];
+        const reportData: any[] = [];
 
-    // --- UPDATED STRICT EXTRACTION LOGIC ---
-    const extractPFContributions = (deductionComponents: any[]): { employee: number; employer: number } => {
-      if (!Array.isArray(deductionComponents)) return { employee: 0, employer: 0 };
+        // --- UPDATED STRICT EXTRACTION LOGIC ---
+        const extractPFContributions = (deductionComponents: any[]): { employee: number; employer: number } => {
+          if (!Array.isArray(deductionComponents)) return { employee: 0, employer: 0 };
 
-      const employeePFComponent = deductionComponents.find((comp: any) => {
-        const name = (comp.name || '').toLowerCase();
-        const isPF = name.includes('pf') || name.includes('provident fund');
-        // \b ensures it only matches the exact whole word 'employee' or 'emp'
-        const isEmployee = /\b(employee|emp)\b/.test(name);
-        return isPF && isEmployee;
-      });
+          const employeePFComponent = deductionComponents.find((comp: any) => {
+            const name = (comp.name || '').toLowerCase();
+            const isPF = name.includes('pf') || name.includes('provident fund');
+            // \b ensures it only matches the exact whole word 'employee' or 'emp'
+            const isEmployee = /\b(employee|emp)\b/.test(name);
+            return isPF && isEmployee;
+          });
 
-      const employerPFComponent = deductionComponents.find((comp: any) => {
-        const name = (comp.name || '').toLowerCase();
-        const isPF = name.includes('pf') || name.includes('provident fund');
-        // Matches exact whole word 'employer' or 'company'
-        const isEmployer = /\b(employer|company)\b/.test(name);
-        return isPF && isEmployer;
-      });
+          const employerPFComponent = deductionComponents.find((comp: any) => {
+            const name = (comp.name || '').toLowerCase();
+            const isPF = name.includes('pf') || name.includes('provident fund');
+            // Matches exact whole word 'employer' or 'company'
+            const isEmployer = /\b(employer|company)\b/.test(name);
+            return isPF && isEmployer;
+          });
 
-      const singlePFComponent = deductionComponents.find((comp: any) => {
-        const name = (comp.name || '').toLowerCase();
-        const isPF = name.includes('pf') || name.includes('provident fund');
-        const isEmployee = /\b(employee|emp)\b/.test(name);
-        const isEmployer = /\b(employer|company)\b/.test(name);
-        return isPF && !isEmployee && !isEmployer;
-      });
+          const singlePFComponent = deductionComponents.find((comp: any) => {
+            const name = (comp.name || '').toLowerCase();
+            const isPF = name.includes('pf') || name.includes('provident fund');
+            const isEmployee = /\b(employee|emp)\b/.test(name);
+            const isEmployer = /\b(employer|company)\b/.test(name);
+            return isPF && !isEmployee && !isEmployer;
+          });
 
-      let employeeContribution = employeePFComponent?.amount || 0;
-      let employerContribution = employerPFComponent?.amount || 0;
+          let employeeContribution = employeePFComponent?.amount || 0;
+          let employerContribution = employerPFComponent?.amount || 0;
 
-      // Fallback if only a single, vaguely named PF component exists
-      if (!employeeContribution && !employerContribution && singlePFComponent) {
-        employeeContribution = singlePFComponent.amount || 0;
-        employerContribution = singlePFComponent.amount || 0;
-      }
+          // Fallback if only a single, vaguely named PF component exists
+          if (!employeeContribution && !employerContribution && singlePFComponent) {
+            employeeContribution = singlePFComponent.amount || 0;
+            employerContribution = singlePFComponent.amount || 0;
+          }
 
-      return { employee: employeeContribution, employer: employerContribution };
-    };
-    // ---------------------------------------
+          return { employee: employeeContribution, employer: employerContribution };
+        };
+        // ---------------------------------------
 
-    for (const employee of employees) {
-      let payrollQuery = supabase
-        .from('payroll')
-        .select('*')
-        .eq('employee_id', employee.id)
-        .eq('tenant_id', tenantId)
-        .order('period_start', { ascending: true });
+        for (const employee of employees) {
+          let payrollQuery = supabase
+            .from('payroll')
+            .select('*')
+            .eq('employee_id', employee.id)
+            .eq('tenant_id', tenantId)
+            .order('period_start', { ascending: true });
 
-      if (startDate && endDate) {
-        payrollQuery = payrollQuery.gte('period_start', startDate).lte('period_end', endDate);
-      }
+          if (startDate && endDate) {
+            payrollQuery = payrollQuery.gte('period_start', startDate).lte('period_end', endDate);
+          }
 
-      const { data: payrollEntries, error: payrollError } = await payrollQuery;
-      if (payrollError) {
-        console.error(`Error fetching payroll for employee ${employee.id}:`, payrollError);
-        continue;
-      }
+          const { data: payrollEntries, error: payrollError } = await payrollQuery;
+          if (payrollError) {
+            console.error(`Error fetching payroll for employee ${employee.id}:`, payrollError);
+            continue;
+          }
 
-      const contributionPeriods = payrollEntries.reduce((acc, entry) => {
-        const periodStart = new Date(entry.period_start);
-        const period = `${periodStart.getFullYear()}-${(periodStart.getMonth() + 1).toString().padStart(2, '0')}`;
+          const contributionPeriods = payrollEntries.reduce((acc, entry) => {
+            const periodStart = new Date(entry.period_start);
+            const period = `${periodStart.getFullYear()}-${(periodStart.getMonth() + 1).toString().padStart(2, '0')}`;
 
-        if (!acc[period]) {
-          // Added totalEarnings to the accumulator
-          acc[period] = { employeeContribution: 0, employerContribution: 0, totalEarnings: 0 };
+            if (!acc[period]) {
+              // Added totalEarnings to the accumulator
+              acc[period] = { employeeContribution: 0, employerContribution: 0, totalEarnings: 0 };
+            }
+
+            const pfContributions = extractPFContributions(entry.deduction_components);
+            acc[period].employeeContribution += pfContributions.employee;
+            acc[period].employerContribution += pfContributions.employer;
+
+            // Calculate total earnings from salary_components for this period
+            const earningsForPeriod = Array.isArray(entry.salary_components)
+              ? entry.salary_components.reduce((sum: number, comp: any) => sum + (Number(comp.amount) || 0), 0)
+              : 0;
+
+            acc[period].totalEarnings += earningsForPeriod;
+
+            return acc;
+          }, {} as Record<string, { employeeContribution: number; employerContribution: number; totalEarnings: number }>);
+
+
+          let cumulativeBalance = 0;
+
+          for (const [period, data] of Object.entries(contributionPeriods)) {
+            const employeeContribution = data.employeeContribution;
+            const employerContribution = data.employerContribution;
+            const totalEarnings = data.totalEarnings; // Extracted totalEarnings
+            const totalContribution = employeeContribution + employerContribution;
+
+            cumulativeBalance += totalContribution;
+
+            reportData.push({
+              employeeId: employee.id,
+              employeeCode: employee.employee_code || '-',
+              name: employee.name,
+              department: employee.department?.name || '-',
+              contributionPeriod: period,
+              taxableIncome: parseFloat(totalEarnings.toFixed(2)),
+              employeeContribution: parseFloat(employeeContribution.toFixed(2)),
+              employerContribution: parseFloat(employerContribution.toFixed(2)),
+              totalContribution: parseFloat(totalContribution.toFixed(2)),
+              cumulativeBalance: parseFloat(cumulativeBalance.toFixed(2)) // Uncommented to prevent NaN in summary
+            });
+          }
         }
 
-        const pfContributions = extractPFContributions(entry.deduction_components);
-        acc[period].employeeContribution += pfContributions.employee;
-        acc[period].employerContribution += pfContributions.employer;
+        const summary = {
+          totalEmployees: new Set(reportData.map(item => item.employeeId)).size,
+          totalTaxableIncome: parseFloat(reportData.reduce((sum, item) => sum + item.taxableIncome, 0).toFixed(2)),
+          totalEmployeeContribution: parseFloat(reportData.reduce((sum, item) => sum + item.employeeContribution, 0).toFixed(2)),
+          totalEmployerContribution: parseFloat(reportData.reduce((sum, item) => sum + item.employerContribution, 0).toFixed(2)),
+          totalContribution: parseFloat(reportData.reduce((sum, item) => sum + item.totalContribution, 0).toFixed(2)),
+          totalCumulativeBalance: parseFloat(reportData.reduce((sum, item) => Math.max(sum, item.cumulativeBalance || 0), 0).toFixed(2))
+        };
 
-        // Calculate total earnings from salary_components for this period
-        const earningsForPeriod = Array.isArray(entry.salary_components)
-          ? entry.salary_components.reduce((sum: number, comp: any) => sum + (Number(comp.amount) || 0), 0)
-          : 0;
-        
-        acc[period].totalEarnings += earningsForPeriod;
-
-        return acc;
-      }, {} as Record<string, { employeeContribution: number; employerContribution: number; totalEarnings: number }>);
-      
-
-      let cumulativeBalance = 0;
-
-      for (const [period, data] of Object.entries(contributionPeriods)) {
-        const employeeContribution = data.employeeContribution;
-        const employerContribution = data.employerContribution;
-        const totalEarnings = data.totalEarnings; // Extracted totalEarnings
-        const totalContribution = employeeContribution + employerContribution;
-
-        cumulativeBalance += totalContribution;
-
-        reportData.push({
-          employeeId: employee.id,
-          employeeCode: employee.employee_code || '-',
-          name: employee.name,
-          department: employee.department?.name || '-',
-          contributionPeriod: period,
-          taxableIncome: parseFloat(totalEarnings.toFixed(2)),
-          employeeContribution: parseFloat(employeeContribution.toFixed(2)),
-          employerContribution: parseFloat(employerContribution.toFixed(2)),
-          totalContribution: parseFloat(totalContribution.toFixed(2)),
-          cumulativeBalance: parseFloat(cumulativeBalance.toFixed(2)) // Uncommented to prevent NaN in summary
-        });
-      }
-    }
-
-    const summary = {
-      totalEmployees: new Set(reportData.map(item => item.employeeId)).size,
-      totalTaxableIncome: parseFloat(reportData.reduce((sum, item) => sum + item.taxableIncome, 0).toFixed(2)),
-      totalEmployeeContribution: parseFloat(reportData.reduce((sum, item) => sum + item.employeeContribution, 0).toFixed(2)),
-      totalEmployerContribution: parseFloat(reportData.reduce((sum, item) => sum + item.employerContribution, 0).toFixed(2)),
-      totalContribution: parseFloat(reportData.reduce((sum, item) => sum + item.totalContribution, 0).toFixed(2)),
-      totalCumulativeBalance: parseFloat(reportData.reduce((sum, item) => Math.max(sum, item.cumulativeBalance || 0), 0).toFixed(2))
-    };
-
-    return { data: reportData, summary };
-  },
+        return { data: reportData, summary };
+      },
 
       getInsuranceReport: async (startDate: string, endDate: string, department: string, employeeId: string, tenantId: string) => {
         let employeeQuery = supabase
@@ -2150,6 +2181,11 @@ getPermissionBalanceReport: async (
       getTimestampMismatchReport: async (startDate, endDate, department, employeeId, tenantId) => {
         const { getTimestampMismatchReport } = await import('../lib/reports');
         return getTimestampMismatchReport(startDate, endDate, department, employeeId, tenantId);
+      },
+
+      getOutsideAttendanceReport: async (startDate, endDate, department, employeeId, tenantId) => {
+        const { getOutsideAttendanceReport } = await import('../lib/reports');
+        return getOutsideAttendanceReport(startDate, endDate, department, employeeId, tenantId);
       },
 
       reset: () => {

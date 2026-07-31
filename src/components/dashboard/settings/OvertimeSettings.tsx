@@ -737,7 +737,7 @@ export default function OvertimeSettings() {
                     </div>
 
                     {/* Global Multiplier Section - Premium Redesign */}
-                    <div className="mt-10 pt-8 border-t border-slate-100">
+                    <div className="py-4 border-y border-slate-300">
                       <div className="flex items-center gap-3 mb-6">
                         <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
                           <TrendingUp className="h-5 w-5" />
@@ -748,7 +748,7 @@ export default function OvertimeSettings() {
                         </div>
                       </div>
 
-                      <div className="bg-white border rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="bg-white">
                         <div className="flex flex-col lg:flex-row gap-8 items-start lg:items-center justify-between">
                           
                           {/* Input Controls */}

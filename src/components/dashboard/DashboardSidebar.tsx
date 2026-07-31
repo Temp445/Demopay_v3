@@ -53,7 +53,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
     { name: 'Travel Allowance Approvals', href: '/dashboard/travel-allowance-approvals', icon: CheckCircle },
     ...(settings.live_tracking_enabled ? [{ name: 'Location Tracking', href: '/dashboard/location-tracking', icon: MapPinned }] : []),
     ...(employeeId ? [{ name: 'Work Location', href: '/dashboard/work-location', icon: MapPin }] : []),
-    { name: 'Location Settings', href: '/dashboard/location-settings', icon: SlidersHorizontal },
+    { name: 'Work Location Settings', href: '/dashboard/location-settings', icon: SlidersHorizontal },
   ];
 
   const navigation: NavigationEntry[] = [

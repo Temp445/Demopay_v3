@@ -167,7 +167,24 @@ export const useOTProcessingStore = create<OTProcessingStore>((set, get) => ({
   },
 
   cancelProcess: async (processId) => {
-    await get().updateProcess(processId, { processing_status: 'cancelled' });
+    const auth = await validateAuth();
+    if (auth.isAuthenticated && auth.tenantId) {
+      const { data } = await supabase.from('ot_processed_data').select('attendance_records').eq('ot_processing_id', processId);
+      await get().updateProcess(processId, { processing_status: 'cancelled' });
+      
+      if (data && data.length > 0) {
+        const approvalIdsToRevert = data.flatMap((p: any) => p.attendance_records?.map((a: any) => a.approvalId).filter(Boolean) || []);
+        if (approvalIdsToRevert.length > 0) {
+          await supabase
+            .from('ot_approvals')
+            .update({ is_processed: false })
+            .in('id', approvalIdsToRevert)
+            .eq('tenant_id', auth.tenantId);
+        }
+      }
+    } else {
+      await get().updateProcess(processId, { processing_status: 'cancelled' });
+    }
     await get().fetchProcesses();
   },
 
@@ -766,6 +783,15 @@ export const useOTProcessingStore = create<OTProcessingStore>((set, get) => ({
       // Execute bulk save to Supabase
       if (bulkSavePayload.length > 0) {
         await bulkSaveOTProcessedData(auth.tenantId, processId, bulkSavePayload);
+        
+        const approvalIdsToMark = bulkSavePayload.flatMap(p => p.attendanceRecords.map(a => a.approvalId).filter(Boolean)) as string[];
+        if (approvalIdsToMark.length > 0) {
+          await supabase
+            .from('ot_approvals')
+            .update({ is_processed: true })
+            .in('id', approvalIdsToMark)
+            .eq('tenant_id', auth.tenantId);
+        }
       }
 
       // Construct a lookup to map updated values efficiently without N updates to the store

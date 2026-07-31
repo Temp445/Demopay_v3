@@ -71,6 +71,7 @@ export interface OTApproval {
   approved_at?: string;
   created_at: string;
   updated_at: string;
+  is_processed?: boolean;
 }
 
 export interface OTApprovalRecord {
@@ -92,6 +93,7 @@ export interface OTApprovalRecord {
   attendanceLogId?: string;
   appliedPolicyId?: string;
   appliedPolicyName?: string;
+  isProcessed?: boolean;
 }
 
 export interface OTProcessing {

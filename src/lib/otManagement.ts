@@ -174,7 +174,10 @@ export async function bulkUpdateOTEligibility(
 export async function getOTStructures(tenantId: string): Promise<OTStructure[]> {
   const { data, error } = await supabase
     .from('ot_structures')
-    .select('*')
+    .select(`
+      *,
+      components:ot_structure_components(*)
+    `)
     .eq('tenant_id', tenantId)
     .order('created_at', { ascending: false });
 

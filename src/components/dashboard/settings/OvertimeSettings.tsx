@@ -209,23 +209,29 @@ export default function OvertimeSettings() {
   }
 
   const selectedPolicy = policies.find(p => p.id === selectedPolicyId);
+  const selectedStructure = selectedPolicy ? otStructures.find(s => s.id === selectedPolicy.ot_structure_id) : null;
+  const formulaBase = selectedStructure?.components?.length 
+    ? `(${selectedStructure.components.map(c => c.component_name.trim().endsWith('OT') ? c.component_name : `${c.component_name} OT`).join(' + ')})`
+    : 'Base Salary';
 
   return (
     <div className="flex flex-col lg:flex-row gap-6">
       {/* Policies List Sidebar */}
-      <div className="lg:w-64 flex-shrink-0 space-y-4">
+      <div className="lg:w-64 flex-shrink-0 space-y-4 lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-3rem)] overflow-y-auto pr-1 hide-scrollbar">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-medium text-gray-900 flex items-center gap-2">
             <Clock className="h-5 w-5 text-indigo-600" />
-            OT Policies
+            OT Settings
           </h3>
-          <button
-            onClick={handleCreateNew}
-            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-            title="Create New Policy"
-          >
-            <Plus className="h-5 w-5" />
-          </button>
+          {policies.length < 2 && (
+            <button
+              onClick={handleCreateNew}
+              className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors border border-indigo-600"
+              title="Create New Policy"
+            >
+              <Plus className="h-5 w-5" />
+            </button>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -251,7 +257,7 @@ export default function OvertimeSettings() {
               </div>
               <div className="flex items-center gap-2 text-xs text-gray-500">
                 <span className={`w-2 h-2 rounded-full ${policy.enabled ? 'bg-green-500' : 'bg-gray-300'}`} />
-                {policy.location_status_match === 'normal' ? 'Normal Location' : policy.location_status_match}
+                {policy.location_status_match === 'normal' ? 'Office' : 'Outside Office'}
               </div>
             </button>
           ))}
@@ -326,11 +332,11 @@ export default function OvertimeSettings() {
                     disabled={selectedPolicy.is_default}
                     className="block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none sm:text-sm disabled:bg-gray-50 disabled:text-gray-500 px-3 py-2"
                   >
-                    <option value="normal">Normal</option>
-                    <option value="outside_office">Outside Office</option>
+                    <option value="normal" disabled={policies.some(p => p.id !== selectedPolicy.id && p.location_status_match === 'normal')}>Office</option>
+                    <option value="outside_office" disabled={policies.some(p => p.id !== selectedPolicy.id && p.location_status_match === 'outside_office')}>Outside Office</option>
                   </select>
                   {selectedPolicy.is_default && (
-                    <p className="mt-1 text-xs text-gray-500">The default policy applies to normal location statuses.</p>
+                    <p className="mt-1 text-xs text-gray-500">The default policy applies to office location statuses.</p>
                   )}
                 </div>
               </div>
@@ -792,11 +798,11 @@ export default function OvertimeSettings() {
                         <h5 className="text-sm font-bold text-slate-900 leading-none mb-2">Final Hourly OT Rate Formula</h5>
                         <p className="text-[11px] text-slate-700 font-medium leading-relaxed">
                           Rate = <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 text-indigo-700 font-bold mx-1">
-                            (Base Salary / ({selectedPolicy.monthly_hours_type === 'fixed' ? selectedPolicy.fixed_days : 'Days'} × {selectedPolicy.working_hours_per_day})) × {selectedPolicy.global_multiplier.toFixed(2)}x
+                            ({formulaBase} / ({selectedPolicy.monthly_hours_type === 'fixed' ? selectedPolicy.fixed_days : 'Days'} × {selectedPolicy.working_hours_per_day})) × {selectedPolicy.global_multiplier.toFixed(2)}x
                           </code>
                         </p>
                         <p className="text-[10px] text-slate-700 mt-2 font-semibold uppercase tracking-wider">
-                          Example: ₹20,000 / {(selectedPolicy.monthly_hours_type === 'fixed' ? selectedPolicy.fixed_days : 30) * selectedPolicy.working_hours_per_day}hrs = ₹{(20000 / ((selectedPolicy.monthly_hours_type === 'fixed' ? selectedPolicy.fixed_days : 30) * selectedPolicy.working_hours_per_day)).toFixed(2)} × {selectedPolicy.global_multiplier.toFixed(2)} = <span className="text-indigo-600 font-black">₹{( (20000 / ((selectedPolicy.monthly_hours_type === 'fixed' ? selectedPolicy.fixed_days : 30) * selectedPolicy.working_hours_per_day)) * selectedPolicy.global_multiplier ).toFixed(2)}/hr</span>
+                          Example (Assuming {formulaBase} = ₹20,000): ₹20,000 / {(selectedPolicy.monthly_hours_type === 'fixed' ? selectedPolicy.fixed_days : 30) * selectedPolicy.working_hours_per_day}hrs = ₹{(20000 / ((selectedPolicy.monthly_hours_type === 'fixed' ? selectedPolicy.fixed_days : 30) * selectedPolicy.working_hours_per_day)).toFixed(2)} × {selectedPolicy.global_multiplier.toFixed(2)} = <span className="text-indigo-600 font-black">₹{( (20000 / ((selectedPolicy.monthly_hours_type === 'fixed' ? selectedPolicy.fixed_days : 30) * selectedPolicy.working_hours_per_day)) * selectedPolicy.global_multiplier ).toFixed(2)}/hr</span>
                         </p>
                       </div>
                     </div>

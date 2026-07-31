@@ -129,6 +129,7 @@ export const useOTApprovalsStore = create<OTApprovalsStore>((set, get) => ({
           attendanceLogId: approval.attendance_log_id,
           appliedPolicyId: approval.applied_policy_id,
           appliedPolicyName: approval.applied_policy_name,
+          isProcessed: approval.is_processed || false,
         };
       });
 

@@ -154,6 +154,21 @@ export async function saveOvertimePolicy(policy: Partial<OvertimePolicy>): Promi
 export async function deleteOvertimePolicy(policyId: string): Promise<void> {
   const tenantId = await getTenantId();
   
+  // Check if policy is already used in calculations
+  const { count, error: checkError } = await supabase
+    .from('ot_approvals')
+    .select('*', { count: 'exact', head: true })
+    .eq('applied_policy_id', policyId)
+    .eq('tenant_id', tenantId);
+    
+  if (checkError) {
+    throw new Error(`Failed to check policy usage: ${checkError.message}`);
+  }
+  
+  if (count && count > 0) {
+    throw new Error('Cannot delete this policy because it has already been used for overtime calculations.');
+  }
+
   const { error } = await supabase
     .from('overtime_policies')
     .delete()

@@ -551,8 +551,13 @@ export default function OTTimeStamp() {
                           <button onClick={() => handleDelete(approval)} title="Delete Record" className="p-1.5 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"><Trash2 className="h-4 w-4" /></button>
                         </>
                       )}
-                      {approval.approvalStatus !== 'pending' && (
+                      {approval.approvalStatus !== 'pending' && !approval.isProcessed && (
                         <button onClick={() => handleRevoke(approval.id)} title="Revoke (Set back to Pending)" className="p-1.5 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors"><RotateCcw className="h-4 w-4" /></button>
+                      )}
+                      {approval.approvalStatus !== 'pending' && approval.isProcessed && (
+                        <div title="This record has been processed and cannot be revoked" className="p-1.5 rounded-lg text-gray-300 cursor-not-allowed">
+                          <RotateCcw className="h-4 w-4" />
+                        </div>
                       )}
                       {approval.approvalStatus === 'approved' && approval.approvedByName && (
                         <span className="text-xs text-gray-400 ml-1">by {approval.approvedByName}</span>

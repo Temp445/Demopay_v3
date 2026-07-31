@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Edit, Trash2, FileClock } from 'lucide-react';
+import { Plus, Edit, Trash2, FileClock, Settings } from 'lucide-react';
 import { useOTStructuresStore } from '../../../stores/otStructuresStore';
 import CreateStructureModal from './CreateStructureModal';
 import EditStructureModal from './EditStructureModal';

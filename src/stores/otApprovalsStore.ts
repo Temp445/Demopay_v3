@@ -127,6 +127,8 @@ export const useOTApprovalsStore = create<OTApprovalsStore>((set, get) => ({
           approvedByName: approval.approved_by ? approverMap.get(approval.approved_by) : undefined,
           approvedAt: approval.approved_at,
           attendanceLogId: approval.attendance_log_id,
+          appliedPolicyId: approval.applied_policy_id,
+          appliedPolicyName: approval.applied_policy_name,
         };
       });
 

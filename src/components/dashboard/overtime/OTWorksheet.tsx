@@ -11,7 +11,7 @@ import {
   calculateTotalOTAmount, 
   getStandardMonthlyHours 
 } from '../../../lib/otManagement';
-import { getGlobalOvertimeConfig } from '../../../lib/overtime';
+import { getOvertimePolicies } from '../../../lib/overtime';
 import type { OTComponent } from '../../../types/overtime';
 import toast from 'react-hot-toast';
 
@@ -34,8 +34,7 @@ export default function OTWorksheet() {
 
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
-  const [selectedStructureId, setSelectedStructureId] = useState('');
-  const [structureComponents, setStructureComponents] = useState<OTComponent[]>([]);
+    const [structuresMap, setStructuresMap] = useState<Record<string, OTComponent[]>>({});
   const [loadingComponents, setLoadingComponents] = useState(false);
 
   // Date Handling Mode
@@ -45,7 +44,9 @@ export default function OTWorksheet() {
 
   const [standardMonthlyHours, setStandardMonthlyHours] = useState(208);
   const [globalMultiplier, setGlobalMultiplier] = useState(1.00);
+  const [allPolicies, setAllPolicies] = useState<any[]>([]);
 
+  const [selectedPolicyId, setSelectedPolicyId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [processing, setProcessing] = useState(false);
@@ -67,9 +68,26 @@ export default function OTWorksheet() {
 
     setPeriodStart(formatDate(firstDay));
     setPeriodEnd(formatDate(lastDay));
-    
-    getStandardMonthlyHours().then(hours => setStandardMonthlyHours(hours));
-    getGlobalOvertimeConfig().then(config => setGlobalMultiplier(config?.global_multiplier || 1.00));
+    const loadInitialData = async () => {
+      const auth = await validateAuth();
+      if (!auth.isAuthenticated || !auth.tenantId) return;
+
+      const hours = await getStandardMonthlyHours();
+      setStandardMonthlyHours(hours);
+
+      const policies = await getOvertimePolicies();
+      setAllPolicies(policies);
+      const activePolicies = policies.filter(p => p.enabled && p.is_active !== false);
+      const defaultPolicy = activePolicies.find(p => p.is_default) || activePolicies[0];
+      if (defaultPolicy) {
+        setSelectedPolicyId(defaultPolicy.id);
+      }
+      
+      const config = policies.find(p => p.is_default) || policies[0];
+      setGlobalMultiplier(config?.global_multiplier || 1.00);
+    };
+
+    loadInitialData();
   }, [fetchStructures]);
 
   // Sync dates based on month/year if in payroll_period mode
@@ -103,26 +121,32 @@ export default function OTWorksheet() {
     load();
   }, [periodStart, periodEnd, fetchEligibleEmployees]);
 
-  // Fetch structure components on structure change
+  // Fetch structure components for all unique structures in eligible employees
   useEffect(() => {
     const load = async () => {
-      if (!selectedStructureId) { setStructureComponents([]); return; }
+      const uniqueStructureIds = Array.from(new Set(eligibleEmployees.map(e => e.ot_structure_id).filter(Boolean))) as string[];
+      if (!uniqueStructureIds.length) { setStructuresMap({}); return; }
+      
       setLoadingComponents(true);
       try {
         const auth = await validateAuth();
         if (auth.isAuthenticated && auth.tenantId) {
-          const structure = await getOTStructureWithComponents(selectedStructureId, auth.tenantId);
-          setStructureComponents(structure?.components?.filter(c => c.is_active) || []);
+          const newMap: Record<string, OTComponent[]> = {};
+          await Promise.all(uniqueStructureIds.map(async (id) => {
+            const structure = await getOTStructureWithComponents(id, auth.tenantId!);
+            newMap[id] = structure?.components?.filter(c => c.is_active) || [];
+          }));
+          setStructuresMap(newMap);
         }
       } catch (err) {
         console.error('Failed to load structure components', err);
-        setStructureComponents([]);
+        setStructuresMap({});
       } finally {
         setLoadingComponents(false);
       }
     };
     load();
-  }, [selectedStructureId]);
+  }, [eligibleEmployees]);
 
   // calculation removed as it's now handled by store but worksheet needs preview
   const getCleanRefName = (name: string) => name.replace(/[\[\]]/g, '').trim().toLowerCase();
@@ -145,12 +169,12 @@ export default function OTWorksheet() {
 
   const employeesWithAmounts = useMemo(() => {
     return eligibleEmployees.map(emp => {
-      if (!structureComponents.length) return { ...emp, componentAmounts: [], totalAmount: 0 };
+      const empStructureComps = emp.ot_structure_id ? (structuresMap[emp.ot_structure_id] || []) : [];
+      if (!empStructureComps.length) return { ...emp, componentAmounts: [], totalAmount: 0 };
       
       const componentValues = new Map<string, number>();
-      for (const comp of structureComponents) {
+      for (const comp of empStructureComps) {
         if (comp.calculation_type === 'percentage' && comp.percentage_of) {
-          // Use the employee's master value as base for percentage calculation
           const masterVal = getMasterValue(emp.masterValues, comp);
           if (masterVal !== null) {
             componentValues.set(comp.id, masterVal);
@@ -158,14 +182,13 @@ export default function OTWorksheet() {
             componentValues.set(comp.id, comp.value);
           }
         } else {
-          // Handle manual overrides from worksheet if any (though usually for fixed/editable)
           const userValue = emp.componentValues?.get(comp.id);
           componentValues.set(comp.id, userValue !== undefined ? userValue : comp.value);
         }
       }
 
       const { components: processedComponents, total } = calculateTotalOTAmount(
-        structureComponents,
+        empStructureComps,
         emp.total_ot_hours,
         componentValues,
         standardMonthlyHours,
@@ -173,17 +196,27 @@ export default function OTWorksheet() {
       );
       return { ...emp, componentAmounts: processedComponents, totalAmount: total };
     });
-  }, [eligibleEmployees, structureComponents, standardMonthlyHours, componentNameToId]);
+  }, [eligibleEmployees, structuresMap, standardMonthlyHours, componentNameToId]);
 
   const filteredEmployees = useMemo(() => {
-    if (!searchTerm) return employeesWithAmounts;
-    const lower = searchTerm.toLowerCase();
-    return employeesWithAmounts.filter(emp =>
-      emp.employee_name.toLowerCase().includes(lower) ||
-      emp.employee_code.toLowerCase().includes(lower) ||
-      (emp.department && emp.department.toLowerCase().includes(lower))
-    );
-  }, [employeesWithAmounts, searchTerm]);
+    let result = employeesWithAmounts;
+    if (selectedPolicyId) {
+      const defaultPolicyId = allPolicies.find(p => p.is_default)?.id;
+      result = result.filter(emp => (emp.applied_policy_id || defaultPolicyId) === selectedPolicyId);
+    } else {
+      // If no policy is selected (e.g., all policies disabled), show no employees
+      return [];
+    }
+    if (searchTerm) {
+      const lower = searchTerm.toLowerCase();
+      result = result.filter(emp =>
+        emp.employee_name.toLowerCase().includes(lower) ||
+        emp.employee_code.toLowerCase().includes(lower) ||
+        (emp.department && emp.department.toLowerCase().includes(lower))
+      );
+    }
+    return result;
+  }, [employeesWithAmounts, searchTerm, selectedPolicyId, allPolicies]);
 
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -195,16 +228,16 @@ export default function OTWorksheet() {
   };
 
   const handleProcess = async () => {
-    if (!selectedStructureId) { toast.error('Please select an OT structure first'); return; }
     if (selectedIds.length === 0) { toast.error('Please select at least one employee'); return; }
     setProcessing(true);
     try {
+      const selectedPolicy = allPolicies.find(p => p.id === selectedPolicyId);
       const processId = await createProcess({
         process_name: `OT Batch ${periodStart} to ${periodEnd}`,
         processing_period_start: periodStart,
         processing_period_end: periodEnd,
         processing_mode: 'standalone',
-        ot_structure_id: selectedStructureId
+        ot_structure_id: selectedPolicy?.ot_structure_id || undefined
       });
       await calculateProcess(processId, selectedIds);
       toast.success(`OT processed for ${selectedIds.length} employee(s)`);
@@ -218,80 +251,85 @@ export default function OTWorksheet() {
 
 
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="space-y-4">
+      {/* Filter Card */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <Calendar className="inline h-4 w-4 mr-1 text-slate-400" /> Period Start
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+              Period Start
             </label>
             <input 
               type="date" 
               value={periodStart} 
               onChange={e => setPeriodStart(e.target.value)}
-              className="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" 
+              className="block w-full border border-slate-200 rounded-lg bg-slate-50 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-shadow" 
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <Calendar className="inline h-4 w-4 mr-1 text-slate-400" /> Period End
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+              Period End
             </label>
             <input 
               type="date" 
               value={periodEnd} 
               onChange={e => setPeriodEnd(e.target.value)}
-              className="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" 
+              className="block w-full border border-slate-200 rounded-lg bg-slate-50 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-shadow" 
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <RefreshCcw className="inline h-4 w-4 mr-1 text-slate-400" /> OT Structure
-            </label>
-            <select 
-              value={selectedStructureId} 
-              onChange={e => setSelectedStructureId(e.target.value)}
-              className="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-            >
-              <option value="">Select Structure</option>
-              {structures.filter(s => s.is_active).map(s => (
-                <option key={s.id} value={s.id}>{s.structure_name}</option>
-              ))}
-            </select>
-          </div>
+          <label className="md:col-span-1 col-span-2 block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+            Filter Policy
+          </label>
+          <select 
+            value={selectedPolicyId} 
+            onChange={e => setSelectedPolicyId(e.target.value)}
+            className="block w-full border border-slate-200 rounded-lg bg-slate-50 py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-shadow"
+          >
+            {allPolicies.map(p => (
+              <option key={p.id} value={p.id} disabled={!p.enabled || p.is_active === false}>
+                {p.name} {(!p.enabled || p.is_active === false) && '(Disabled)'}
+              </option>
+            ))}
+          </select>
         </div>
+        </div>
+        
       </div>
 
-      <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-        <div className="relative w-full md:w-96">
+      {/* Search + Action Row */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <Search className="h-5 w-5 text-gray-400" />
+            <Search className="h-4 w-4 text-slate-400" />
           </div>
           <input 
             type="text" 
-            placeholder="Search by employee name or code..."
+            placeholder="Search employee..."
             value={searchTerm} 
             onChange={e => setSearchTerm(e.target.value)}
-            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" 
+            className="block w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-lg bg-white text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-shadow" 
           />
         </div>
 
         <button 
           onClick={handleProcess} 
-          disabled={processing || selectedIds.length === 0 || !selectedStructureId}
-          className="inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          disabled={processing || selectedIds.length === 0}
+          className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors shrink-0"
         >
           {processing ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
-            <Play className="h-4 w-4 mr-2" />
+            <Play className="h-4 w-4" />
           )}
-          {processing ? 'Processing...' : `Process Selected (${selectedIds.length})`}
+          <span className="hidden sm:inline">{processing ? 'Processing...' : `Process (${selectedIds.length})`}</span>
+          <span className="sm:hidden">{selectedIds.length}</span>
         </button>
       </div>
 
       {/* Worksheet Table */}
       <div className="bg-white border rounded-2xl overflow-hidden shadow-xl shadow-slate-100/50">
-        {loading ? (
+        {loading || loadingComponents ? (
           <div className="py-24 flex flex-col items-center justify-center gap-4">
             <div className="relative">
               <div className="h-14 w-14 rounded-full border-4 border-indigo-100 border-t-indigo-600 animate-spin" />
@@ -299,7 +337,9 @@ export default function OTWorksheet() {
                 <Calculator className="h-5 w-5 text-indigo-600" />
               </div>
             </div>
-            <p className="text-slate-500 font-bold uppercase tracking-widest text-[10px]">Fetching approved overtime records...</p>
+            <p className="text-slate-500 font-bold uppercase tracking-widest text-[10px]">
+              {loading ? 'Fetching approved overtime records...' : 'Loading structure components...'}
+            </p>
           </div>
         ) : filteredEmployees.length > 0 ? (
           <div className="overflow-x-auto">
@@ -362,13 +402,13 @@ export default function OTWorksheet() {
             </table>
           </div>
         ) : (
-          <div className="text-center py-24 px-4 bg-gray-50/20">
-            <div className="bg-white w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-xl border border-gray-100">
-              <Info className="h-12 w-12 text-blue-200" />
+          <div className="text-center py-16 px-6">
+            <div className="bg-blue-50 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Info className="h-8 w-8 text-blue-400" />
             </div>
-            <h4 className="text-2xl font-semibold text-gray-900 mb-3">No approved OT records found</h4>
-            <p className="text-gray-400 max-w-sm mx-auto font-medium leading-relaxed">
-              Ensure employees have <strong>Approved</strong> overtime in the OT Approvals module for the selected date range.
+            <h4 className="text-base font-semibold text-slate-700 mb-2">No approved OT records found</h4>
+            <p className="text-sm text-slate-400 max-w-xs mx-auto leading-relaxed">
+              Ensure employees have <strong className="text-slate-600">Approved</strong> overtime in the OT Approvals module for the selected date range.
             </p>
           </div>
         )}

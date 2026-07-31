@@ -17,6 +17,14 @@ export interface OvertimeConfig {
   working_hours_per_day: number;
   global_multiplier: number;
   link_with_payroll: boolean;
+  ot_structure_id?: string | null;
+}
+
+export interface OvertimePolicy extends OvertimeConfig {
+  id: string;
+  name: string;
+  location_status_match: string;
+  is_default: boolean;
 }
 
 export interface OvertimeResult {
@@ -33,135 +41,128 @@ export interface ShiftOvertimeConfig {
 }
 
 /**
- * Get global overtime configuration from company settings
+ * Get all overtime policies
  */
-export async function getGlobalOvertimeConfig(): Promise<OvertimeConfig | null> {
+export async function getOvertimePolicies(): Promise<OvertimePolicy[]> {
   const tenantId = await getTenantId();
 
-  // Try fetching with the new column first
   const { data, error } = await supabase
-    .from('company_settings')
-    .select(`
-      overtime_enabled,
-      overtime_calculation_timing,
-      overtime_threshold_minutes,
-      overtime_rounding_interval,
-      overtime_rounding_method,
-      overtime_rounding_mode,
-      ot_monthly_hours_type,
-      ot_fixed_days,
-      ot_working_hours_per_day,
-      ot_global_multiplier,
-      ot_link_with_payroll
-    `)
+    .from('overtime_policies')
+    .select('*')
     .eq('tenant_id', tenantId)
-    .maybeSingle();
-
-  // If error is related to missing column, retry without it
-  if (error && error.message.includes('column') && error.message.includes('not found')) {
-    const { data: retryData, error: retryError } = await supabase
-      .from('company_settings')
-      .select(`
-        overtime_enabled,
-        overtime_calculation_timing,
-        overtime_threshold_minutes,
-        overtime_rounding_interval,
-        overtime_rounding_method,
-        overtime_rounding_mode,
-        ot_monthly_hours_type,
-        ot_fixed_days,
-        ot_working_hours_per_day,
-        ot_global_multiplier
-      `)
-      .eq('tenant_id', tenantId)
-      .maybeSingle();
-      
-    if (retryError) {
-      console.error('Error fetching overtime config (retry):', retryError);
-      return null;
-    }
-    
-    if (!retryData) return null;
-    
-    return {
-      enabled: retryData.overtime_enabled || false,
-      calculation_timing: retryData.overtime_calculation_timing || 'both',
-      threshold_minutes: retryData.overtime_threshold_minutes || 30,
-      rounding_interval: retryData.overtime_rounding_interval || 30,
-      rounding_method: retryData.overtime_rounding_method || 'nearest',
-      rounding_mode: retryData.overtime_rounding_mode || 'combined',
-      monthly_hours_type: retryData.ot_monthly_hours_type || 'fixed',
-      fixed_days: Number(retryData.ot_fixed_days) || 26,
-      working_hours_per_day: Number(retryData.ot_working_hours_per_day) || 8,
-      global_multiplier: Number(retryData.ot_global_multiplier) || 1.00,
-      link_with_payroll: false, // Default if column missing
-    };
-  }
+    .order('is_default', { ascending: false })
+    .order('created_at', { ascending: true });
 
   if (error) {
-    console.error('Error fetching overtime config:', error);
-    return null;
+    console.error('Error fetching overtime policies:', error);
+    return [];
   }
 
-  if (!data) {
-    return null;
+  return (data || []).map(row => ({
+    id: row.id,
+    name: row.name,
+    location_status_match: row.location_status_match,
+    is_default: row.is_default,
+    enabled: row.overtime_enabled || false,
+    calculation_timing: row.calculation_timing || 'both',
+    threshold_minutes: row.threshold_minutes || 30,
+    rounding_interval: row.rounding_interval || 30,
+    rounding_method: row.rounding_method || 'nearest',
+    rounding_mode: row.rounding_mode || 'combined',
+    monthly_hours_type: row.monthly_hours_type || 'fixed',
+    fixed_days: Number(row.fixed_days) || 26,
+    working_hours_per_day: Number(row.working_hours_per_day) || 8,
+    global_multiplier: Number(row.global_multiplier) || 1.00,
+    link_with_payroll: row.link_with_payroll || false,
+    ot_structure_id: row.ot_structure_id,
+  }));
+}
+
+/**
+ * Save an overtime policy (creates or updates)
+ */
+export async function saveOvertimePolicy(policy: Partial<OvertimePolicy>): Promise<OvertimePolicy | null> {
+  const tenantId = await getTenantId();
+
+  const payload = {
+    tenant_id: tenantId,
+    name: policy.name,
+    location_status_match: policy.location_status_match,
+    is_default: policy.is_default,
+    overtime_enabled: policy.enabled,
+    calculation_timing: policy.calculation_timing,
+    threshold_minutes: policy.threshold_minutes,
+    rounding_interval: policy.rounding_interval,
+    rounding_method: policy.rounding_method,
+    rounding_mode: policy.rounding_mode,
+    monthly_hours_type: policy.monthly_hours_type,
+    fixed_days: policy.fixed_days,
+    working_hours_per_day: policy.working_hours_per_day,
+    global_multiplier: policy.global_multiplier,
+    link_with_payroll: policy.link_with_payroll,
+    ot_structure_id: policy.ot_structure_id,
+    updated_at: new Date().toISOString()
+  };
+
+  let result;
+  if (policy.id) {
+    result = await supabase
+      .from('overtime_policies')
+      .update(payload)
+      .eq('id', policy.id)
+      .eq('tenant_id', tenantId)
+      .select()
+      .single();
+  } else {
+    result = await supabase
+      .from('overtime_policies')
+      .insert(payload)
+      .select()
+      .single();
   }
 
+  if (result.error) {
+    console.error('Error saving overtime policy:', result.error);
+    throw new Error(`Failed to save overtime policy: ${result.error.message}`);
+  }
+  
+  if (!result.data) return null;
+  
+  const row = result.data;
   return {
-    enabled: data.overtime_enabled || false,
-    calculation_timing: data.overtime_calculation_timing || 'both',
-    threshold_minutes: data.overtime_threshold_minutes || 30,
-    rounding_interval: data.overtime_rounding_interval || 30,
-    rounding_method: data.overtime_rounding_method || 'nearest',
-    rounding_mode: data.overtime_rounding_mode || 'combined',
-    monthly_hours_type: data.ot_monthly_hours_type || 'fixed',
-    fixed_days: Number(data.ot_fixed_days) || 26,
-    working_hours_per_day: Number(data.ot_working_hours_per_day) || 8,
-    global_multiplier: Number(data.ot_global_multiplier) || 1.00,
-    link_with_payroll: data.ot_link_with_payroll || false,
+    id: row.id,
+    name: row.name,
+    location_status_match: row.location_status_match,
+    is_default: row.is_default,
+    enabled: row.overtime_enabled || false,
+    calculation_timing: row.calculation_timing || 'both',
+    threshold_minutes: row.threshold_minutes || 30,
+    rounding_interval: row.rounding_interval || 30,
+    rounding_method: row.rounding_method || 'nearest',
+    rounding_mode: row.rounding_mode || 'combined',
+    monthly_hours_type: row.monthly_hours_type || 'fixed',
+    fixed_days: Number(row.fixed_days) || 26,
+    working_hours_per_day: Number(row.working_hours_per_day) || 8,
+    global_multiplier: Number(row.global_multiplier) || 1.00,
+    link_with_payroll: row.link_with_payroll || false,
   };
 }
 
 /**
- * Update global overtime configuration
+ * Delete an overtime policy
  */
-export async function updateGlobalOvertimeConfig(config: Partial<OvertimeConfig>): Promise<void> {
+export async function deleteOvertimePolicy(policyId: string): Promise<void> {
   const tenantId = await getTenantId();
-
-  const updates: any = {};
-  if (config.enabled !== undefined) updates.overtime_enabled = config.enabled;
-  if (config.calculation_timing !== undefined) updates.overtime_calculation_timing = config.calculation_timing;
-  if (config.threshold_minutes !== undefined) updates.overtime_threshold_minutes = config.threshold_minutes;
-  if (config.rounding_interval !== undefined) updates.overtime_rounding_interval = config.rounding_interval;
-  if (config.rounding_method !== undefined) updates.overtime_rounding_method = config.rounding_method;
-  if (config.rounding_mode !== undefined) updates.overtime_rounding_mode = config.rounding_mode;
   
-  if (config.monthly_hours_type !== undefined) updates.ot_monthly_hours_type = config.monthly_hours_type;
-  if (config.fixed_days !== undefined) updates.ot_fixed_days = config.fixed_days;
-  if (config.working_hours_per_day !== undefined) updates.ot_working_hours_per_day = config.working_hours_per_day;
-  if (config.global_multiplier !== undefined) updates.ot_global_multiplier = config.global_multiplier;
-  if (config.link_with_payroll !== undefined) updates.ot_link_with_payroll = config.link_with_payroll;
-
   const { error } = await supabase
-    .from('company_settings')
-    .update(updates)
+    .from('overtime_policies')
+    .delete()
+    .eq('id', policyId)
     .eq('tenant_id', tenantId);
-
+    
   if (error) {
-    // If update fails due to missing column, try without it
-    if (error.message.includes('column') && error.message.includes('not found')) {
-      const safeUpdates = { ...updates };
-      delete safeUpdates.ot_link_with_payroll;
-      
-      const { error: retryError } = await supabase
-        .from('company_settings')
-        .update(safeUpdates)
-        .eq('tenant_id', tenantId);
-        
-      if (retryError) throw new Error(`Failed to update overtime config (retry): ${retryError.message}`);
-      return;
-    }
-    throw new Error(`Failed to update overtime config: ${error.message}`);
+    console.error('Error deleting overtime policy:', error);
+    throw new Error(`Failed to delete overtime policy: ${error.message}`);
   }
 }
 

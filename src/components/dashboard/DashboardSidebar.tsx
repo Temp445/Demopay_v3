@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Home, Users, ScanFace, IndianRupee, Settings, PieChart, FileText, Clock, FileClock, Calendar, ClipboardList, Bell, Play, SquareUser, CreditCard, CreditCard as Edit, MapPin, HandCoins, ChevronDown, ChevronRight, CheckCircle, Shield, NotepadText, UserCog, UserPlus, Building2, Server, Webcam, MonitorCheck, LayoutDashboard, ClipboardCheck, MapPinned, SlidersHorizontal, Wifi, FlaskConical, Files, Mail,Camera,BookUser,CircleUserRound ,SquareUserRound   } from 'lucide-react';
+import { X, Home, Users, ScanFace, IndianRupee, Settings, PieChart, FileText, Clock, FileClock,FolderClock , Calendar, ClipboardList, Bell, Play, SquareUser, CreditCard, CreditCard as Edit, MapPin, HandCoins, ChevronDown, ChevronRight, CheckCircle, Shield, NotepadText, UserCog, UserPlus, Building2, Server, Webcam, MonitorCheck, LayoutDashboard, ClipboardCheck, MapPinned, SlidersHorizontal, Wifi, FlaskConical, Files, Mail,Camera,BookUser,CircleUserRound ,SquareUserRound, Network } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useRoleAccess } from '../../hooks/useRoleAccess';
@@ -118,8 +118,8 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
       isGroup: true,
       subItems: [
         { name: 'OT Employees', href: '/dashboard/overtime/employees', icon: Users },
-        { name: 'OT Structures', href: '/dashboard/overtime/structures', icon: Settings },
-        { name: 'OT Time Stamp', href: '/dashboard/overtime/approvals', icon: CheckCircle },
+        { name: 'OT Structures', href: '/dashboard/overtime/structures', icon: FolderClock },
+        { name: 'OT Time Stamp', href: '/dashboard/overtime/approvals', icon: ClipboardCheck },
         { name: 'OT Processing', href: '/dashboard/overtime/processing', icon: Play },
         { name: 'OT Settings', href: '/dashboard/overtime/settings', icon: Settings },
       ],

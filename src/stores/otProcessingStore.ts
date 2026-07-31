@@ -26,7 +26,7 @@ import {
   getOTApprovals,
   getStandardMonthlyHours,
 } from '../lib/otManagement';
-import { getGlobalOvertimeConfig } from '../lib/overtime';
+import { getOvertimePolicies } from '../lib/overtime';
 
 interface ProcessingEmployee extends OTEligibleEmployee {
   componentValues: Map<string, number>;
@@ -512,14 +512,9 @@ export const useOTProcessingStore = create<OTProcessingStore>((set, get) => ({
 
     try {
       const process = await getOTProcess(processId, auth.tenantId);
-      if (!process || !process.ot_structure_id) {
-        throw new Error('Process or OT structure not found. Please select an OT structure.');
+      if (!process) {
+        throw new Error('Process not found.');
       }
-
-      const structure = await getOTStructureWithComponents(process.ot_structure_id, auth.tenantId);
-      if (!structure) throw new Error('OT Structure details not found');
-
-      const structureComponents: OTComponent[] = structure.components || [];
 
       const allEligible = get().eligibleEmployees;
       // Filter employees if specific IDs were provided
@@ -532,6 +527,15 @@ export const useOTProcessingStore = create<OTProcessingStore>((set, get) => ({
         return;
       }
 
+      // Fetch all unique structures needed
+      const uniqueStructureIds = Array.from(new Set(employeesToProcess.map(e => e.ot_structure_id).filter(Boolean))) as string[];
+      const structuresMap: Record<string, OTComponent[]> = {};
+      
+      await Promise.all(uniqueStructureIds.map(async (id) => {
+        const struct = await getOTStructureWithComponents(id, auth.tenantId!);
+        structuresMap[id] = struct?.components || [];
+      }));
+
       // Fetch all approvals and master values once to avoid N+1 queries in the loop
       const approvals = await getOTApprovals(
         auth.tenantId,
@@ -541,7 +545,8 @@ export const useOTProcessingStore = create<OTProcessingStore>((set, get) => ({
       );
 
       // Get standard monthly hours divisor and global multiplier
-      const globalConfig = await getGlobalOvertimeConfig();
+      const policies = await getOvertimePolicies();
+      const globalConfig = policies.find(p => p.is_default) || policies[0] || null;
       const globalMultiplier = globalConfig?.global_multiplier || 1.00;
       const standardMonthlyHours = await getStandardMonthlyHours(process.processing_period_start);
 
@@ -694,7 +699,8 @@ export const useOTProcessingStore = create<OTProcessingStore>((set, get) => ({
         const effectiveComponentValues = new Map<string, number>();
         const empMasters = masterValuesByEmployee[employee.employee_id] || {};
 
-        for (const comp of structureComponents) {
+        const empStructureComps = employee.ot_structure_id ? (structuresMap[employee.ot_structure_id] || []) : [];
+        for (const comp of empStructureComps) {
           if (comp.calculation_type === 'percentage' && comp.percentage_of) {
             let baseAmount = 0;
             const ref = comp.percentage_of.toLowerCase().trim();
@@ -724,7 +730,7 @@ export const useOTProcessingStore = create<OTProcessingStore>((set, get) => ({
         }
 
         const { components: processedComponents, total } = calculateTotalOTAmount(
-          structureComponents,
+          empStructureComps,
           employee.total_ot_hours,
           effectiveComponentValues,
           standardMonthlyHours,
@@ -741,7 +747,7 @@ export const useOTProcessingStore = create<OTProcessingStore>((set, get) => ({
         // Bundle processed data for bulk saving
         bulkSavePayload.push({
           employeeId: employee.employee_id,
-          structureId: structure.id,
+          structureId: employee.ot_structure_id,
           totalOTHours: employee.total_ot_hours,
           totalOTAmount: total,
           components: processedComponents,

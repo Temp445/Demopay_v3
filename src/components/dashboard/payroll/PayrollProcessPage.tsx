@@ -106,7 +106,7 @@ import {
   bulkSaveOTProcessedData,
   updateOTProcess
 } from '../../../lib/otManagement';
-import { getGlobalOvertimeConfig } from '../../../lib/overtime';
+import { getOvertimePolicies } from '../../../lib/overtime';
 
 // ... [Keep getDefaultPeriod helper as is] ...
 const getDefaultPeriod = () => {
@@ -219,7 +219,8 @@ export default function PayrollProcessPage() {
   }, []);
 
   const loadOTConfig = async () => {
-    const config = await getGlobalOvertimeConfig();
+    const policies = await getOvertimePolicies();
+    const config = policies.find(p => p.is_default) || policies[0];
     setOtConfig(config);
     if (!config?.enabled || !config?.link_with_payroll) {
       setOtLinked(false);
@@ -1609,7 +1610,8 @@ export default function PayrollProcessPage() {
       const periodString = refDate.toLocaleString('en-US', { month: 'short', year: 'numeric' });
 
       // Global OT config (fetched once)
-      const globalOTConfig = otLinked ? await getGlobalOvertimeConfig() : null;
+      const policies = otLinked ? await getOvertimePolicies() : [];
+      const globalOTConfig = policies.find(p => p.is_default) || policies[0] || null;
       const standardHours = otLinked ? await getStandardMonthlyHours(periodStart) : 208;
       const otMultiplier = globalOTConfig?.global_multiplier || 1.00;
 

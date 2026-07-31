@@ -5,7 +5,7 @@ import { useSalaryStructuresStore } from '../../../stores/salaryStructuresStore'
 import toast from 'react-hot-toast';
 
 interface EditStructureModalProps {
-  structureId: string;
+  structureId?: string | null;
   onClose: () => void;
 }
 
@@ -13,6 +13,7 @@ export default function EditStructureModal({ structureId, onClose }: EditStructu
   // Structure details state & store
   const { 
     structures, 
+    createStructure,
     updateStructure, 
     modalLoading,
     components, 
@@ -23,7 +24,7 @@ export default function EditStructureModal({ structureId, onClose }: EditStructu
   
   const { salaryComponentTypes, fetchSalaryComponentTypes } = useSalaryStructuresStore();
   
-  const structure = structures.find(s => s.id === structureId);
+  const structure = structureId ? structures.find(s => s.id === structureId) : null;
 
   const [formData, setFormData] = useState({
     structure_name: structure?.structure_name || '',
@@ -51,17 +52,25 @@ export default function EditStructureModal({ structureId, onClose }: EditStructu
 
   // Fetch components when modal opens
   useEffect(() => {
-    fetchComponents(structureId);
+    if (structureId) {
+      fetchComponents(structureId);
+    } else {
+      setLocalComponents([]);
+      setComponentsToDelete([]);
+      setComponentsToAdd([]);
+    }
     fetchSalaryComponentTypes();
   }, [structureId, fetchComponents, fetchSalaryComponentTypes]);
 
   // Sync loaded components to local state (only once when they load)
   useEffect(() => {
-    setLocalComponents(components);
-    // Reset trackers when components load fresh from DB
-    setComponentsToDelete([]);
-    setComponentsToAdd([]);
-  }, [components]);
+    if (structureId) {
+      setLocalComponents(components);
+      // Reset trackers when components load fresh from DB
+      setComponentsToDelete([]);
+      setComponentsToAdd([]);
+    }
+  }, [components, structureId]);
 
   // Handle Structure Details Update
   const handleSubmit = async (e: React.FormEvent) => {
@@ -74,8 +83,15 @@ export default function EditStructureModal({ structureId, onClose }: EditStructu
 
     setIsSaving(true);
     try {
-      // 1. Update structure details
-      await updateStructure(structureId, formData);
+      let activeStructureId = structureId;
+
+      if (activeStructureId) {
+        // 1. Update structure details
+        await updateStructure(activeStructureId, formData);
+      } else {
+        // 1. Create new structure
+        activeStructureId = await createStructure(formData);
+      }
 
       // 2. Process deletions
       for (const id of componentsToDelete) {
@@ -86,13 +102,13 @@ export default function EditStructureModal({ structureId, onClose }: EditStructu
       for (const newComp of componentsToAdd) {
         // Remove the temporary id before sending to the DB
         const { id, ...componentData } = newComp;
-        await addComponent(structureId, componentData);
+        await addComponent(activeStructureId, componentData);
       }
 
-      toast.success('Structure updated successfully');
+      toast.success(structureId ? 'Structure updated successfully' : 'Structure created successfully');
       onClose();
     } catch (error) {
-      toast.error('Failed to update structure');
+      toast.error(structureId ? 'Failed to update structure' : 'Failed to create structure');
       console.error(error);
     } finally {
       setIsSaving(false);
@@ -100,8 +116,8 @@ export default function EditStructureModal({ structureId, onClose }: EditStructu
   };
 
   // Handle Component Delete (Local only)
-  const handleDeleteComponent = (componentId: string) => {
-    if (!confirm('Remove this component?')) return;
+  const handleDeleteComponent = (componentId: string, skipConfirm = false) => {
+    if (!skipConfirm && !confirm('Remove this component?')) return;
 
     if (componentId.startsWith('temp-')) {
       // It's a newly added component, just remove from the add list
@@ -208,10 +224,10 @@ export default function EditStructureModal({ structureId, onClose }: EditStructu
             <div className="mb-6 bg-slate-50 p-5 rounded-lg border border-slate-200">
               <h5 className="font-medium text-slate-800 mb-1 flex items-center gap-2">
                 <Plus className="h-4 w-4 text-slate-500" />
-                Quick Add Earning Components
+                Quick Add Earning Components {localComponents.length > 0 && <span className="text-sm font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">{localComponents.length}</span>}
               </h5>
               <p className="text-sm text-slate-500 mb-4">
-                Click a component to automatically add it as a percentage-based OT component.
+                Select earning components to include in this overtime structure.
               </p>
               
               <div className="flex flex-wrap gap-2">
@@ -222,7 +238,13 @@ export default function EditStructureModal({ structureId, onClose }: EditStructu
                       key={earning.id}
                       onClick={(e) => {
                         e.preventDefault();
-                        if (isAlreadyAdded) return;
+                        if (isAlreadyAdded) {
+                          const compToRemove = localComponents.find(c => c.component_name === `${earning.name} OT`);
+                          if (compToRemove) {
+                            handleDeleteComponent(compToRemove.id, true);
+                          }
+                          return;
+                        }
                         
                         const newComp = {
                           id: `temp-${Date.now()}-${Math.random()}`,
@@ -238,10 +260,9 @@ export default function EditStructureModal({ structureId, onClose }: EditStructu
                         setLocalComponents([...localComponents, newComp]);
                         setComponentsToAdd([...componentsToAdd, newComp]);
                       }}
-                      disabled={isAlreadyAdded}
                       className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
                         isAlreadyAdded
-                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100 hover:border-emerald-400 hover:shadow-sm cursor-pointer'
                           : 'bg-white text-indigo-600 border border-indigo-200 hover:bg-indigo-50 hover:border-indigo-300 hover:shadow-sm'
                       }`}
                     >
@@ -257,56 +278,7 @@ export default function EditStructureModal({ structureId, onClose }: EditStructu
               </div>
             </div>
 
-            {/* Configured Components List */}
-            <div>
-              <h5 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">
-                Configured Components ({localComponents.length})
-              </h5>
-              
-              {localComponents.length === 0 ? (
-                <div className="text-center py-10 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 text-gray-400 mb-3">
-                    <Plus className="h-6 w-6" />
-                  </div>
-                  <h3 className="text-sm font-medium text-gray-900">No components added</h3>
-                  <p className="text-sm text-gray-500 mt-1">Use the quick add section above to add components.</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {localComponents.map((component) => (
-                    <div
-                      key={component.id}
-                      className="flex items-center gap-4 p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:border-gray-300 transition-colors group"
-                    >
-                      <div className="cursor-move text-gray-300 hover:text-gray-500">
-                        <GripVertical className="h-5 w-5" />
-                      </div>
-                      
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-3">
-                          <span className="text-base font-semibold text-gray-900 truncate">
-                            {component.component_name}
-                          </span>
-                         
-                        </div>
-                        
-                      </div>
-                      
-                      <div>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteComponent(component.id)}
-                          className="p-2 text-rose-500 hover:bg-rose-50 rounded-md opacity-0 group-hover:opacity-100 transition-all focus:opacity-100"
-                          title="Remove Component"
-                        >
-                          <Trash2 className="h-5 w-5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+
           </section>
 
         </div>

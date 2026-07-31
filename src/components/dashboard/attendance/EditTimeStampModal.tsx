@@ -138,8 +138,9 @@ export default function EditTimeStampModal({ record, isOpen, onClose, onSuccess,
       }
 
       onSuccess();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to update time stamp');
+    } catch (error: any) {
+      const msg = error?.message || error?.details || (error instanceof Error ? error.message : 'Failed to update time stamp');
+      toast.error(msg);
     }
   };
 

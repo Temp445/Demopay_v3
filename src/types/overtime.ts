@@ -90,6 +90,8 @@ export interface OTApprovalRecord {
   approvedByName?: string;
   approvedAt?: string;
   attendanceLogId?: string;
+  appliedPolicyId?: string;
+  appliedPolicyName?: string;
 }
 
 export interface OTProcessing {
@@ -191,6 +193,8 @@ export interface OTEligibleEmployee {
   department: string;
   total_ot_hours: number;
   ot_structure_id?: string;
+  applied_policy_id?: string;
+  applied_policy_name?: string;
 }
 
 export interface OTReportData {

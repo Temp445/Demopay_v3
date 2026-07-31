@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { getGlobalOvertimeConfig } from './overtime';
+import { getOvertimePolicies } from './overtime';
 import type {
   EmployeeOTEligibility,
   OTStructure,
@@ -241,6 +241,20 @@ export async function updateOTStructure(
 }
 
 export async function deleteOTStructure(structureId: string, tenantId: string): Promise<void> {
+  // 0. Check if structure is in use by any active overtime policy
+  const { data: policies, error: policyError } = await supabase
+    .from('overtime_policies')
+    .select('name')
+    .eq('ot_structure_id', structureId)
+    .eq('tenant_id', tenantId)
+    .limit(1);
+
+  if (policyError) throw policyError;
+
+  if (policies && policies.length > 0) {
+    throw new Error(`Cannot delete this structure because it is currently assigned to the overtime policy: ${policies[0].name}`);
+  }
+
   // 1. Disconnect from historical records to preserve audit trail
   // Nullify structure reference in individual processed records
   const { error: dataError } = await supabase
@@ -614,6 +628,13 @@ export async function getEligibleEmployeesForOT(
         department:department_id (
           name
         )
+      ),
+      applied_policy_id,
+      applied_policy_name,
+      policy:overtime_policies!applied_policy_id (
+        id,
+        name,
+        ot_structure_id
       )
     `)
     .eq('tenant_id', tenantId)
@@ -624,25 +645,30 @@ export async function getEligibleEmployeesForOT(
   if (error) throw error;
   if (!data) return [];
 
-  // Group by employee and aggregate hours
+  // Group by employee and applied_policy_id to aggregate hours per policy
   const grouped = data.reduce((acc, curr: any) => {
     const empId = curr.employee_id;
+    const policyId = curr.applied_policy_id || 'default';
+    const groupKey = `${empId}_${policyId}`;
+    
     const hours = Number(curr.corrected_ot_hours || curr.original_ot_hours || 0);
 
-    if (!acc[empId]) {
-      acc[empId] = {
+    if (!acc[groupKey]) {
+      acc[groupKey] = {
         employee_id: empId,
         employee_name: curr.employee?.name || 'Unknown',
         employee_code: curr.employee?.employee_code || '-',
         department: curr.employee?.department?.name || 'General',
         total_ot_hours: 0,
-        ot_structure_id: null as any
+        applied_policy_id: curr.applied_policy_id,
+        applied_policy_name: curr.applied_policy_name || curr.policy?.name || 'Default Policy',
+        ot_structure_id: curr.policy?.ot_structure_id || null
       };
     }
     // Precision: Ensure we treat numeric hours correctly
     // If the input is like 5.50 (meaning 5h 30m), it's 5.5.
     // If the user meant 5h 50m, it should have been 5.83 in the DB.
-    acc[empId].total_ot_hours += hours;
+    acc[groupKey].total_ot_hours += hours;
     return acc;
   }, {} as Record<string, OTEligibleEmployee>);
 
@@ -757,7 +783,8 @@ export async function finalizeOTProcess(
  * Aligned with functional spec: Total Working Days × Working Hours per Day
  */
 export async function getStandardMonthlyHours(dateStr?: string): Promise<number> {
-  const config = await getGlobalOvertimeConfig();
+  const policies = await getOvertimePolicies();
+  const config = policies.find(p => p.is_default) || policies[0];
   if (!config) return 208; // Fallback: 26 days * 8 hours
 
   // Total Working Days calculation

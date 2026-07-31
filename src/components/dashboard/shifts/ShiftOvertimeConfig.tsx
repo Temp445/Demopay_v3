@@ -3,7 +3,7 @@ import { X, Clock, AlertCircle, Info } from 'lucide-react';
 import {
   getShiftOvertimeConfig,
   updateShiftOvertimeConfig,
-  getGlobalOvertimeConfig,
+  getOvertimePolicies,
   getTimingDescription,
   type ShiftOvertimeConfig as ShiftOvertimeConfigType,
   type OvertimeConfig,
@@ -43,15 +43,15 @@ export default function ShiftOvertimeConfig({
   const loadConfiguration = async () => {
     try {
       setLoading(true);
-      const [shiftConfig, globalConf] = await Promise.all([
+      const [shiftConfig, policies] = await Promise.all([
         getShiftOvertimeConfig(shiftId),
-        getGlobalOvertimeConfig(),
+        getOvertimePolicies(),
       ]);
 
       if (shiftConfig) {
         setConfig(shiftConfig);
       }
-      setGlobalConfig(globalConf);
+      setGlobalConfig(policies.find(p => p.is_default) || policies[0] || null);
     } catch (error) {
       console.error('Error loading shift overtime config:', error);
       toast.error('Failed to load configuration');

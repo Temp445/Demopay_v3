@@ -49,6 +49,7 @@ export interface CompanySettings {
   enable_directions_api?: boolean;
   enable_distance_matrix_api?: boolean;
   enable_places_api?: boolean;
+  enable_roads_api?: boolean;
   is_hikvision_enabled?: boolean;
   created_at?: string;
   updated_at?: string;

@@ -419,8 +419,8 @@ export default function GoogleMapsLiveTracking({ apiKey }: GMapsLiveProps) {
       ? (locationSettings?.work_radius_tracking_interval_mins || 15)
       : (locationSettings?.journey_tracking_interval_mins || 5);
 
-    // Allow 2 extra minutes of grace beyond the configured interval
-    return differenceInMinutes(currentTime, parseISO(tr.recorded_at)) >= expectedIntervalMins + 2;
+    // Allow 4 extra minutes of grace beyond the configured interval (increased from 2 to 4)
+    return differenceInMinutes(currentTime, parseISO(tr.recorded_at)) >= expectedIntervalMins + 4;
   };
 
   const filteredWorks = useMemo(() => activeWorks.filter(work => {

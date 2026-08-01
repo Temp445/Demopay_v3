@@ -780,6 +780,8 @@ export default function AttendanceTimestamp() {
             clockOutLng={nextEntry?.longitude}
             totalDistanceMeters={selectedRouteEntry.travel_distance_meters || 0}
             totalDurationSeconds={selectedRouteEntry.travel_duration_seconds || 0}
+            plannedDistanceMeters={selectedRouteEntry.planned_distance_meters}
+            roadsApiWarnings={selectedRouteEntry.roads_api_warnings}
             onClose={() => setSelectedRouteEntry(null)}
             clockOutLabel={endLabel}
           />

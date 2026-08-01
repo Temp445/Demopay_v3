@@ -20,11 +20,19 @@ export interface AttendanceTimestamp {
   timing_status: 'OK' | 'OUTSIDE_SHIFT' | 'NO_SHIFT_ASSIGNED';
   created_at: string;
   shift_name?: string;
-  latitude?: number;
-  longitude?: number;
+  latitude?: number | null;
+  longitude?: number | null;
   attendance_mode?: 'Device' | 'Manual' | 'Live' | 'Facial Recognition';
   manual_reason?: string;
   distance_from_branch?: number;
+  accuracy?: number | null;
+  distance_meters?: number | null;
+  travel_distance_meters?: number | null;
+  travel_duration_seconds?: number | null;
+  planned_distance_meters?: number | null;
+  roads_api_warnings?: string[] | null;
+  battery_level?: number | null;
+  image_url?: string | null;
   office_location_status?: 'Office' | 'Outside Office';
   location_address?: string;
 }

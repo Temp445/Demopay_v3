@@ -17,6 +17,7 @@
 import { supabase } from './supabase';
 import { calculateDistance } from './locationService';
 import { useSettingsStore } from '../stores/settingsStore';
+import { computeTravelDistance } from './roadsDistanceService';
 
 // Default Thresholds (if not provided by config)
 const DEFAULT_TIME_THRESHOLD_MS   = 5 * 60 * 1000; // 5 minutes
@@ -36,6 +37,10 @@ export interface TravelSummary {
   totalDistanceMeters: number;
   totalDurationSeconds: number;
   breadcrumbCount: number;
+  /** Planned origin→destination road distance from Routes API (0 if unavailable) */
+  plannedDistanceMeters?: number;
+  /** Warnings from the Roads API snap pipeline (GPS gaps, fallbacks, etc.) */
+  roadsApiWarnings?: string[];
 }
 
 export interface TravelBreadcrumb {
@@ -298,49 +303,98 @@ export async function stopTravelTracking(
 
   const durationSeconds = Math.round((Date.now() - sessionStartTime) / 1000);
   
-  // --- Distance Matrix API (Payroll Accuracy) ---
+  // --- Distance Source Priority Ladder ---
+  // 1. Roads API (snapToRoads + Routes API) — highest accuracy, follows actual road geometry
+  // 2. Distance Matrix API                  — origin/dest road distance only
+  // 3. Haversine sum (default)              — straight-line fallback
   let finalDistanceMeters = Math.round(cumulativeDistance);
-  
+  let plannedDistanceMeters: number | undefined;
+  let roadsApiWarnings: string[] | undefined;
+
   try {
     const settings = useSettingsStore.getState().companySettings;
-    if (settings?.google_maps_enabled && settings?.google_maps_api_key && settings?.enable_distance_matrix_api) {
+
+    // ── Priority 1: Roads API (snapToRoads + computeRoutes) ────────────────
+    if (settings?.google_maps_enabled && settings?.google_maps_api_key && settings?.enable_roads_api) {
       const logs = await getTravelLogs(activeSession.timestampId);
-      
-      // If we have at least a start and end point
+
+      if (logs.length >= 2) {
+        const rawPoints = logs.map(l => ({
+          lat: l.latitude,
+          lng: l.longitude,
+          timestamp: Date.parse(l.recorded_at),
+        }));
+
+        console.log(`[TravelTracking] Running Roads API snap-to-roads on ${rawPoints.length} breadcrumbs…`);
+        const result = await computeTravelDistance(rawPoints, settings.google_maps_api_key, {
+          includeRoutesApi: true,
+        });
+
+        console.log(
+          `[TravelTracking] Roads API → actual: ${result.actualDistanceMeters}m | planned: ${result.plannedDistanceMeters}m | Haversine was: ${finalDistanceMeters}m`
+        );
+        if (result.warnings.length > 0) {
+          console.warn('[TravelTracking] Roads API warnings:', result.warnings);
+        }
+
+        finalDistanceMeters = result.actualDistanceMeters;
+        plannedDistanceMeters = result.plannedDistanceMeters;
+        roadsApiWarnings = result.warnings.length > 0 ? result.warnings : undefined;
+      }
+
+    // ── Priority 2: Distance Matrix API ────────────────────────────────────
+    } else if (settings?.google_maps_enabled && settings?.google_maps_api_key && settings?.enable_distance_matrix_api) {
+      const logs = await getTravelLogs(activeSession.timestampId);
+
       if (logs.length >= 2) {
         const origin = `${logs[0].latitude},${logs[0].longitude}`;
         const destination = `${logs[logs.length - 1].latitude},${logs[logs.length - 1].longitude}`;
-        
-        console.log(`[TravelTracking] Requesting exact road distance from Distance Matrix API...`);
-        const res = await fetch(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${settings.google_maps_api_key}`);
+
+        console.log(`[TravelTracking] Requesting road distance from Distance Matrix API…`);
+        const res = await fetch(
+          `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${settings.google_maps_api_key}`
+        );
         const data = await res.json();
-        
+
         if (data.status === 'OK' && data.rows?.[0]?.elements?.[0]?.status === 'OK') {
-           const exactRoadDistance = data.rows[0].elements[0].distance.value;
-           console.log(`[TravelTracking] Distance Matrix returned ${exactRoadDistance}m (Haversine was ${finalDistanceMeters}m). Using exact distance for payroll.`);
-           finalDistanceMeters = exactRoadDistance;
+          const exactRoadDistance = data.rows[0].elements[0].distance.value;
+          console.log(`[TravelTracking] Distance Matrix → ${exactRoadDistance}m (Haversine was ${finalDistanceMeters}m).`);
+          finalDistanceMeters = exactRoadDistance;
         } else {
-           console.warn(`[TravelTracking] Distance Matrix API returned non-OK status:`, data.status, data.rows?.[0]?.elements?.[0]?.status);
+          console.warn(`[TravelTracking] Distance Matrix API non-OK status:`, data.status, data.rows?.[0]?.elements?.[0]?.status);
         }
       }
     }
+    // ── Priority 3: Haversine (already the default, nothing to do) ──────────
   } catch (err) {
-    console.error(`[TravelTracking] Failed to fetch Distance Matrix API, falling back to Haversine distance:`, err);
+    console.error(`[TravelTracking] Distance calculation error, falling back to Haversine:`, err);
   }
 
   const summary: TravelSummary = {
     totalDistanceMeters: finalDistanceMeters,
     totalDurationSeconds: durationSeconds,
     breadcrumbCount: 0, // informational only
+    plannedDistanceMeters,
+    roadsApiWarnings,
   };
 
   // Write the final summary back to the attendance_timestamp row
+  const updatePayload: Record<string, unknown> = {
+    travel_distance_meters: summary.totalDistanceMeters,
+    travel_duration_seconds: summary.totalDurationSeconds,
+  };
+
+  // Persist planned distance + warnings when Roads API was used
+  if (summary.plannedDistanceMeters !== undefined) {
+    updatePayload.planned_distance_meters = summary.plannedDistanceMeters;
+  }
+  if (summary.roadsApiWarnings && summary.roadsApiWarnings.length > 0) {
+    updatePayload.roads_api_warnings = summary.roadsApiWarnings;
+  }
+
   const { error } = await supabase
     .from('attendance_timestamp')
-    .update({
-      travel_distance_meters: summary.totalDistanceMeters,
-      travel_duration_seconds: summary.totalDurationSeconds,
-    })
+    .update(updatePayload)
     .eq('id', activeSession.timestampId)
     .eq('tenant_id', activeSession.tenantId);
 

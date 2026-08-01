@@ -73,6 +73,7 @@ export default function CompanySettings() {
     enableDistanceMatrixApi: false,
     enablePlacesApi: false,
     enableRouteOptimizationApi: false,
+    enableRoadsApi: false,
   });
 
   // Statutory Elements state
@@ -134,6 +135,7 @@ export default function CompanySettings() {
         enableDirectionsApi: companySettings.enable_directions_api ?? false,
         enableDistanceMatrixApi: companySettings.enable_distance_matrix_api ?? false,
         enablePlacesApi: companySettings.enable_places_api ?? false,
+        enableRoadsApi: companySettings.enable_roads_api ?? false,
       });
     }
   }, [companySettings]);
@@ -292,6 +294,7 @@ export default function CompanySettings() {
         enable_directions_api: formData.enableDirectionsApi,
         enable_distance_matrix_api: formData.enableDistanceMatrixApi,
         enable_places_api: formData.enablePlacesApi,
+        enable_roads_api: formData.enableRoadsApi,
       };
 
       await saveCompanySettings(settingsToSave);
@@ -1344,10 +1347,10 @@ export default function CompanySettings() {
                         <div className="space-y-4">
                             <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                           <div>
-                            <label className="text-sm font-medium text-gray-900">Routes API</label>
+                            <label className="text-sm font-medium text-gray-900">Direction API</label>
                             <p className="text-xs text-gray-500 mt-1">
                               {formData.enableDirectionsApi 
-                                ? "Enabled: Powers the Multi-Stop Route Optimizer."
+                                ? "Enabled: Powers the Multi-Stop Route Optimizer with turn-by-turn routing."
                                 : "Disabled: Route Optimizer is disabled."}
                             </p>
                           </div>
@@ -1369,7 +1372,7 @@ export default function CompanySettings() {
                             <label className="text-sm font-medium text-gray-900">Distance Matrix API</label>
                             <p className="text-xs text-gray-500 mt-1">
                               {formData.enableDistanceMatrixApi 
-                                ? "Enabled: Calculates exact road distance and traffic for Travel Allowance."
+                                ? "Enabled: Legacy fallback. Calculates simple origin-to-destination distance."
                                 : "Disabled: Falls back to Haversine straight-line distance."}
                             </p>
                           </div>
@@ -1379,6 +1382,38 @@ export default function CompanySettings() {
                             className="ml-4 flex-shrink-0 focus:outline-none"
                           >
                             {formData.enableDistanceMatrixApi ? (
+                              <ToggleRight className="h-8 w-8 text-blue-600" />
+                            ) : (
+                              <ToggleLeft className="h-8 w-8 text-gray-400" />
+                            )}
+                          </button>
+                        </div>
+
+                        {/* ── Roads API + Routes API ── */}
+                        <div className="flex items-start justify-between p-4 bg-blue-50 border border-blue-100 rounded-lg">
+                          <div className="flex-1 pr-4">
+                            <label className="text-sm font-medium text-gray-900">
+                              Roads API + Routes API
+                              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">Recommended</span>
+                            </label>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {formData.enableRoadsApi
+                                ? 'Enabled: Snaps GPS breadcrumbs to actual road geometry (snapToRoads) and compares with planned route (computeRoutes) for fraud detection. Most accurate for payroll.'
+                                : 'Disabled: Falls back to Distance Matrix API or Haversine. Enable for highest accuracy travel distance.'}
+                            </p>
+                            {formData.enableRoadsApi && (
+                              <p className="text-xs text-amber-600 mt-2 flex items-start gap-1">
+                                <span>⚠</span>
+                                <span>Requires <strong>Roads API</strong> and <strong>Routes API</strong> enabled in Google Cloud Console.</span>
+                              </p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, enableRoadsApi: !formData.enableRoadsApi })}
+                            className="flex-shrink-0 focus:outline-none"
+                          >
+                            {formData.enableRoadsApi ? (
                               <ToggleRight className="h-8 w-8 text-blue-600" />
                             ) : (
                               <ToggleLeft className="h-8 w-8 text-gray-400" />

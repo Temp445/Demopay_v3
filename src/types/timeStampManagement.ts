@@ -64,6 +64,10 @@ export interface AttendanceTimestamp {
   timestamp: string;
   created_at: string;
   timing_status: string;
+  travel_distance_meters?: number;
+  travel_duration_seconds?: number;
+  planned_distance_meters?: number;
+  roads_api_warnings?: string[];
 }
 
 export interface AttendanceEditLog {

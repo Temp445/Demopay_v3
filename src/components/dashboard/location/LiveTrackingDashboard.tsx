@@ -465,7 +465,8 @@ export default function LiveTrackingDashboard() {
     if (nonTrackingEvents.includes(tracking.event_type)) return false;
     if (!locationSettings?.radius_monitoring_enabled && ['START_WORK', 'RESUME_WORK'].includes(tracking.event_type)) return false;
 
-    const maxDelayMins = (locationSettings?.journey_tracking_interval_mins || 5) + 2;
+    // Allow 4 extra minutes of grace beyond the configured interval (increased from 2 to 4 for a 5 min total if interval is 1)
+    const maxDelayMins = (locationSettings?.journey_tracking_interval_mins || 5) + 4;
     return differenceInMinutes(currentTime, parseISO(tracking.recorded_at)) >= maxDelayMins;
   };
 

@@ -532,7 +532,7 @@ export default function AttendanceValidationSettings() {
                           onChange={(e) => handleChange('gps_sampling_interval_mins', e.target.value === '' ? '' : parseInt(e.target.value))}
                           onBlur={(e) => {
                             const val = parseInt(e.target.value);
-                            if (!isNaN(val) && val < 5) handleChange('gps_sampling_interval_mins', 5);
+                            if (!isNaN(val) && val < 2) handleChange('gps_sampling_interval_mins', 5);
                           }}
                           placeholder="e.g., 5"
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"

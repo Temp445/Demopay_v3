@@ -67,6 +67,8 @@ interface TravelRouteViewerProps {
   clockOutLng?: number | null;
   totalDistanceMeters?: number;
   totalDurationSeconds?: number;
+  plannedDistanceMeters?: number | null;
+  roadsApiWarnings?: string[] | null;
   onClose: () => void;
   clockOutLabel?: string;
 }
@@ -94,6 +96,8 @@ export default function TravelRouteViewer({
   clockOutLng,
   totalDistanceMeters = 0,
   totalDurationSeconds = 0,
+  plannedDistanceMeters,
+  roadsApiWarnings,
   onClose,
   clockOutLabel,
 }: TravelRouteViewerProps) {
@@ -103,6 +107,8 @@ export default function TravelRouteViewer({
   const [mapType, setMapType] = useState<'map' | 'satellite' | '3d'>('map');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [googleMap, setGoogleMap] = useState<google.maps.Map | null>(null);
+  const [fetchedPlannedDistance, setFetchedPlannedDistance] = useState<number | null>(null);
+  const [fetchedRoadsApiWarnings, setFetchedRoadsApiWarnings] = useState<string[] | null>(null);
   const { companySettings } = useSettingsStore();
 
   const isGoogleEnabled = companySettings?.google_maps_enabled && companySettings?.google_maps_api_key;
@@ -123,19 +129,19 @@ export default function TravelRouteViewer({
         let finalClockOutLng = clockOutLng;
         let empId: string | null = null;
 
-        // Fallback: fetch Clock In coordinates if missing
-        if (finalClockInLat == null || finalClockInLng == null) {
-          const { data: tsData } = await supabase
-            .from('attendance_timestamp')
-            .select('latitude, longitude, employee_id')
-            .eq('id', timestampId)
-            .single();
-            
-          if (tsData) {
-            if (tsData.latitude != null) finalClockInLat = tsData.latitude;
-            if (tsData.longitude != null) finalClockInLng = tsData.longitude;
-            empId = tsData.employee_id;
-          }
+        // Always attempt to fetch the attendance_timestamp to get planned_distance_meters, roads_api_warnings, and coordinates
+        const { data: tsData } = await supabase
+          .from('attendance_timestamp')
+          .select('latitude, longitude, employee_id, planned_distance_meters, roads_api_warnings')
+          .eq('id', timestampId)
+          .single();
+          
+        if (tsData) {
+          if (finalClockInLat == null && tsData.latitude != null) finalClockInLat = tsData.latitude;
+          if (finalClockInLng == null && tsData.longitude != null) finalClockInLng = tsData.longitude;
+          empId = tsData.employee_id;
+          if (tsData.planned_distance_meters != null) setFetchedPlannedDistance(tsData.planned_distance_meters);
+          if (tsData.roads_api_warnings != null) setFetchedRoadsApiWarnings(tsData.roads_api_warnings);
         }
 
         // Fallback: fetch Clock Out coordinates if missing
@@ -227,6 +233,9 @@ export default function TravelRouteViewer({
     ? totalDistanceMeters 
     : (logs.length > 0 ? logs[logs.length - 1].cumulative_distance_meters || 0 : 0);
 
+  const finalPlannedDistance = plannedDistanceMeters ?? fetchedPlannedDistance;
+  const finalRoadsWarnings = roadsApiWarnings ?? fetchedRoadsApiWarnings;
+
   const avgSpeedKmh = effectiveDurationSeconds > 0
     ? ((effectiveDistanceMeters / 1000) / (effectiveDurationSeconds / 3600)).toFixed(1)
     : '0.0';
@@ -272,7 +281,7 @@ export default function TravelRouteViewer({
         </div>
 
         {/* Summary Stats */}
-        <div className="grid grid-cols-4 gap-px bg-gray-100 border-b border-gray-100">
+        <div className={`grid ${finalPlannedDistance != null ? 'grid-cols-5' : 'grid-cols-4'} gap-px bg-gray-100 border-b border-gray-100`}>
           <div className="bg-white px-4 py-3 flex items-center gap-3">
             <Ruler className="h-4 w-4 text-indigo-500 flex-shrink-0" />
             <div>
@@ -280,6 +289,22 @@ export default function TravelRouteViewer({
               <p className="text-sm font-bold text-gray-900">{formatDistance(effectiveDistanceMeters)}</p>
             </div>
           </div>
+          {finalPlannedDistance != null && (
+            <div className="bg-white px-4 py-3 flex items-center gap-3">
+              <Ruler className="h-4 w-4 text-emerald-500 flex-shrink-0" />
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase tracking-wide">Planned Distance</p>
+                <div className="flex items-center gap-1">
+                  <p className="text-sm font-bold text-gray-900">{formatDistance(finalPlannedDistance)}</p>
+                  {finalPlannedDistance > 0 && effectiveDistanceMeters > 0 && Math.abs(effectiveDistanceMeters - finalPlannedDistance) / finalPlannedDistance > 0.2 && (
+                    <span className="text-[10px] bg-amber-100 text-amber-800 px-1 py-0.5 rounded font-medium ml-1">
+                      {(((effectiveDistanceMeters - finalPlannedDistance) / finalPlannedDistance) * 100) > 0 ? '+' : ''}{Math.round(((effectiveDistanceMeters - finalPlannedDistance) / finalPlannedDistance) * 100)}%
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="bg-white px-4 py-3 flex items-center gap-3">
             <Clock className="h-4 w-4 text-indigo-500 flex-shrink-0" />
             <div>
@@ -304,6 +329,27 @@ export default function TravelRouteViewer({
             </div>
           </div>
         </div>
+
+        {/* Warnings Banner */}
+        {finalRoadsWarnings && finalRoadsWarnings.length > 0 && (
+          <div className="bg-amber-50 border-b border-amber-200 px-5 py-3">
+            <div className="flex items-start gap-2">
+              <div className="mt-0.5 text-amber-500 shrink-0">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h4 className="text-sm font-medium text-amber-800">Route Analysis Warnings</h4>
+                <ul className="mt-1 text-xs text-amber-700 list-disc list-inside space-y-0.5">
+                  {finalRoadsWarnings.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Main Content Area */}
         <div className={`flex flex-col md:flex-row ${isFullscreen ? 'flex-1 min-h-0' : 'h-[500px]'}`}>

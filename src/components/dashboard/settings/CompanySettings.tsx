@@ -87,6 +87,50 @@ export default function CompanySettings() {
   const [newDepartment, setNewDepartment] = useState({ name: '', costCenter: '' });
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [roadsApiStatus, setRoadsApiStatus] = useState<'checking' | 'enabled' | 'disabled' | 'no-key' | null>(null);
+
+  // Dynamic status check for Roads API
+  useEffect(() => {
+    let isMounted = true;
+    
+    const checkRoadsApi = async () => {
+      if (!formData.enableRoadsApi) {
+        if (isMounted) setRoadsApiStatus(null);
+        return;
+      }
+      
+      if (!formData.googleMapsApiKey) {
+        if (isMounted) setRoadsApiStatus('no-key');
+        return;
+      }
+      
+      if (isMounted) setRoadsApiStatus('checking');
+      
+      try {
+        const response = await fetch(`https://roads.googleapis.com/v1/snapToRoads?path=-35.27801,149.12958|-35.28032,149.12907&interpolate=true&key=${formData.googleMapsApiKey}`);
+        const data = await response.json();
+        
+        if (isMounted) {
+          if (data.error) {
+            setRoadsApiStatus('disabled');
+          } else {
+            setRoadsApiStatus('enabled');
+          }
+        }
+      } catch (e) {
+        if (isMounted) setRoadsApiStatus('disabled');
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      checkRoadsApi();
+    }, 1000);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+    };
+  }, [formData.enableRoadsApi, formData.googleMapsApiKey]);
 
   // Load company settings and statutory settings on mount
   useEffect(() => {
@@ -1402,10 +1446,32 @@ export default function CompanySettings() {
                                 : 'Disabled: Falls back to Distance Matrix API or Haversine. Enable for highest accuracy travel distance.'}
                             </p>
                             {formData.enableRoadsApi && (
-                              <p className="text-xs text-amber-600 mt-2 flex items-start gap-1">
-                                <span>⚠</span>
-                                <span>Requires <strong>Roads API</strong> and <strong>Routes API</strong> enabled in Google Cloud Console.</span>
-                              </p>
+                              <div className="mt-2">
+                                {roadsApiStatus === 'checking' && (
+                                  <p className="text-xs text-gray-500 flex items-center gap-1">
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    <span>Checking Roads API status...</span>
+                                  </p>
+                                )}
+                                {roadsApiStatus === 'enabled' && (
+                                  <p className="text-xs text-green-600 flex items-center gap-1">
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    <span>Roads API is enabled and working.</span>
+                                  </p>
+                                )}
+                                {roadsApiStatus === 'disabled' && (
+                                  <p className="text-xs text-amber-600 flex items-start gap-1">
+                                    <span>⚠</span>
+                                    <span>Requires <strong>Roads API</strong> and <strong>Routes API</strong> enabled in Google Cloud Console.</span>
+                                  </p>
+                                )}
+                                {roadsApiStatus === 'no-key' && (
+                                  <p className="text-xs text-amber-600 flex items-start gap-1">
+                                    <span>⚠</span>
+                                    <span>Please configure your Google Maps API Key above to verify Roads API status.</span>
+                                  </p>
+                                )}
+                              </div>
                             )}
                           </div>
                           <button

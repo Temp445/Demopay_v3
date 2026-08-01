@@ -4,6 +4,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { JourneyPoint } from './JourneyGoogleMap';
 import MapLibre3DViewer, { Map3DMarker, Map3DRoute, Map3DCircle } from './MapLibre3DViewer';
+import { getPreciseDistance } from 'geolib';
 
 export interface WorkSitePin {
   id?: string; // Added to uniquely identify sites
@@ -20,20 +21,12 @@ export interface PathSegment {
   label: string;
 }
 
-// Helper to calculate distance in meters between two coordinates
+// Helper to calculate distance in meters between two coordinates using Vincenty's formulae
 function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371e3; // Earth radius in meters
-  const p1 = lat1 * Math.PI / 180;
-  const p2 = lat2 * Math.PI / 180;
-  const dp = (lat2 - lat1) * Math.PI / 180;
-  const dl = (lon2 - lon1) * Math.PI / 180;
-
-  const a = Math.sin(dp / 2) * Math.sin(dp / 2) +
-            Math.cos(p1) * Math.cos(p2) *
-            Math.sin(dl / 2) * Math.sin(dl / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-  return R * c;
+  return getPreciseDistance(
+    { latitude: lat1, longitude: lon1 },
+    { latitude: lat2, longitude: lon2 }
+  );
 }
 
 // Helper to auto-fit the map to show all points

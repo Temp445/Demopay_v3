@@ -108,8 +108,9 @@ export default function ClockInOutCard({
   // Travel Tracking Config
   const [enableTravelTracking, setEnableTravelTracking] = useState(false);
   const [gpsInterval, setGpsInterval] = useState(5);
-  const [gpsThreshold, setGpsThreshold] = useState(100);
+  const [gpsThreshold, setGpsThreshold] = useState<number>(100);
   const [captureImageEnabled, setCaptureImageEnabled] = useState(false);
+  const [missedPunchResetHours, setMissedPunchResetHours] = useState<number>(16);
 
   // Travel tracking live badge state
   const [liveDistance, setLiveDistance] = useState<number>(0);
@@ -170,7 +171,7 @@ export default function ClockInOutCard({
         // 1. Fetch global config for manual clock in and location requirement
         const { data: globalConfig } = await supabase
           .from('attendance_validation_config')
-          .select('allow_manual_clock_in_out, require_location, enable_travel_tracking, capture_image_while_face_clockin, gps_sampling_interval_mins, min_movement_threshold_meters, device_tracking_applicability')
+          .select('allow_manual_clock_in_out, require_location, enable_travel_tracking, capture_image_while_face_clockin, gps_sampling_interval_mins, min_movement_threshold_meters, device_tracking_applicability, missed_punch_reset_hours')
           .eq('tenant_id', currentTenant.id)
           .eq('is_active', true)
           .maybeSingle();
@@ -182,7 +183,8 @@ export default function ClockInOutCard({
           capture_image_while_face_clockin: false,
           gps_sampling_interval_mins: 5,
           min_movement_threshold_meters: 100,
-          device_tracking_applicability: 'common'
+          device_tracking_applicability: 'common',
+          missed_punch_reset_hours: 16
         };
 
         // Enforce Strict Mode applicability
@@ -197,7 +199,7 @@ export default function ClockInOutCard({
           if (selectedEmployee?.id) {
             const { data: empConfig } = await supabase
               .from('employee_attendance_settings')
-              .select('allow_manual_clock_in_out, require_location, enable_travel_tracking, capture_image_while_face_clockin')
+              .select('allow_manual_clock_in_out, require_location, enable_travel_tracking, capture_image_while_face_clockin, missed_punch_reset_hours')
               .eq('tenant_id', currentTenant.id)
               .eq('employee_id', selectedEmployee.id)
               .maybeSingle();
@@ -214,6 +216,7 @@ export default function ClockInOutCard({
         setGpsInterval(configToUse.gps_sampling_interval_mins ?? 5);
         setGpsThreshold(configToUse.min_movement_threshold_meters ?? 100);
         setCaptureImageEnabled(!!configToUse.capture_image_while_face_clockin);
+        setMissedPunchResetHours(configToUse.missed_punch_reset_hours ?? 16);
 
         // Fetch company settings branch locations
         const { data: companyData } = await supabase
@@ -392,17 +395,11 @@ export default function ClockInOutCard({
       try {
         setLoading(true);
 
-        // 1. Fetch latest entry type — use local date, NOT UTC (UTC can be a day behind in IST)
-        const getLocalDateStr = (d: Date) => {
-          const yyyy = d.getFullYear();
-          const mm = String(d.getMonth() + 1).padStart(2, '0');
-          const dd = String(d.getDate()).padStart(2, '0');
-          return `${yyyy}-${mm}-${dd}`;
-        };
-        const todayStrForEntry = manualMode
-          ? getLocalDateStr(new Date(manualDateTime))
-          : getLocalDateStr(new Date());
-        const latestEntry = await getLatestEntryType(selectedEmployee.id, todayStrForEntry);
+        // 1. Fetch latest entry type using full ISO timestamp to evaluate the reset rule
+        const referenceTime = manualMode
+          ? new Date(manualDateTime)
+          : new Date();
+        const latestEntry = await getLatestEntryType(selectedEmployee.id, referenceTime.toISOString(), missedPunchResetHours);
         setLatestEntryType(latestEntry?.type || null);
         setLatestEntryTime(latestEntry?.timestamp || null);
         setLatestOfficeStatus(latestEntry?.office_location_status || null);
@@ -449,7 +446,7 @@ export default function ClockInOutCard({
     };
 
     fetchCardData();
-  }, [selectedEmployee, lastRefresh, manualMode, manualDateTime, getLatestEntryType]);
+  }, [selectedEmployee, lastRefresh, manualMode, manualDateTime, getLatestEntryType, missedPunchResetHours]);
 
   // Helper 1: What shift is active right now based purely on the CLOCK?
   const getShiftByTime = (timestamp: Date, allShifts: Shift[]): Shift | null => {

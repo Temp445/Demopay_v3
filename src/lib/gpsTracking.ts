@@ -1,4 +1,5 @@
 import type { GPSCoordinates } from '../types/workLocation';
+import { getPreciseDistance } from 'geolib';
 
 export class GPSTrackingService {
   private watchId: number | null = null;
@@ -109,25 +110,11 @@ export class GPSTrackingService {
     lat2: number,
     lon2: number
   ): number {
-    const R = 6371000;
-    const dLat = this.toRad(lat2 - lat1);
-    const dLon = this.toRad(lon2 - lon1);
-
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this.toRad(lat1)) *
-      Math.cos(this.toRad(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distance = R * c;
-
+    const distance = getPreciseDistance(
+      { latitude: lat1, longitude: lon1 },
+      { latitude: lat2, longitude: lon2 }
+    );
     return Math.round(distance * 100) / 100;
-  }
-
-  private toRad(degrees: number): number {
-    return (degrees * Math.PI) / 180;
   }
 
   isWithinRadius(

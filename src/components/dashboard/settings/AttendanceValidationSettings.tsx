@@ -27,6 +27,7 @@ interface ValidationConfig {
   gps_sampling_interval_mins: number;
   min_movement_threshold_meters: number;
   device_tracking_applicability?: 'common' | 'specific';
+  missed_punch_reset_hours: number;
 }
 
 const defaultConfig: ValidationConfig = {
@@ -47,7 +48,8 @@ const defaultConfig: ValidationConfig = {
   capture_image_while_face_clockin: false,
   gps_sampling_interval_mins: 5,
   min_movement_threshold_meters: 20,
-  device_tracking_applicability: 'common'
+  device_tracking_applicability: 'common',
+  missed_punch_reset_hours: 14
 };
 
 export default function AttendanceValidationSettings() {
@@ -397,6 +399,38 @@ export default function AttendanceValidationSettings() {
                   <p className="text-xs text-gray-500 mt-2">
                     When enabled, standard employees will be able to clock in/out without mandatory face recognition.
                   </p>
+                </div>
+              </div>
+
+              {/* Missed Punch Reset Hours */}
+              <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-start mb-2">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                        <Clock className="w-5 h-5" />
+                      </div>
+                      <label className="text-sm font-semibold text-gray-900">
+                        Max Shift Duration
+                      </label>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2 mb-4">
+                    If an employee doesn't clock out, the system automatically resets their shift after this many hours.
+                  </p>
+                  <input
+                    type="number"
+                    min="12"
+                    max="24"
+                    value={config.missed_punch_reset_hours}
+                    onChange={(e) => handleChange('missed_punch_reset_hours', parseInt(e.target.value) || 14)}
+                    onBlur={(e) => {
+                      const val = parseInt(e.target.value);
+                      if (isNaN(val) || val < 12) handleChange('missed_punch_reset_hours', 12);
+                      else if (val > 24) handleChange('missed_punch_reset_hours', 24);
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
                 </div>
               </div>
 

@@ -47,10 +47,10 @@ export interface CreateTimestampRequest {
 
 interface AttendanceTimestampStore extends StoreState<AttendanceTimestamp> {
   createTimestamp: (request: CreateTimestampRequest) => Promise<AttendanceTimestamp>;
-  fetchTimestampsByEmployee: (employeeId: string, date: string) => Promise<void>;
+  fetchTimestampsByEmployee: (employeeId: string, date: string, missedPunchResetHours?: number) => Promise<void>;
   fetchTimestampsByDateRange: (employeeId: string, startDate: string, endDate: string) => Promise<void>;
-  getTodayTimestamps: (employeeId: string) => Promise<AttendanceTimestamp[]>;
-  getLatestEntryType: (employeeId: string, date: string) => Promise<{ type: 'IN' | 'OUT', timestamp: string, office_location_status?: string | null, office_arrival_processed?: boolean } | null>;
+  getTodayTimestamps: (employeeId: string, missedPunchResetHours?: number) => Promise<AttendanceTimestamp[]>;
+  getLatestEntryType: (employeeId: string, referenceTimeIso: string, resetThresholdHours?: number) => Promise<{ type: 'IN' | 'OUT', timestamp: string, office_location_status?: string | null, office_arrival_processed?: boolean } | null>;
   reset: () => void;
 }
 
@@ -109,7 +109,7 @@ export const useAttendanceTimestampStore = create<AttendanceTimestampStore>((set
     }
   },
 
-  fetchTimestampsByEmployee: async (employeeId, date) => {
+  fetchTimestampsByEmployee: async (employeeId, date, missedPunchResetHours = 16) => {
     const auth = await validateAuth();
     if (!auth.isAuthenticated) {
       set(state => setError(state, createAuthError().message));
@@ -152,10 +152,10 @@ export const useAttendanceTimestampStore = create<AttendanceTimestampStore>((set
         
         let targetDate = actualDate;
         
-        // Night Shift Grouping Logic: OUT punches <= 16 hours after IN punch belong to IN punch's date
+        // Night Shift Grouping Logic: OUT punches <= threshold after IN punch belong to IN punch's date
         if (entry.entry === 'OUT' && lastPunch?.entry === 'IN' && lastPunchDate && lastPunchDate !== actualDate) {
             const diffHours = (new Date(entry.timestamp).getTime() - new Date(lastPunch.timestamp).getTime()) / (1000 * 60 * 60);
-            if (diffHours <= 16) {
+            if (diffHours <= missedPunchResetHours) {
                 targetDate = lastPunchDate;
             }
         }
@@ -324,16 +324,18 @@ export const useAttendanceTimestampStore = create<AttendanceTimestampStore>((set
     }
   },
 
-  getTodayTimestamps: async (employeeId) => {
+  getTodayTimestamps: async (employeeId, missedPunchResetHours = 16) => {
     const today = new Date().toISOString().split('T')[0];
-    await get().fetchTimestampsByEmployee(employeeId, today);
+    await get().fetchTimestampsByEmployee(employeeId, today, missedPunchResetHours);
     return get().items;
   },
 
-  getLatestEntryType: async (employeeId, date) => {
+  getLatestEntryType: async (employeeId, referenceTimeIso, resetThresholdHours = 16) => {
     try {
-      // Parse 'date' as a LOCAL date (YYYY-MM-DD), not UTC
-      const [yyyy, mm, dd] = date.split('-').map(Number);
+      const refDate = new Date(referenceTimeIso);
+      const yyyy = refDate.getFullYear();
+      const mm = refDate.getMonth() + 1;
+      const dd = refDate.getDate();
 
       // End of local day
       const endOfDay = new Date(yyyy, mm - 1, dd, 23, 59, 59, 999);
@@ -354,12 +356,28 @@ export const useAttendanceTimestampStore = create<AttendanceTimestampStore>((set
 
       if (error) throw error;
 
-      return data ? { 
-        type: data.entry, 
-        timestamp: data.timestamp,
-        office_location_status: data.office_location_status,
-        office_arrival_processed: data.office_arrival_processed
-      } : null;
+      if (data) {
+        // Enforce the reset threshold rule (default 16 hours)
+        if (data.entry === 'IN') {
+          const punchTime = new Date(data.timestamp).getTime();
+          const diffHours = (refDate.getTime() - punchTime) / (1000 * 60 * 60);
+          
+          if (diffHours >= resetThresholdHours) {
+            // Employee missed clock out on the previous shift.
+            // Treat this as no active shift so the Clock In button is shown.
+            return null;
+          }
+        }
+
+        return { 
+          type: data.entry, 
+          timestamp: data.timestamp,
+          office_location_status: data.office_location_status,
+          office_arrival_processed: data.office_arrival_processed
+        };
+      }
+      
+      return null;
     } catch (error) {
       console.error('Failed to get latest entry type:', error);
       return null;

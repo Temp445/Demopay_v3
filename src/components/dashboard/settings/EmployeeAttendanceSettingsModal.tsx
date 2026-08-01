@@ -17,8 +17,8 @@ interface EmployeeSettings {
   employee_id: string;
   allow_manual_clock_in_out: boolean;
   require_location: boolean;
-  enable_travel_tracking: boolean;
   capture_image_while_face_clockin: boolean;
+  missed_punch_reset_hours: number;
 }
 
 export interface EmployeeAttendanceSettingsRef {
@@ -74,7 +74,8 @@ const EmployeeAttendanceSettingsModal = forwardRef<EmployeeAttendanceSettingsRef
           allow_manual_clock_in_out: s.allow_manual_clock_in_out,
           require_location: s.require_location,
           enable_travel_tracking: s.enable_travel_tracking,
-          capture_image_while_face_clockin: s.capture_image_while_face_clockin
+          capture_image_while_face_clockin: s.capture_image_while_face_clockin,
+          missed_punch_reset_hours: s.missed_punch_reset_hours ?? 16
         };
       });
       setSettings(settingsMap);
@@ -95,7 +96,25 @@ const EmployeeAttendanceSettingsModal = forwardRef<EmployeeAttendanceSettingsRef
           allow_manual_clock_in_out: false,
           require_location: false,
           enable_travel_tracking: false,
-          capture_image_while_face_clockin: false
+          capture_image_while_face_clockin: false,
+          missed_punch_reset_hours: 16
+        }),
+        [field]: value
+      }
+    }));
+  };
+
+  const handleSettingChangeNumber = (employeeId: string, field: keyof EmployeeSettings, value: number) => {
+    setSettings(prev => ({
+      ...prev,
+      [employeeId]: {
+        ...(prev[employeeId] || {
+          employee_id: employeeId,
+          allow_manual_clock_in_out: false,
+          require_location: false,
+          enable_travel_tracking: false,
+          capture_image_while_face_clockin: false,
+          missed_punch_reset_hours: 16
         }),
         [field]: value
       }
@@ -171,7 +190,8 @@ const EmployeeAttendanceSettingsModal = forwardRef<EmployeeAttendanceSettingsRef
           allow_manual_clock_in_out: checked,
           require_location: checked,
           enable_travel_tracking: checked,
-          capture_image_while_face_clockin: checked
+          capture_image_while_face_clockin: checked,
+          missed_punch_reset_hours: newSettings[emp.id]?.missed_punch_reset_hours ?? 16
         };
       });
       return newSettings;
@@ -245,6 +265,9 @@ const EmployeeAttendanceSettingsModal = forwardRef<EmployeeAttendanceSettingsRef
                     <th scope="col" className="px-6 py-4 w-[15%] text-center text-xs font-bold text-white uppercase tracking-wider">
                       Face Capture
                     </th>
+                    <th scope="col" className="px-6 py-4 w-[15%] text-center text-xs font-bold text-white uppercase tracking-wider">
+                      Max Shift (Hrs)
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -253,7 +276,8 @@ const EmployeeAttendanceSettingsModal = forwardRef<EmployeeAttendanceSettingsRef
                       allow_manual_clock_in_out: false,
                       require_location: false,
                       enable_travel_tracking: false,
-                      capture_image_while_face_clockin: false
+                      capture_image_while_face_clockin: false,
+                      missed_punch_reset_hours: 16
                     };
                     return (
                       <tr key={emp.id} className="hover:bg-gray-50">
@@ -305,6 +329,21 @@ const EmployeeAttendanceSettingsModal = forwardRef<EmployeeAttendanceSettingsRef
                             checked={empSettings.capture_image_while_face_clockin}
                             onChange={(e) => handleSettingChange(emp.id, 'capture_image_while_face_clockin', e.target.checked)}
                             className="appearance-none w-5 h-5 rounded-full border-2 border-gray-300 checked:bg-indigo-600 checked:border-indigo-600 checked:bg-[url('data:image/svg+xml;utf8,%3Csvg%20viewBox=%220%200%2016%2016%22%20fill=%22white%22%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath%20d=%22M12.207%204.793a1%201%200%20010%201.414l-5%205a1%201%200%2001-1.414%200l-2-2a1%201%200%20011.414-1.414L6.5%209.086l4.293-4.293a1%201%200%20011.414%200z%22/%3E%3C/svg%3E')] bg-no-repeat bg-center cursor-pointer transition-all"
+                          />
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                          <input
+                            type="number"
+                            min="12"
+                            max="24"
+                            value={empSettings.missed_punch_reset_hours ?? 16}
+                            onChange={(e) => handleSettingChangeNumber(emp.id, 'missed_punch_reset_hours', parseInt(e.target.value) || 16)}
+                            onBlur={(e) => {
+                              const val = parseInt(e.target.value);
+                              if (isNaN(val) || val < 12) handleSettingChangeNumber(emp.id, 'missed_punch_reset_hours', 12);
+                              else if (val > 24) handleSettingChangeNumber(emp.id, 'missed_punch_reset_hours', 24);
+                            }}
+                            className="w-16 px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 text-center"
                           />
                         </td>
                       </tr>

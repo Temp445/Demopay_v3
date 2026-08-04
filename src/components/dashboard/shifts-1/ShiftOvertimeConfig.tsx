@@ -47,12 +47,11 @@ export default function ShiftOvertimeConfig({
         getShiftOvertimeConfig(shiftId),
         getOvertimePolicies(),
       ]);
-      const globalConf = policies.find(p => p.is_default) || policies[0] || null;
 
       if (shiftConfig) {
         setConfig(shiftConfig);
       }
-      setGlobalConfig(globalConf);
+      setGlobalConfig(policies.find(p => p.is_default) || policies[0] || null);
     } catch (error) {
       console.error('Error loading shift overtime config:', error);
       toast.error('Failed to load configuration');

@@ -77,8 +77,7 @@ export default function ShiftAssignment({
       const emp = a.employee!;
       const matchesSearch =
         emp.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        emp.department?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        emp.employee_code?.toLowerCase().includes(searchTerm.toLowerCase());
+        emp.department?.toLowerCase().includes(searchTerm.toLowerCase());
 
       const matchesDept =
         !selectedDepartment || emp.department === selectedDepartment;
@@ -107,23 +106,11 @@ export default function ShiftAssignment({
     assignmentId: string,
     status: ShiftAssignmentType['status']
   ) => {
-    // Optimistically update in local Zustand state, preserving joined employee/shift data
-    useShiftsStore.setState(state => ({
-      ...state,
-      assignments: {
-        ...state.assignments,
-        items: state.assignments.items.map(a =>
-          a.id === assignmentId ? { ...a, status } : a
-        ),
-      },
-    }));
-
     try {
       await updateShiftAssignment(assignmentId, { status });
-    } catch (err) {
-      console.error('Status update failed, reverting...', err);
-      // On failure, trigger a full refresh to revert
       onAssignmentUpdate();
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -148,7 +135,7 @@ export default function ShiftAssignment({
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
           <input
             className="w-full pl-9 pr-3 py-2 border rounded-md text-sm"
-            placeholder="Search by name, code ..."
+            placeholder="Search employees..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
           />

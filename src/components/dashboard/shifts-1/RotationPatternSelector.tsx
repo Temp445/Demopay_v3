@@ -60,7 +60,7 @@ export default function RotationPatternSelector({
   const { showDaily, showWeekly, showMonthly } = getAvailableOptions();
 
   return (
-    <div className="">
+    <div className="space-y-4">
       <label className="block text-sm font-medium text-gray-700">
         Rotation Pattern
       </label>

@@ -70,105 +70,115 @@ export default function ShiftList({ onRefresh, lastRefresh, onAssignClick }: Shi
 
   return (
     <div className="bg-white shadow overflow-hidden sm:rounded-lg">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
-          <tr>
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Name
-            </th>
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Type
-            </th>
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Time
-            </th>
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Break
-            </th>
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Status
-            </th>
-            <th scope="col" className="relative px-6 py-3">
-              <span className="sr-only">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
-          {shifts.map((shift) => (
-            <tr key={shift.id}>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <div className="text-sm font-medium text-gray-900">{shift.name}</div>
-                {shift.description && (
-                  <div className="text-sm text-gray-500">{shift.description}</div>
-                )}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
-                  ${shift.shift_type === 'morning' ? 'bg-yellow-100 text-yellow-800' : 
-                    shift.shift_type === 'afternoon' ? 'bg-blue-100 text-blue-800' : 
-                    'bg-purple-100 text-purple-800'}`}
-                >
-                  {shift.shift_type}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                {new Date(`2000-01-01T${shift.start_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - 
-                {new Date(`2000-01-01T${shift.end_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                {new Date(`2000-01-01T${shift.break_start_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
-                {new Date(`2000-01-01T${shift.break_end_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
-                  ${shift.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
-                >
-                  {shift.is_active ? 'Active' : 'Inactive'}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                <div className="flex items-center justify-end space-x-3">
-                  <button
-                    onClick={() => handleSettingsClick(shift)}
-                    className="text-gray-600 hover:text-gray-900"
-                    title="Attendance Settings"
-                  >
-                    <Settings className="h-5 w-5" />
-                  </button>
-                  <button
-                    onClick={() => setOvertimeConfigShift(shift)}
-                    className="text-orange-600 hover:text-orange-900"
-                    title="Overtime Configuration"
-                  >
-                    <Clock className="h-5 w-5" />
-                  </button>
-                  <button
-                    onClick={() => onAssignClick(shift)}
-                    className="text-indigo-600 hover:text-indigo-900"
-                    title="Assign employees"
-                  >
-                    <Users className="h-5 w-5" />
-                  </button>
-                  <button
-                    onClick={() => setEditingShift(shift)}
-                    className="text-gray-600 hover:text-gray-900"
-                    title="Edit shift"
-                  >
-                    <Edit2 className="h-5 w-5" />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteShift(shift)}
-                    className="text-red-600 hover:text-red-900"
-                    title="Delete shift"
-                  >
-                    <Trash2 className="h-5 w-5" />
-                  </button>
-                </div>
-              </td>
+      {/* Desktop Table View */}
+      <div className="hidden md:block overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break</th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+              <th scope="col" className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {shifts.map((shift) => (
+              <tr key={shift.id}>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="text-sm font-medium text-gray-900">{shift.name}</div>
+                  {shift.description && <div className="text-sm text-gray-500">{shift.description}</div>}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
+                    ${shift.shift_type === 'morning' ? 'bg-yellow-100 text-yellow-800' : 
+                      shift.shift_type === 'afternoon' ? 'bg-blue-100 text-blue-800' : 
+                      'bg-purple-100 text-purple-800'}`}
+                  >
+                    {shift.shift_type}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {new Date(`2000-01-01T${shift.start_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - 
+                  {new Date(`2000-01-01T${shift.end_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {new Date(`2000-01-01T${shift.break_start_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
+                  {new Date(`2000-01-01T${shift.break_end_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                    ${shift.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
+                  >
+                    {shift.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <div className="flex items-center justify-end space-x-3">
+                    <button onClick={() => setOvertimeConfigShift(shift)} className="text-orange-600 hover:text-orange-900" title="Overtime Configuration"><Clock className="h-5 w-5" /></button>
+                    <button onClick={() => onAssignClick(shift)} className="text-indigo-600 hover:text-indigo-900" title="Assign employees"><Users className="h-5 w-5" /></button>
+                    <button onClick={() => setEditingShift(shift)} className="text-gray-600 hover:text-gray-900" title="Edit shift"><Edit2 className="h-5 w-5" /></button>
+                    <button onClick={() => handleDeleteShift(shift)} className="text-red-600 hover:text-red-900" title="Delete shift"><Trash2 className="h-5 w-5" /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile Card View */}
+      <div className="md:hidden divide-y divide-gray-200">
+        {shifts.map((shift) => (
+          <div key={shift.id} className="p-4 bg-white hover:bg-gray-50">
+            <div className="flex justify-between items-start mb-2">
+              <div>
+                <div className="text-sm font-bold text-gray-900">{shift.name}</div>
+                {shift.description && <div className="text-xs text-gray-500 mt-1">{shift.description}</div>}
+              </div>
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
+                ${shift.shift_type === 'morning' ? 'bg-yellow-100 text-yellow-800' : 
+                  shift.shift_type === 'afternoon' ? 'bg-blue-100 text-blue-800' : 
+                  'bg-purple-100 text-purple-800'}`}
+              >
+                {shift.shift_type}
+              </span>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
+              <div>
+                <span className="block text-xs text-gray-600 font-medium">Shift Time</span>
+                <span className="text-gray-700">
+                  {new Date(`2000-01-01T${shift.start_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {" "}
+                  {new Date(`2000-01-01T${shift.end_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+              <div>
+                <span className="block text-xs text-gray-600 font-medium">Break Time</span>
+                <span className="text-gray-700">
+                  {new Date(`2000-01-01T${shift.break_start_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {" "}
+                  {new Date(`2000-01-01T${shift.break_end_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                ${shift.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
+              >
+                {shift.is_active ? 'Active' : 'Inactive'}
+              </span>
+              <div className="flex items-center space-x-4">
+                <button onClick={() => setOvertimeConfigShift(shift)} className="text-orange-600 hover:text-orange-900"><Clock className="h-4 w-4" /></button>
+                <button onClick={() => onAssignClick(shift)} className="text-indigo-600 hover:text-indigo-900"><Users className="h-4 w-4" /></button>
+                <button onClick={() => setEditingShift(shift)} className="text-gray-600 hover:text-gray-900"><Edit2 className="h-4 w-4" /></button>
+                <button onClick={() => handleDeleteShift(shift)} className="text-red-600 hover:text-red-900"><Trash2 className="h-4 w-4" /></button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
 
       {selectedShift && (
         <ShiftAttendanceSettingsModal

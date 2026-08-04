@@ -28,14 +28,16 @@ export default function SortableEmployee({ employee, disabled }: SortableEmploye
   return (
     <div
       ref={setNodeRef}
+      style={style}
+      className={`flex items-center p-3 bg-white border rounded-md ${
+        disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-grab hover:bg-gray-50'
+      }`}
       {...attributes}
       {...listeners}
     >
-      {/* <GripVertical className="h-5 w-5 text-gray-400 mr-3" /> */}
+      <GripVertical className="h-5 w-5 text-gray-400 mr-3" />
       <div>
-        <p className="text-sm  text-gray-900">
-          {employee.name}  <br/> {employee.employee_code && <span className="text-xs text-gray-700 font-normal">({employee.employee_code})</span>}
-        </p>
+        <p className="text-sm font-medium text-gray-900">{employee.name}</p>
         <p className="text-sm text-gray-500">{employee.department}</p>
       </div>
     </div>

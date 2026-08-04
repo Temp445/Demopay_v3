@@ -144,8 +144,7 @@ export default function ShiftCalendar({
           )}
         </div>
 
-        {/* Desktop Header */}
-        <div className="hidden md:grid grid-cols-4 px-4 py-2 bg-gray-50 text-sm font-medium text-gray-600">
+        <div className="grid grid-cols-4 px-4 py-2 bg-gray-50 text-sm font-medium text-gray-600">
           <div>Employee</div>
           <div>Shift</div>
           <div>Timing</div>
@@ -157,33 +156,16 @@ export default function ShiftCalendar({
             <div
               key={shift.id}
               onClick={() => onShiftClick?.(shift)}
-              className="grid grid-cols-1 md:grid-cols-4 gap-3 md:gap-0 px-4 py-4 md:py-3 text-sm hover:bg-gray-50 cursor-pointer"
+              className="grid grid-cols-4 px-4 py-3 text-sm hover:bg-gray-50 cursor-pointer"
             >
-              <div className="flex justify-between md:block items-center">
-                <span className="md:hidden font-medium text-gray-500 text-xs">Employee</span>
-                <div className="text-right md:text-left">
-                  <span className="font-medium md:font-normal">{shift.employee?.name ?? "—"}</span>
-                  {shift.employee?.employee_code && (
-                    <span className="text-xs text-gray-500 block md:inline md:ml-1">
-                      ({shift.employee.employee_code})
-                    </span>
-                  )}
-                </div>
+              <div>{shift.employee?.name ?? "—"}</div>
+              <div>{shift.shift?.name}</div>
+              <div className="text-gray-500">
+                {shift.shift?.start_time} – {shift.shift?.end_time}
               </div>
-              <div className="flex justify-between md:block items-center">
-                <span className="md:hidden font-medium text-gray-500 text-xs">Shift</span>
-                <span className="text-gray-900">{shift.shift?.name}</span>
-              </div>
-              <div className="flex justify-between md:block items-center">
-                <span className="md:hidden font-medium text-gray-500 text-xs">Timing</span>
-                <span className="text-gray-600">
-                  {formatTime(shift.shift?.start_time)} – {formatTime(shift.shift?.end_time)}
-                </span>
-              </div>
-              <div className="flex justify-between md:block items-center">
-                <span className="md:hidden font-medium text-gray-500 text-xs">Status</span>
+              <div>
                 <span
-                  className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
+                  className={`px-2 py-0.5 rounded text-xs font-medium ${
                     shift.status === "scheduled"
                       ? "bg-blue-100 text-blue-800"
                       : shift.status === "completed"
@@ -226,7 +208,7 @@ export default function ShiftCalendar({
 
       <div
         className={`grid gap-px bg-gray-200 ${
-          focusedDate ? "grid-cols-2" : "grid-cols-3 md:grid-cols-7"
+          focusedDate ? "grid-cols-1" : "grid-cols-7"
         }`}
       >
         {weekDays.map((day) => {

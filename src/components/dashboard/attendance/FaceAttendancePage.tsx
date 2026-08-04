@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader2, UserCheck, UserX, ShieldCheck, AlertTriangle, Users, ScanFace, LogOut } from 'lucide-react';
 
-import { faceDetectionService, DetectedFace } from '../../../lib/faceDetectionServices/faceDetection';
-import { faceEmbeddingService } from '../../../lib/faceDetectionServices/faceEmbedding';
+import { faceApiService } from '../../../lib/faceDetectionServices/faceApiService';
 import { databaseService } from '../../../lib/faceDetectionServices/faceDetectionDatabase';
 import { similarityService, MatchResult } from '../../../lib/faceDetectionServices/similarity';
 import { useCamera } from '../../../hooks/useCamera';
@@ -11,11 +10,13 @@ import { useTenant } from '../../../contexts/TenantContext';
 import VisitorQuickAddPanel from './VisitorQuickAddPanel';
 import VisitorExitRequestPanel from './VisitorExitRequestPanel';
 import VisitorNotificationBar from './VisitorNotificationBar';
+import { validateLocationAgainstBranches } from '../../../lib/locationService';
+import toast from 'react-hot-toast';
 
 type FaceStatus = 'authenticated' | 'recently_punched' | 'cooldown' | 'unregistered' | 'scanning' | 'waiting';
 
 interface FaceVerificationResult {
-  face: DetectedFace;
+  face: { boundingBox: { originX: number; originY: number; width: number; height: number } };
   match: MatchResult | null;
   status: FaceStatus;
   embedding: number[];
@@ -61,9 +62,12 @@ export const FaceAttendancePage = () => {
     type: 'employee' | 'visitor';
   }>>([]);
 
+  const scannerLocationDataRef = useRef<{ latitude?: number; longitude?: number; status?: string; distanceMeters?: number } | null>(null);
+
   const attendanceSaveMap = useRef<Map<string, number>>(new Map());
   const cooldownMsRef = useRef<number>(5 * 60 * 1000);
   const isProcessingUnknownRef = useRef<boolean>(false);
+  const captureImageEnabledRef = useRef(false);
 
   const [isInitialized, setIsInitialized] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -82,10 +86,7 @@ export const FaceAttendancePage = () => {
     const init = async () => {
       try {
         await new Promise(resolve => setTimeout(resolve, 100));
-        await Promise.all([
-          faceDetectionService.initialize(),
-          faceEmbeddingService.initialize()
-        ]);
+        await faceApiService.initialize();
         setIsInitialized(true);
       } catch (err) {
         console.error('[FaceVerification] init error:', err);
@@ -96,8 +97,7 @@ export const FaceAttendancePage = () => {
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (exitPollRef.current) clearInterval(exitPollRef.current);
-      faceDetectionService.dispose();
-      faceEmbeddingService.dispose();
+      // faceApiService doesn't need explicit dispose
     };
   }, []);
 
@@ -186,7 +186,27 @@ export const FaceAttendancePage = () => {
         }
       }
 
-      const success = await databaseService.markAttendance(employeeId, nextEntry, activeTenantId ?? undefined);
+      let base64ImageData: string | undefined = undefined;
+      
+      if (captureImageEnabledRef.current && videoRef.current) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 350;
+        canvas.height = 260;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+          base64ImageData = canvas.toDataURL('image/jpeg', 0.6);
+        }
+      }
+
+      const success = await databaseService.markAttendance(
+        employeeId, 
+        nextEntry, 
+        activeTenantId ?? undefined, 
+        'Facial Recognition', 
+        scannerLocationDataRef.current ?? undefined,
+        base64ImageData
+      );
 
       if (success) {
         setRecentPunches(prev => prev.map(p =>
@@ -321,8 +341,7 @@ export const FaceAttendancePage = () => {
     if (!videoRef.current || !isVerifyingRef.current) return;
 
     try {
-      const timestamp = performance.now();
-      const faces = await faceDetectionService.detectFaces(videoRef.current, timestamp);
+      const resultsFromApi = await faceApiService.detectAllFacesWithEmbeddings(videoRef.current);
 
       // RACE CONDITION FIX: Clear ghost boxes if stopped during detection
       if (!isVerifyingRef.current) {
@@ -331,18 +350,13 @@ export const FaceAttendancePage = () => {
         return;
       }
 
-      if (faces.length > 0) {
+      if (resultsFromApi.length > 0) {
         const allEmbeddings = cachedEmbeddingsRef.current;
         const newResults: FaceVerificationResult[] = [];
 
-        // Using your ONNX faceEmbeddingService
-        const embeddings = await Promise.all(
-          faces.map(f => faceEmbeddingService.generateEmbedding(f))
-        );
-
-        for (let i = 0; i < faces.length; i++) {
-          const face = faces[i];
-          const embedding = embeddings[i];
+        for (let i = 0; i < resultsFromApi.length; i++) {
+          const face = resultsFromApi[i].face;
+          const embedding = resultsFromApi[i].embedding;
 
           let status: FaceStatus;
           let match: MatchResult | null = null;
@@ -519,15 +533,46 @@ export const FaceAttendancePage = () => {
     if (!isVerifying) {
       setIsFetchingData(true);
       try {
-        const [settings, employeeRecords, visitorRecords] = await Promise.all([
+        const [settings, employeeRecords, visitorRecords, configRes] = await Promise.all([
           databaseService.getCompanySettings(tenantId),
           databaseService.getAllFaceData(tenantId), // Must be scoped in backend too!
-          databaseService.getAllVisitorsFaceData(tenantId)
+          databaseService.getAllVisitorsFaceData(tenantId),
+          import('../../../lib/supabase').then(m => m.supabase
+            .from('attendance_validation_config')
+            .select('require_location, capture_image_while_face_clockin')
+            .eq('tenant_id', tenantId)
+            .eq('is_active', true)
+            .maybeSingle()
+          )
         ]);
+
+        const requireLocation = !!configRes?.data?.require_location;
+
+        if (requireLocation) {
+          try {
+            const branchLocations = settings?.branch_locations || [];
+            const locResult = await validateLocationAgainstBranches(branchLocations);
+            scannerLocationDataRef.current = {
+              latitude: locResult.latitude,
+              longitude: locResult.longitude,
+              distanceMeters: locResult.distanceMeters ?? undefined,
+              status: locResult.status,
+            };
+          } catch (locErr: any) {
+            console.error("Location error:", locErr);
+            toast.error(locErr.message || "Location required to start scanner");
+            setIsFetchingData(false);
+            return; // Abort starting scan
+          }
+        } else {
+          scannerLocationDataRef.current = null;
+        }
 
         const dbCooldown = settings?.biometric_cooldown_minutes ?? 5;
         console.log(`[Scanner] Biometric Cooldown initialized at: ${dbCooldown} minutes`);
         cooldownMsRef.current = dbCooldown * 60 * 1000;
+        
+        captureImageEnabledRef.current = !!configRes?.data?.capture_image_while_face_clockin;
 
         // STRICT TENANT FILTERING: Prevents cross-organization matching
         const flattenedEmbeddings = (employeeRecords as any[]).flatMap((record: any) => {
@@ -617,10 +662,10 @@ export const FaceAttendancePage = () => {
   const bannerConfig = primaryResult ? getBannerConfig(primaryResult) : null;
 
   return (
-    <div className=" w-full bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50/30 flex flex-col md:flex-row p-3 md:p-6 gap-4 md:gap-6 font-sans">
+    <div className="w-full h-[calc(100vh-4rem)] md:h-[calc(100vh-5rem)] bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50/30 flex flex-col md:flex-row p-3 md:p-6 gap-3 md:gap-6 font-sans overflow-hidden">
 
       {/* ── Camera Viewfinder ── */}
-      <div className="sticky top-5 flex-1 h-[500px] flex flex-col rounded-2xl md:rounded-3xl overflow-hidden bg-slate-900 shadow-2xl ring-1 ring-white/10">
+      <div className="flex-1 min-h-0 flex flex-col rounded-2xl md:rounded-3xl overflow-hidden bg-slate-900 shadow-2xl ring-1 ring-white/10 relative">
 
         <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" playsInline autoPlay muted />
         <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none z-10" />
@@ -749,7 +794,7 @@ export const FaceAttendancePage = () => {
       </div>
 
       {/* ── Side Panel ── */}
-      <div className="w-full md:w-[340px] lg:w-1/2 h-[40vh] md:h-full shrink-0 flex flex-col bg-white rounded-2xl md:rounded-3xl shadow-xl ring-1 ring-slate-200/60 overflow-hidden">
+      <div className="w-full md:w-[340px] lg:w-1/2 max-h-[60vh] md:h-full shrink-0 flex flex-col bg-white rounded-2xl md:rounded-3xl shadow-xl ring-1 ring-slate-200/60 overflow-hidden">
 
         {/* Controls */}
         <div className="p-4 md:p-5 border-b border-slate-100 bg-gradient-to-b from-slate-50 to-white space-y-3">
@@ -804,7 +849,7 @@ export const FaceAttendancePage = () => {
             <VisitorExitRequestPanel onClose={() => setShowExitRequestPanel(false)} />
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-white">
+          <div className="hidden md:flex flex-1 flex-col items-center justify-center p-6 text-center bg-white">
             <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center mb-4">
               <ScanFace className="w-7 h-7 text-slate-300" />
             </div>

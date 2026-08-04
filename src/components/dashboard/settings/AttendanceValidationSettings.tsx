@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { Save, AlertCircle, CheckCircle, Clock, Camera, MapPin, Navigation } from 'lucide-react';
+import { Save, AlertCircle, CheckCircle, Clock, Camera, MapPin, Navigation, ShieldCheck, BellDot } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import toast from 'react-hot-toast';
 import { validateAuth } from '../../../stores/utils/storeUtils';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import EmployeeAttendanceSettingsModal, { EmployeeAttendanceSettingsRef } from './EmployeeAttendanceSettingsModal';
+import MissedPunchNotificationSettings from './MissedPunchNotificationSettings';
 
 interface ValidationConfig {
   id?: string;
@@ -53,6 +54,7 @@ const defaultConfig: ValidationConfig = {
 };
 
 export default function AttendanceValidationSettings() {
+  const [activeTab, setActiveTab] = useState<'validation' | 'missing_attendance'>('validation');
   const [config, setConfig] = useState<ValidationConfig>(defaultConfig);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -166,15 +168,47 @@ export default function AttendanceValidationSettings() {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-4 sm:p-6">
-      <div className="mb-6">
-        <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Attendance Validation Settings</h2>
+    <div className="bg-white rounded-lg shadow-md overflow-hidden">
+      <div className="p-4 sm:p-6 border-b border-gray-200">
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Attendance Settings</h2>
         <p className="text-sm text-gray-600 mt-1">
-          Configure attendance validation rules for your organization
+          Configure attendance validation rules and notifications for your organization
         </p>
       </div>
 
-      <div className="space-y-6">
+      {/* ── Tab Navigation ── */}
+      <div className="px-4 sm:px-6 py-4 bg-gray-50 border-b border-gray-200">
+        <div className="inline-flex bg-white border border-gray-200 rounded-xl p-1 shadow-sm gap-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab('validation')}
+            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+              activeTab === 'validation'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
+            }`}
+          >
+            <ShieldCheck className="h-4 w-4" />
+            Validation Rules
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('missing_attendance')}
+            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+              activeTab === 'missing_attendance'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
+            }`}
+          >
+            <BellDot className="h-4 w-4" />
+            Attendance Alert
+          </button>
+        </div>
+      </div>
+
+      <div className="p-4 sm:p-6">
+        {activeTab === 'validation' && (
+          <div className="space-y-6">
         {/* Grace Time Settings */}
         <div className="border-b pb-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Grace Time Settings</h3>
@@ -630,6 +664,14 @@ export default function AttendanceValidationSettings() {
             </div>
           </div>
         </div>
+        </div>
+        )}
+
+        {activeTab === 'missing_attendance' && (
+          <div className="w-full">
+            <MissedPunchNotificationSettings />
+          </div>
+        )}
       </div>
     </div>
   );

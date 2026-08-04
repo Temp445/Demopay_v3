@@ -206,9 +206,19 @@ export default function TransactionReport({
         }
         else {
           if (isHoliday(date)) return;
+          
           const leaveName = getLeaveStatus(empCode, date);
-          if (leaveName) { status = 'Absent'; request = leaveName; empStats.absentDays += 1; }
-          else { status = 'Absent'; request = '-'; empStats.absentDays += 1; }
+          const currentDate = new Date().toISOString().split('T')[0];
+          
+          if (date > currentDate) {
+            status = '-';
+            request = '-';
+            // Do not increment absentDays for future dates
+          } else {
+            if (leaveName) { status = 'Absent'; request = leaveName; empStats.absentDays += 1; }
+            else { status = 'Absent'; request = '-'; empStats.absentDays += 1; }
+          }
+          
           empStats.records.push({ date: date, status: status, request: request, clockIn: '-', clockOut: '-', workingHours: 0, lateMinutes: 0, overtimeMinutes: 0, ...empInfo });
         }
       });

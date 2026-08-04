@@ -19,7 +19,7 @@ type ReportSubtype =
   | 'taxDeduction' | 'providentFund' | 'insurance' | 'professionalTax';
 
 export default function ReportsPage() {
-  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+  const [isFiltersOpen, setIsFiltersOpen] = useState(true);
 
   // 1. Get role access and ID
   const { access, employeeId, canViewAllData: baseCanViewAllData, role, loading } = useRoleAccess();
@@ -90,8 +90,8 @@ export default function ReportsPage() {
       const sunday = new Date(monday);
       sunday.setDate(monday.getDate() + 6);
       setFilters(prev => ({ ...prev, startDate: formatDate(monday), endDate: formatDate(sunday) }));
-    } else if (reportSubtype === 'attendance') {
-      // Monthly Attendance: first to last day of current month
+    } else if (reportSubtype === 'attendance' || reportSubtype === 'musterRoll' || reportSubtype === 'monthly') {
+      // Monthly reports: first to last day of current month
       const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
       const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
       setFilters(prev => ({ ...prev, startDate: formatDate(firstDay), endDate: formatDate(lastDay) }));

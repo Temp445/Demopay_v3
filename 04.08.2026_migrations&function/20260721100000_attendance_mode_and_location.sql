@@ -17,6 +17,7 @@ ALTER TABLE public.attendance_timestamp ADD COLUMN IF NOT EXISTS office_arrival_
 ALTER TABLE public.attendance_validation_config ADD COLUMN IF NOT EXISTS require_location BOOLEAN DEFAULT false;
 
 
+
 ALTER TABLE attendance_timestamp ADD COLUMN IF NOT EXISTS location_address text;
 
 ALTER TABLE public.attendance_timestamp

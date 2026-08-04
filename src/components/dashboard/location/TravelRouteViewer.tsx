@@ -293,7 +293,7 @@ export default function TravelRouteViewer({
             <div className="bg-white px-4 py-3 flex items-center gap-3">
               <Ruler className="h-4 w-4 text-emerald-500 flex-shrink-0" />
               <div>
-                <p className="text-[10px] text-gray-500 uppercase tracking-wide">Planned Distance</p>
+                <p className="text-[10px] text-gray-500 uppercase tracking-wide">Google Route</p>
                 <div className="flex items-center gap-1">
                   <p className="text-sm font-bold text-gray-900">{formatDistance(finalPlannedDistance)}</p>
                   {finalPlannedDistance > 0 && effectiveDistanceMeters > 0 && Math.abs(effectiveDistanceMeters - finalPlannedDistance) / finalPlannedDistance > 0.2 && (
@@ -331,7 +331,7 @@ export default function TravelRouteViewer({
         </div>
 
         {/* Warnings Banner */}
-        {finalRoadsWarnings && finalRoadsWarnings.length > 0 && (
+        {/* {finalRoadsWarnings && finalRoadsWarnings.length > 0 && (
           <div className="bg-amber-50 border-b border-amber-200 px-5 py-3">
             <div className="flex items-start gap-2">
               <div className="mt-0.5 text-amber-500 shrink-0">
@@ -349,7 +349,7 @@ export default function TravelRouteViewer({
               </div>
             </div>
           </div>
-        )}
+        )} */}
 
         {/* Main Content Area */}
         <div className={`flex flex-col md:flex-row ${isFullscreen ? 'flex-1 min-h-0' : 'h-[500px]'}`}>

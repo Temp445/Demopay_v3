@@ -129,55 +129,50 @@ export default function SettingsPage() {
             <div className="border-b border-gray-200">
               <nav className="-mb-px flex">
                 <button
-                  className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${
-                    activeTab === 'user'
+                  className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${activeTab === 'user'
                       ? 'border-indigo-500 text-indigo-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
+                    }`}
                   onClick={() => setActiveTab('user')}
                 >
                   <User className="h-5 w-5 inline-block mr-2" />
                   User Settings
                 </button>
                 <button
-                  className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${
-                    activeTab === 'company'
+                  className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${activeTab === 'company'
                       ? 'border-indigo-500 text-indigo-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
+                    }`}
                   onClick={() => setActiveTab('company')}
                 >
                   <Building2 className="h-5 w-5 inline-block mr-2" />
                   Company Settings
                 </button>
                 <button
-                  className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${
-                    activeTab === 'import'
+                  className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${activeTab === 'import'
                       ? 'border-indigo-500 text-indigo-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
+                    }`}
                   onClick={() => setActiveTab('import')}
                 >
                   <Upload className="h-5 w-5 inline-block mr-2" />
                   Master Data Import
                 </button>
                 <button
-                  className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${
-                    activeTab === 'smtp'
+                  className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${activeTab === 'smtp'
                       ? 'border-indigo-500 text-indigo-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
+                    }`}
                   onClick={() => setActiveTab('smtp')}
                 >
                   <Mail className="h-5 w-5 inline-block mr-2" />
                   SMTP Configuration
                 </button>
                 <button
-                  className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${
-                    activeTab === 'attendance_validation'
+                  className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${activeTab === 'attendance_validation'
                       ? 'border-indigo-500 text-indigo-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
+                    }`}
                   onClick={() => setActiveTab('attendance_validation')}
                 >
                   <CheckSquare className="h-5 w-5 inline-block mr-2" />

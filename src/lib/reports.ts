@@ -717,7 +717,8 @@ export async function getWeeklyAttendanceReport(startDate?: string, endDate?: st
   if (employeeError) throw new Error(employeeError.message);
 
   const reportData: WeeklyAttendanceReport[] = [];
-  const todayStr = new Date().toISOString().split('T')[0];
+  const _today = new Date();
+  const todayStr = `${_today.getFullYear()}-${String(_today.getMonth() + 1).padStart(2, '0')}-${String(_today.getDate()).padStart(2, '0')}`;
 
   for (const employee of employees) {
     // 1. Fetch status + clock times from attendance_logs
@@ -770,38 +771,53 @@ export async function getWeeklyAttendanceReport(startDate?: string, endDate?: st
       const end = new Date(endDate + 'T00:00:00');
       while (curr <= end) {
         const dayOfWeek = curr.getDay();
-        const dateStr = curr.toISOString().split('T')[0];
-        // Skip Sundays and future dates
-        if (dayOfWeek !== 0 && dateStr <= todayStr) {
-          const status = logMap.get(dateStr) || 'Absent';
-          if (status === 'Present') present++;
-          else if (status === 'Absent') absent++;
-          else if (status === 'Late') { present++; late++; }
-          else if (status === 'Early Exit') { present++; earlyExit++; }
-          else if (status === 'Permission') { present++; permission++; }
-          else if (status === 'First Off') firstOff++;
-          else if (status === 'Second Off') secondOff++;
-          else if (status === 'Half Day') present++;
-          else if (status !== '') present++;
-          else absent++;
-
-          const logDetail = logDetailMap.get(dateStr);
+        const yyyy = curr.getFullYear();
+        const mm = String(curr.getMonth() + 1).padStart(2, '0');
+        const dd = String(curr.getDate()).padStart(2, '0');
+        const dateStr = `${yyyy}-${mm}-${dd}`;
+        
+        // Skip Sundays
+        if (dayOfWeek !== 0) {
+          let status = 'Absent';
           let dayHours: number | undefined;
-          if (logDetail?.clock_in && logDetail?.clock_out) {
-            const ci = new Date(logDetail.clock_in);
-            const co = new Date(logDetail.clock_out);
-            dayHours = parseFloat(((co.getTime() - ci.getTime()) / (1000 * 60 * 60)).toFixed(2));
+          let clockIn: string | undefined;
+          let clockOut: string | undefined;
+
+          if (dateStr > todayStr) {
+            // Future dates are marked as '-' and do not affect stats
+            status = '-';
+          } else {
+            status = logMap.get(dateStr) || 'Absent';
+            if (status === 'Present') present++;
+            else if (status === 'Absent') absent++;
+            else if (status === 'Late') { present++; late++; }
+            else if (status === 'Early Exit') { present++; earlyExit++; }
+            else if (status === 'Permission') { present++; permission++; }
+            else if (status === 'First Off') firstOff++;
+            else if (status === 'Second Off') secondOff++;
+            else if (status === 'Half Day') present++;
+            else if (status !== '') present++;
+            else absent++;
+
+            const logDetail = logDetailMap.get(dateStr);
+            if (logDetail?.clock_in && logDetail?.clock_out) {
+              const ci = new Date(logDetail.clock_in);
+              const co = new Date(logDetail.clock_out);
+              dayHours = parseFloat(((co.getTime() - ci.getTime()) / (1000 * 60 * 60)).toFixed(2));
+            }
+            if (logDetail?.clock_in) {
+              clockIn = new Date(logDetail.clock_in).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+            }
+            if (logDetail?.clock_out) {
+              clockOut = new Date(logDetail.clock_out).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+            }
           }
 
           dailyRecords.push({
             date: dateStr,
             status,
-            clockIn: logDetail?.clock_in
-              ? new Date(logDetail.clock_in).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
-              : undefined,
-            clockOut: logDetail?.clock_out
-              ? new Date(logDetail.clock_out).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
-              : undefined,
+            clockIn,
+            clockOut,
             workingHours: dayHours
           });
         }
@@ -1060,6 +1076,9 @@ export async function getTimestampMismatchReport(startDate?: string, endDate?: s
   const start = startDate ? new Date(startDate) : new Date();
   const end = endDate ? new Date(endDate) : new Date();
 
+  const _today = new Date();
+  const todayStr = `${_today.getFullYear()}-${String(_today.getMonth() + 1).padStart(2, '0')}-${String(_today.getDate()).padStart(2, '0')}`;
+
   for (const employee of employees) {
     // Skip relieved/terminated employees entirely
     const empStatus = (employee.status || '').toLowerCase();
@@ -1069,7 +1088,17 @@ export async function getTimestampMismatchReport(startDate?: string, endDate?: s
 
     const currentDate = new Date(start);
     while (currentDate <= end) {
-      const dateStr = currentDate.toISOString().split('T')[0];
+      const yyyy = currentDate.getFullYear();
+      const mm = String(currentDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(currentDate.getDate()).padStart(2, '0');
+      const dateStr = `${yyyy}-${mm}-${dd}`;
+
+      // Skip future dates - they cannot have a timestamp mismatch
+      if (dateStr > todayStr) {
+        currentDate.setDate(currentDate.getDate() + 1);
+        continue;
+      }
+
       const isHoliday = holidayDates.has(dateStr) || isRecurringHoliday(currentDate, recurringPatterns);
 
       // Skip dates after employee relieved
@@ -1079,10 +1108,13 @@ export async function getTimestampMismatchReport(startDate?: string, endDate?: s
       }
 
       // Filter data for this employee and date
-      const dayTimestamps = allTimestamps?.filter(t =>
-        t.employee_id === employee.id &&
-        new Date(t.timestamp).toISOString().split('T')[0] === dateStr
-      ) || [];
+      const dayTimestamps = allTimestamps?.filter(t => {
+        const tDate = new Date(t.timestamp);
+        const tYyyy = tDate.getFullYear();
+        const tMm = String(tDate.getMonth() + 1).padStart(2, '0');
+        const tDd = String(tDate.getDate()).padStart(2, '0');
+        return t.employee_id === employee.id && `${tYyyy}-${tMm}-${tDd}` === dateStr;
+      }) || [];
 
       const log = allLogs?.find(l => l.employee_id === employee.id && l.date === dateStr);
       const assignment = allAssignments?.find(a => a.employee_id === employee.id && a.schedule_date === dateStr);
@@ -2070,6 +2102,9 @@ export async function getMusterRollReport(startDate: string, endDate: string, de
     return isWeeklyOff ? 'WH' : null;
   };
 
+  const _today = new Date();
+  const todayStr = `${_today.getFullYear()}-${String(_today.getMonth() + 1).padStart(2, '0')}-${String(_today.getDate()).padStart(2, '0')}`;
+
   // 6. Map everything together
   const reportData: MusterRollReport[] = employees.map(emp => {
     const empAttendance: Record<number, string> = {};
@@ -2080,37 +2115,44 @@ export async function getMusterRollReport(startDate: string, endDate: string, de
     const end = new Date(endDate);
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const day = d.getDate();
-      const dateStr = d.toISOString().split('T')[0];
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const dateStr = `${yyyy}-${mm}-${dd}`;
 
       let status = 'A'; // Default to Absent
 
-      // Check Leave
-      const leave = relevantLeaves.find(l => l.employee_id === emp.id && l.start_date <= dateStr && l.end_date >= dateStr);
-      const leaveCode = leave?.leave_types?.name || 'A';
-
-      // Check Attendance Log
-      const log = attendanceLogs?.find(l => l.employee_id === emp.id && l.date === dateStr);
-      if (log) {
-        const logStatus = log.status;
-        if (logStatus === 'Present') status = 'P';
-        else if (logStatus === 'Half Day') status = 'HD';
-        else if (logStatus === 'Late') status = 'LT';
-        else if (logStatus === 'Permission') status = 'PR';
-        else if (logStatus === 'Early Exit') status = 'EE';
-        else if (logStatus === 'First Off') {
-          status = `${leaveCode}/AN`;
-        } else if (logStatus === 'Second Off') {
-          status = `F/${leaveCode}`;
-        }
+      if (dateStr > todayStr) {
+        status = '-';
       } else {
-        // If no log but has leave, show the leave code
-        if (leave) status = leaveCode;
-      }
+        // Check Leave
+        const leave = relevantLeaves.find(l => l.employee_id === emp.id && l.start_date <= dateStr && l.end_date >= dateStr);
+        const leaveCode = leave?.leave_types?.name || 'A';
 
-      // Check Holiday/Weekly Off
-      const hStatus = getDayStatus(dateStr);
-      if (hStatus && (status === 'A' || status === 'LP')) {
-        status = hStatus;
+        // Check Attendance Log
+        const log = attendanceLogs?.find(l => l.employee_id === emp.id && l.date === dateStr);
+        if (log) {
+          const logStatus = log.status;
+          if (logStatus === 'Present') status = 'P';
+          else if (logStatus === 'Half Day') status = 'HD';
+          else if (logStatus === 'Late') status = 'LT';
+          else if (logStatus === 'Permission') status = 'PR';
+          else if (logStatus === 'Early Exit') status = 'EE';
+          else if (logStatus === 'First Off') {
+            status = `${leaveCode}/AN`;
+          } else if (logStatus === 'Second Off') {
+            status = `F/${leaveCode}`;
+          }
+        } else {
+          // If no log but has leave, show the leave code
+          if (leave) status = leaveCode;
+        }
+
+        // Check Holiday/Weekly Off
+        const hStatus = getDayStatus(dateStr);
+        if (hStatus && (status === 'A' || status === 'LP')) {
+          status = hStatus;
+        }
       }
 
       empAttendance[day] = status;

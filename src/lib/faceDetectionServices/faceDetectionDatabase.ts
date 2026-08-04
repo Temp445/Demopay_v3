@@ -63,15 +63,22 @@ export class DatabaseService {
 
   async getAllFaceData(tenantId: string | null) {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('employee_face_data')
         .select(`
           id,
           employee_id,
           face_descriptor,
           image_url,
+          tenant_id,
           employees ( name )
         `);
+
+      if (tenantId) {
+        query = query.eq('tenant_id', tenantId);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
 
@@ -83,6 +90,7 @@ export class DatabaseService {
           employee_name: emp?.name || 'Unknown Employee',
           descriptor: this.parseDescriptor(item.face_descriptor),
           image_url: item.image_url,
+          tenant_id: item.tenant_id
         };
       });
     } catch (error) {
@@ -128,7 +136,14 @@ export class DatabaseService {
     }
   }
 
-async markAttendance(employeeId: string, entry: 'IN' | 'OUT', tenantId?: string, attendanceMode: string = 'Facial Recognition'): Promise<boolean> {
+async markAttendance(
+    employeeId: string, 
+    entry: 'IN' | 'OUT', 
+    tenantId?: string, 
+    attendanceMode: string = 'Facial Recognition',
+    locationData?: { latitude?: number; longitude?: number; address?: string; status?: string; distanceMeters?: number },
+    imageUrl?: string
+  ): Promise<boolean> {
     try {
       // 1. Find the assigned shift for the employee for today
       // Formatting today's date to YYYY-MM-DD to match the schedule_date column
@@ -151,9 +166,21 @@ async markAttendance(employeeId: string, entry: 'IN' | 'OUT', tenantId?: string,
         attendance_mode: attendanceMode,
       };
 
+      if (locationData) {
+        if (locationData.latitude !== undefined) insertPayload.latitude = locationData.latitude;
+        if (locationData.longitude !== undefined) insertPayload.longitude = locationData.longitude;
+        if (locationData.address !== undefined) insertPayload.location = locationData.address;
+        if (locationData.status !== undefined) insertPayload.office_location_status = locationData.status;
+        if (locationData.distanceMeters !== undefined) insertPayload.distance_meters = locationData.distanceMeters;
+      }
+
       // 3. Attach the shift_id if one was found for today
       if (shiftData?.shift_id) {
         insertPayload.shift_id = shiftData.shift_id;
+      }
+
+      if (imageUrl) {
+        insertPayload.image_url = imageUrl;
       }
 
       // 4. Insert the attendance record

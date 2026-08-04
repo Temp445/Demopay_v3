@@ -21,6 +21,9 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
   
   const [submitting, setSubmitting] = useState(false);
   const [allowanceAmount, setAllowanceAmount] = useState<string>('');
+  
+  const [plannedDistanceMeters, setPlannedDistanceMeters] = useState<number | null>(null);
+  const [usePlannedDistance, setUsePlannedDistance] = useState(false);
 
   // Calculate duration
   const totalDurationSeconds = useMemo(() => {
@@ -61,13 +64,14 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
 
         const { data: tsData } = await supabase
           .from('attendance_timestamp')
-          .select('latitude, longitude')
+          .select('latitude, longitude, planned_distance_meters')
           .eq('id', item.timestamp_id)
           .single();
           
         if (tsData) {
           if (tsData.latitude != null) finalClockInLat = tsData.latitude;
           if (tsData.longitude != null) finalClockInLng = tsData.longitude;
+          if (tsData.planned_distance_meters != null) setPlannedDistanceMeters(tsData.planned_distance_meters);
         }
 
         const endTime = item.inside_office_clock_in_time || item.clock_out_time;
@@ -155,12 +159,15 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
   }, [journeyLogs, item.distance_meters]);
 
   const totalDistanceKm = totalDistanceMeters / 1000;
+  
+  const activeDistanceMeters = (usePlannedDistance && plannedDistanceMeters != null) ? plannedDistanceMeters : totalDistanceMeters;
+  const activeDistanceKm = activeDistanceMeters / 1000;
 
   // Auto-calculate initial allowance
   useEffect(() => {
-    if (settings && !allowanceAmount && totalDistanceKm > 0) {
+    if (settings && activeDistanceKm >= 0) {
       if (settings.travel_allowance_method === 'distance') {
-        const amt = totalDistanceKm * settings.travel_allowance_rate;
+        const amt = activeDistanceKm * settings.travel_allowance_rate;
         setAllowanceAmount(amt.toFixed(2));
       } else if (settings.travel_allowance_method === 'fixed') {
         setAllowanceAmount(settings.travel_allowance_rate.toFixed(2));
@@ -168,14 +175,14 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
         setAllowanceAmount('0.00');
       }
     }
-  }, [settings, totalDistanceKm, allowanceAmount]);
+  }, [settings, activeDistanceKm]); // Re-run when toggle changes!
 
   const handleApprove = async () => {
     setSubmitting(true);
     try {
       await onApprove(
         item.id, 
-        totalDistanceMeters, 
+        activeDistanceMeters, 
         Number(allowanceAmount) || 0,
         settings?.travel_allowance_method === 'distance' ? 'km' : 'fixed'
       );
@@ -245,7 +252,8 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-indigo-50 border border-indigo-100 p-3 rounded-lg flex flex-col justify-center text-sm">
                   <span className="text-indigo-800 font-medium mb-1">Distance Traveled</span>
-                  <span className="text-indigo-900 font-bold text-lg">{formatDistance(totalDistanceMeters)}</span>
+                  <span className="text-indigo-900 font-bold text-lg">{formatDistance(activeDistanceMeters)}</span>
+                  {usePlannedDistance && <span className="text-[10px] text-indigo-600 font-semibold">(Google Route)</span>}
                 </div>
                 <div className="bg-indigo-50 border border-indigo-100 p-3 rounded-lg flex flex-col justify-center text-sm">
                   <span className="text-indigo-800 font-medium mb-1">Duration</span>
@@ -257,7 +265,26 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
             {/* Allowance Section */}
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">Allowance Calculation</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-900">Allowance Calculation</h3>
+                  {plannedDistanceMeters != null && (
+                    <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-lg">
+                      <button
+                        onClick={() => setUsePlannedDistance(false)}
+                        className={`text-[11px] px-2 py-1 rounded font-medium transition-colors ${!usePlannedDistance ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Total ({formatDistance(totalDistanceMeters)})
+                      </button>
+                      <button
+                        onClick={() => setUsePlannedDistance(true)}
+                        className={`text-[11px] px-2 py-1 rounded font-medium transition-colors ${usePlannedDistance ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Google Route ({formatDistance(plannedDistanceMeters)})
+                      </button>
+                    </div>
+                  )}
+                </div>
+                
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
                   
                   <div>
@@ -276,7 +303,7 @@ export default function OutsideOfficeApprovalModal({ item, onClose, onApprove }:
                     <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1">
                       <Info className="h-3 w-3" />
                       {settings?.travel_allowance_method === 'distance' 
-                        ? `Calculated based on ${formatDistance(totalDistanceMeters)} at ₹${settings?.travel_allowance_rate}/km.`
+                        ? `Calculated based on ${formatDistance(activeDistanceMeters)} at ₹${settings?.travel_allowance_rate}/km.`
                         : settings?.travel_allowance_method === 'fixed'
                         ? `Fixed travel allowance of ₹${settings?.travel_allowance_rate}.`
                         : 'Manual entry required.'}

@@ -215,7 +215,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
           >
             <div className="flex items-center">
               <group.icon
-                className={`${isMobile ? 'mr-4 h-6 w-6' : 'mr-3 h-6 w-6'} ${isActive ? 'text-white' : 'text-indigo-200 group-hover:text-white'
+                className={`${isMobile ? 'mr-4 h-5 w-5' : 'mr-3 h-5 w-5'} ${isActive ? 'text-white' : 'text-indigo-200 group-hover:text-white'
                   }`}
                 aria-hidden="true"
               />
@@ -239,7 +239,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
                     onClick={() => {
                       if (isMobile) onClose();
                     }}
-                    className={`group flex items-center pl-11 pr-2 py-2 ${isMobile ? 'text-sm' : 'text-xs'} font-medium rounded-md ${isSubActive
+                    className={`group flex items-center pl-10  py-2 ${isMobile ? 'text-sm' : 'text-xs'} font-medium rounded-md ${isSubActive
                         ? 'bg-white text-indigo-600'
                         : 'text-indigo-100 hover:bg-indigo-600 hover:text-white'
                       }`}
@@ -273,7 +273,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
             }`}
         >
           <navItem.icon
-            className={`${isMobile ? 'mr-4 h-6 w-6' : 'mr-3 h-6 w-6'} ${isActive ? 'text-indigo-600' : 'text-indigo-200 group-hover:text-white'
+            className={`${isMobile ? 'mr-4 h-5 w-5' : 'mr-3 h-5 w-5'} ${isActive ? 'text-indigo-600' : 'text-indigo-200 group-hover:text-white'
               }`}
             aria-hidden="true"
           />

@@ -72,12 +72,30 @@ serve(async (req) => {
     const todayStr = localDateStr(now, 330);
     const notificationsToSend: any[] = [];
     const alertsToLog: any[] = [];
+    const emailsToSend: Promise<any>[] = [];
+
+    const EMAIL_URL = Deno.env.get("EMAIL_HUB_URL") || "";
+    const EMAIL_API_KEY = Deno.env.get("EMAIL_API_KEY") || "";
 
     // Process each tenant
     for (const settings of settingsList) {
       const tenantId = settings.tenant_id;
       const graceStart = settings.grace_buffer_start_minutes;
       const graceEnd = settings.grace_buffer_end_minutes;
+
+      // Fetch emails & smtp info for emails
+      const { data: allEmps } = await supabase.from('employees').select('id, email').eq('tenant_id', tenantId);
+      const empEmailMap = new Map((allEmps || []).map((e: any) => [e.id, e.email]));
+      
+      const { data: hrProfiles } = await supabase.from('profiles').select('email, user_role').eq('tenant_id', tenantId).in('user_role', ['Admin', 'HR', 'Super Admin']);
+      const hrEmails = (hrProfiles || []).map((p: any) => p.email).filter(Boolean);
+      
+      const { data: hrAdmins } = await supabase.from('tenant_users').select('user_id').eq('tenant_id', tenantId).in('role', ['hr_admin', 'tenant_admin', 'owner']);
+      const hrUserIds = (hrAdmins || []).map((hr: any) => hr.user_id);
+      
+      const { data: smtpSettings } = await supabase.from('smtp_configurations').select('*').eq('tenant_id', tenantId).maybeSingle();
+      const { data: companyData } = await supabase.from('company_settings').select('company_name').eq('tenant_id', tenantId).maybeSingle();
+      const companyName = companyData?.company_name || 'Your Company';
 
       // 2. Fetch Active Shifts & Employees for Today
       const { data: assignments, error: assignErr } = await supabase
@@ -196,22 +214,26 @@ serve(async (req) => {
           const dateFormatted = new Date(Number(y), Number(m)-1, Number(d)).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
           const msg = `Missing ${missingType === 'MISSING_IN' ? 'Clock-In' : 'Clock-Out'} for shift ${shift.name} (${parseShiftTime(shift.start_time)} - ${parseShiftTime(shift.end_time)}) on ${dateFormatted}. Employee: ${employee.name}`;
 
-          // Find app recipients
-          const appRecipientIds = [];
-          if (settings.notify_employee) appRecipientIds.push(employee.id);
-          if (settings.notify_reporting_head && employee.reporting_to) appRecipientIds.push(employee.reporting_to);
+          // Find app and email recipients
+          const appRecipientIds: string[] = [];
+          const recipientEmails: string[] = [];
+
+          if (settings.notify_employee) {
+            appRecipientIds.push(employee.id);
+            const eMail = empEmailMap.get(employee.id);
+            if (eMail) recipientEmails.push(eMail);
+          }
+          if (settings.notify_reporting_head && employee.reporting_to) {
+            appRecipientIds.push(employee.reporting_to);
+            const rMail = empEmailMap.get(employee.reporting_to);
+            if (rMail && !recipientEmails.includes(rMail)) recipientEmails.push(rMail);
+          }
           
           if (settings.notify_hr_admin) {
-            // Find HR Admins
-            const { data: hrAdmins } = await supabase
-              .from('tenant_users')
-              .select('user_id')
-              .eq('tenant_id', tenantId)
-              .in('role', ['hr_admin', 'tenant_admin', 'owner']);
-            
-            if (hrAdmins) {
-              hrAdmins.forEach(hr => appRecipientIds.push(hr.user_id));
-            }
+            if (hrUserIds) hrUserIds.forEach((id: string) => appRecipientIds.push(id));
+            if (hrEmails) hrEmails.forEach((email: string) => {
+              if (email && !recipientEmails.includes(email)) recipientEmails.push(email);
+            });
           }
 
           if (settings.notify_via_app && appRecipientIds.length > 0) {
@@ -237,8 +259,175 @@ serve(async (req) => {
             alert_type: missingType
           });
           
-          // NOTE: Email sending is omitted for brevity and to avoid complex template rendering in edge function.
-          // App notifications are usually sufficient for real-time alerting.
+          // Send Emails via Hub
+          if (settings.notify_via_email && recipientEmails.length > 0 && smtpSettings && EMAIL_URL && EMAIL_API_KEY) {
+            const subject = `[Action Required] Missing ${missingType === 'MISSING_IN' ? 'Clock-In' : 'Clock-Out'} - ${employee.name}`;
+            const isMissingIn = missingType === 'MISSING_IN';
+            const accentColor = isMissingIn ? '#f59e0b' : '#ef4444';
+            const iconEmoji = isMissingIn ? '⚠️' : '';
+            const alertTitle = isMissingIn ? 'Missing Clock-In Detected' : 'Missing Clock-Out Detected';
+            const clockInTimeStr = (!isMissingIn && relevantIns.length > 0) 
+              ? new Date(relevantIns[0].timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              : '';
+              
+            const alertMessage = isMissingIn
+              ? `Our records show that <strong>${employee.name}</strong> did not clock <strong>in</strong> for their scheduled shift today.`
+              : `Our records show that <strong>${employee.name}</strong> clocked <strong>in</strong> at <strong>${clockInTimeStr}</strong> but did not clock <strong>out</strong> before the end of their shift.`;
+
+            const actionRequired = isMissingIn
+              ? 'Please verify with the employee whether they were present today. If present, a manual clock-in entry may need to be added.'
+              : 'Please ensure the employee clocks out or a manual clock-out entry is added to avoid payroll inaccuracies.';
+
+            const empNameDisplay = `${employee.name}${employee.employee_code ? ` (${employee.employee_code})` : ''}`;
+            const companyNameDisplay = companyName || 'Company';
+            const employeeDepartment = employee.departments?.name;
+
+            const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${alertTitle}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f6f9;font-family:'Segoe UI',Arial,sans-serif;">
+
+  <!-- Wrapper -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f9;padding:32px 16px;">
+    <tr>
+      <td align="center">
+
+        <!-- Card -->
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.07);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,${accentColor},${isMissingIn ? '#d97706' : '#dc2626'});padding:32px 40px;text-align:center;">
+              ${iconEmoji ? `<div style="font-size:40px;margin-bottom:10px;">${iconEmoji}</div>` : ''}
+              <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:-0.3px;">${alertTitle}</h1>
+              <p style="margin:6px 0 0;color:rgba(255,255,255,0.85);font-size:14px;">${companyNameDisplay} — Attendance Alert</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px 40px;">
+
+              <!-- Greeting -->
+              <p style="margin:0 0 20px;color:#374151;font-size:15px;line-height:1.6;">
+                Hello,
+              </p>
+              <p style="margin:0 0 24px;color:#374151;font-size:15px;line-height:1.6;">
+                ${alertMessage}
+              </p>
+
+              <!-- Details Box -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fa;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:24px;">
+                <tr>
+                  <td style="padding:20px 24px;">
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;width:40%;">Employee</td>
+                        <td style="padding:6px 0;color:#111827;font-size:13px;font-weight:700;">${empNameDisplay}</td>
+                      </tr>
+                      ${employeeDepartment ? `
+                      <tr>
+                        <td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;">Department</td>
+                        <td style="padding:6px 0;color:#111827;font-size:13px;">${employeeDepartment}</td>
+                      </tr>` : ''}
+                      <tr>
+                        <td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;">Date</td>
+                        <td style="padding:6px 0;color:#111827;font-size:13px;">${dateFormatted}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;">Shift</td>
+                        <td style="padding:6px 0;color:#111827;font-size:13px;">${shift.name}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;">Shift Hours</td>
+                        <td style="padding:6px 0;color:#111827;font-size:13px;">${parseShiftTime(shift.start_time)} – ${parseShiftTime(shift.end_time)}</td>
+                      </tr>
+                      ${clockInTimeStr ? `
+                      <tr>
+                        <td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;">Clocked In At</td>
+                        <td style="padding:6px 0;color:#059669;font-size:13px;font-weight:700;">${clockInTimeStr}</td>
+                      </tr>` : ''}
+                      <tr>
+                        <td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;">Issue</td>
+                        <td style="padding:6px 0;">
+                          <span style="background:${accentColor};color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:0.5px;">
+                            ${isMissingIn ? 'No Clock-In' : 'No Clock-Out'}
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Action Required -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="background:#fffbeb;border-radius:8px;border-left:4px solid ${accentColor};margin-bottom:28px;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <p style="margin:0 0 4px;color:#92400e;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Action Required</p>
+                    <p style="margin:0;color:#78350f;font-size:14px;line-height:1.6;">${actionRequired}</p>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0 0 6px;color:#6b7280;font-size:13px;line-height:1.6;">
+                This notification was generated automatically by the attendance system. Please log in to the HR portal to review or correct this record.
+              </p>
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>
+`;
+
+            
+            const [primaryTo, ...ccList] = recipientEmails;
+            const emailMessage = {
+              from: `${smtpSettings.sender_name || 'Email System'} <${smtpSettings.sender_email}>`,
+              to: primaryTo,
+              cc: ccList.length > 0 ? ccList : undefined,
+              subject,
+              html,
+            };
+            
+            const emailPayload = {
+              provider: 'smtp',
+              config: {
+                host: smtpSettings.host,
+                port: Number(smtpSettings.port),
+                secure: smtpSettings.encryption == "ssl" || false,
+                auth: {
+                  user: smtpSettings.username,
+                  pass: smtpSettings.password_encrypted,
+                }
+              },
+              message: emailMessage,
+            };
+            
+            const sendEndpoint = EMAIL_URL.endsWith('/') ? `${EMAIL_URL}api/v1/email/send` : `${EMAIL_URL}/api/v1/email/send`;
+            
+            const emailPromise = fetch(sendEndpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-api-key": EMAIL_API_KEY },
+              body: JSON.stringify(emailPayload),
+            }).then(async resp => {
+              if (!resp.ok) console.error("[missing-punch-cron] Email failed:", resp.status, resp.statusText, await resp.text());
+              else console.log(`[missing-punch-cron] Email sent to ${primaryTo}`);
+            }).catch(err => {
+              console.error("[missing-punch-cron] Email fetch error:", err);
+            });
+            emailsToSend.push(emailPromise);
+          }
         }
       }
     }
@@ -254,6 +443,11 @@ serve(async (req) => {
       console.log(`[missing-punch-cron] Logging ${alertsToLog.length} missed punch alerts...`);
       const { error: logErr } = await supabase.from('missed_punch_alerts').insert(alertsToLog);
       if (logErr) console.error("[missing-punch-cron] Failed to log alerts:", logErr);
+    }
+
+    if (emailsToSend.length > 0) {
+      console.log(`[missing-punch-cron] Awaiting ${emailsToSend.length} email deliveries...`);
+      await Promise.all(emailsToSend);
     }
 
     return new Response(JSON.stringify({ 

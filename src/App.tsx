@@ -78,9 +78,12 @@ import { RefundPolicy } from './components/dashboard/policies/RefundPolicy';
 import PrivacyPolicy from './components/dashboard/policies/PrivacyPolicy';
 import HikDeviceEmployeesPage from './components/dashboard/attendance/HikDeviceEmployeesPage';
 import SuperAdminScreenControl from './components/dashboard/access-control/SuperAdminScreenControl';
+import DomainConfigManagerPage from './components/dashboard/access-control/DomainConfigManagerPage';
 import ShiftAttendanceReportSender from './components/dashboard/shifts/ShiftAttendanceReportSender';
 import { GoogleMapsProvider } from './contexts/GoogleMapsContext';
 import { useSettingsStore } from './stores/settingsStore';
+import { useDomainConfigStore } from './stores/domainConfigStore';
+import ScreenGuard from './components/ScreenGuard';
 
 /** Thin wrapper that reads Google Maps API key from the settings store
  * and initialises the shared singleton loader exactly once. */
@@ -93,13 +96,32 @@ function GoogleMapsAppWrapper({ children }: { children: React.ReactNode }) {
 }
 
 
- 
+function DomainConfigWrapper({ children }: { children: React.ReactNode }) {
+  const { fetchConfig, loading, initialized } = useDomainConfigStore();
+
+  React.useEffect(() => {
+    fetchConfig(window.location.hostname);
+  }, [fetchConfig]);
+
+  if (loading && !initialized) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+        <p className="text-gray-500 text-sm font-medium animate-pulse">Initializing System...</p>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
 function App() {
   return (
     <Router>
       <AuthProvider>
         <TenantProvider>
           <NotificationProvider>
+            <DomainConfigWrapper>
             <GoogleMapsAppWrapper>
             <Routes>
               {/* Public routes */}
@@ -134,7 +156,9 @@ function App() {
                 path="/dashboard"
                 element={
                   <ProtectedRoute>
-                    <Dashboard />
+                    <ScreenGuard>
+                      <Dashboard />
+                    </ScreenGuard>
                   </ProtectedRoute>
                 }
               >
@@ -198,6 +222,7 @@ function App() {
                 {/* <Route path="billing" element={<BillingPage />} /> */}
 
                 <Route path="access-control" element={<UserAccessControlPage />} />
+                <Route path="domain-configuration" element={<DomainConfigManagerPage />} />
                 <Route path="employee-invite" element={<EmployeeInvitePage />} />
               </Route>
 
@@ -207,6 +232,7 @@ function App() {
             <Toaster position="top-right" />
 
             </GoogleMapsAppWrapper>
+            </DomainConfigWrapper>
           </NotificationProvider>
         </TenantProvider>
       </AuthProvider>

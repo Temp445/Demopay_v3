@@ -144,6 +144,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
         { name: 'User Management', href: '/dashboard/settings/user-management', icon: Users },
         { name: 'Employee Reporting', href: '/dashboard/reporting', icon: UserPlus },
         { name: 'Screen Access Control', href: '/dashboard/access-control', icon: MonitorCheck },
+        { name: 'Domain Configuration', href: '/dashboard/domain-configuration', icon: Network },
         { name: 'Master Data Import', href: '/dashboard/settings/master-data-import', icon: FileText },
         { name: 'SMTP Configuration', href: '/dashboard/settings/smtp-configuration', icon: Server },
         { name: 'Shift Attendance Notifier', href: '/dashboard/settings/shift-attendance-notifier', icon: NotepadText },

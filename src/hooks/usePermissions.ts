@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserAccessControlStore } from '../stores/userAccessControlStore';
+import { useDomainConfigStore } from '../stores/domainConfigStore';
 
 interface PermissionsState {
   loading: boolean;
@@ -13,6 +14,7 @@ interface PermissionsState {
 export function usePermissions(): PermissionsState {
   const { user } = useAuth();
   const { getUserAccessibleScreens } = useUserAccessControlStore();
+  const { isScreenEnabled } = useDomainConfigStore();
 
   const [loading, setLoading] = useState(true);
   const [accessibleScreens, setAccessibleScreens] = useState<string[]>([]);
@@ -93,7 +95,8 @@ export function usePermissions(): PermissionsState {
     }
 
     if (isManager) {
-      return ['/dashboard/global-tenant-management', '/dashboard/global-tenant-management/'].includes(route);
+      const allowed = ['/dashboard/global-tenant-management', '/dashboard/global-tenant-management/'].includes(route);
+      return allowed && isScreenEnabled(route);
     }
 
     if (accessibleScreens.length === 0) {
@@ -102,12 +105,12 @@ export function usePermissions(): PermissionsState {
     
     // Check for exact match
     if (accessibleScreens.includes(route)) {
-      return true;
+      return isScreenEnabled(route);
     }
     
     // Fallback for renamed routes (backward compatibility with DB)
     if (route === '/dashboard/attendance/device-employees') {
-      return accessibleScreens.includes('/dashboard/attendance/device-employees');
+      return accessibleScreens.includes('/dashboard/attendance/device-employees') && isScreenEnabled(route);
     }
     
     return false;

@@ -60,7 +60,6 @@ export interface BulkAssignmentRequest {
   employee_ids: string[];
   rotation: RotationPattern;
   department?: string;
-  reassign_reason?: string;
 }
 
 interface ShiftStore extends StoreState<Shift> {
@@ -261,8 +260,7 @@ export const useShiftsStore = create<ShiftStore>()(
           end_time
         ),
         employee:employees (
-          name,
-          employee_code
+          name
         )
       `,
             )
@@ -380,13 +378,7 @@ export const useShiftsStore = create<ShiftStore>()(
           if (error) throw error;
           set((state) => ({
             ...state,
-            assignments: {
-              ...updateItem(state.assignments, id, data),
-              // Merge to preserve joined employee/shift fields from existing item
-              items: state.assignments.items.map(item =>
-                item.id === id ? { ...item, ...data } : item
-              ),
-            },
+            assignments: updateItem(state.assignments, id, data),
           }));
           return data;
         } catch (error) {
@@ -510,7 +502,6 @@ export const useShiftsStore = create<ShiftStore>()(
                 request.rotation.endDate || request.rotation.startDate,
               p_department: request.department || null,
               p_tenant_id: auth.tenantId,
-              p_reassign_reason: request.reassign_reason || null,
             },
           );
 

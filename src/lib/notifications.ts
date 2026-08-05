@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { io, Socket } from 'socket.io-client';
+import { RealtimeChannel } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 
 // Notification types
@@ -44,51 +44,45 @@ export interface NotificationPreferences {
   updated_at?: string;
 }
 
-// WebSocket connection
-let socket: Socket | null = null;
+// Supabase Realtime connection
+let channel: RealtimeChannel | null = null;
 let notificationListeners: ((notification: CustomNotification) => void)[] = [];
 
-// Initialize WebSocket connection
+// Initialize Supabase Realtime connection
 export function initializeNotifications(userId: string): void {
   // Close existing connection if any
-  if (socket) {
-    socket.disconnect();
+  if (channel) {
+    supabase.removeChannel(channel);
+    channel = null;
   }
 
-  // Connect to WebSocket server
-  const wsUrl = import.meta.env.VITE_WEBSOCKET_URL || 'wss://api.acepayroll.com';
-  socket = io(wsUrl, {
-    auth: {
-      token: supabase.auth.getSession().then(({ data }) => data.session?.access_token)
-    },
-    query: {
-      userId
-    }
-  });
-
-  // Set up event listeners
-  socket.on('connect', () => {
-    console.log('WebSocket connected');
-  });
-
-  socket.on('notification', (notification: CustomNotification) => {
-    // ── REMOVED ─────────────────────────────────────────────────────────────
-    // Do NOT store notifications received via WebSocket here. 
-    // They are already persisted to 'user_notifications' on the sender side
-    // (using helper functions) or by the backend.
-    // ────────────────────────────────────────────────────────────────────────
-
-    // Notify all listeners
-    notificationListeners.forEach(listener => listener(notification));
-  });
-
-  socket.on('disconnect', () => {
-    console.log('WebSocket disconnected');
-  });
-
-  // socket.on('error', (error) => {
-  //   console.error('WebSocket error:', error);
-  // });
+  // Connect to Supabase Realtime
+  channel = supabase.channel('user_notifications')
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'user_notifications',
+      },
+      (payload) => {
+        const notification = payload.new as CustomNotification;
+        
+        // Notify if the notification belongs to this user, or is a broadcast (user_id = null)
+        if (notification.user_id === userId || notification.user_id === null) {
+          notificationListeners.forEach(listener => listener(notification));
+        }
+      }
+    )
+    .subscribe((status) => {
+      // if (status === 'SUBSCRIBED') {
+      //   console.log('Supabase Realtime connected for notifications');
+      // } else if (status === 'CLOSED') {
+      //   console.log('Supabase Realtime disconnected');
+      // } else if (status === 'CHANNEL_ERROR') {
+      //   console.error('Supabase Realtime error');
+      // }
+    });
 }
 
 // Add notification listener
@@ -101,20 +95,7 @@ export function addNotificationListener(listener: (notification: CustomNotificat
   };
 }
 
-// Store notification in local database
-async function storeNotification(notification: CustomNotification): Promise<void> {
-  try {
-    const { error } = await supabase
-      .from('user_notifications')
-      .insert([notification]);
 
-    if (error) {
-      console.error('Error storing notification:', error);
-    }
-  } catch (error) {
-    console.error('Failed to store notification:', error);
-  }
-}
 
 // Get user notifications
 export async function getUserNotifications(

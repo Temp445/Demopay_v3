@@ -546,15 +546,18 @@ export const useLeaveStore = create<LeaveStore>()(
             if (reportingTo) {
               const ids = Array.isArray(reportingTo) ? reportingTo : [reportingTo];
               if (ids.length > 0) {
-                // Some IDs might be employee IDs, others might be profile IDs.
-                // Fetch the auth_profile_id for any employee IDs.
-                const { data: managers } = await supabase
+                const { data: managersById } = await supabase
                   .from('employees')
-                  .select('id, auth_profile_id')
+                  .select('auth_profile_id')
                   .in('id', ids);
-                
-                const empMap = new Map((managers || []).map(m => [m.id, m.auth_profile_id]));
-                managerUserIds = ids.map((id: string) => empMap.get(id) || id).filter(Boolean);
+                  
+                const { data: managersByProfileId } = await supabase
+                  .from('employees')
+                  .select('auth_profile_id')
+                  .in('auth_profile_id', ids);
+                  
+                const allManagers = [...(managersById || []), ...(managersByProfileId || [])];
+                managerUserIds = Array.from(new Set(allManagers.map(m => m.auth_profile_id))).filter(Boolean) as string[];
               }
             }
 

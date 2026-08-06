@@ -8,6 +8,7 @@ import {
   setPrimaryTenant as setUserPrimaryTenant,
 } from '../lib/tenants';
 import { setCurrentTenantId } from '../lib/tenantDb';
+import { supabase } from '../lib/supabase';
 
 interface TenantContextType {
   currentTenant: Tenant | null;
@@ -40,16 +41,45 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       setError(null);
 
-      const [primaryTenant, allTenants] = await Promise.all([
+      const [primaryTenantFallback, allTenants] = await Promise.all([
         getPrimaryTenant(),
         getCurrentUserTenants(),
       ]);
 
-      setCurrentTenant(primaryTenant);
+      const hostname = window.location.hostname;
+      let activeTenant = primaryTenantFallback;
+
+      try {
+        const { data: domainConfigs } = await supabase
+          .from('domain_configurations')
+          .select('tenant_id')
+          .eq('domain_name', hostname)
+          .eq('is_active', true);
+
+        if (domainConfigs && domainConfigs.length > 0) {
+          // If the user's current primary tenant is already mapped to this domain, prefer it.
+          const isPrimaryMapped = activeTenant && domainConfigs.some(dc => dc.tenant_id === activeTenant?.id);
+          
+          if (!isPrimaryMapped) {
+            // Find the first mapped tenant that the user actually has access to
+            for (const config of domainConfigs) {
+              const matchedTenantUser = allTenants.find(t => t.tenant_id === config.tenant_id);
+              if (matchedTenantUser && matchedTenantUser.tenant) {
+                activeTenant = matchedTenantUser.tenant;
+                break;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to resolve domain configuration:', err);
+      }
+
+      setCurrentTenant(activeTenant);
       setUserTenants(allTenants);
 
-      if (primaryTenant) {
-        setCurrentTenantId(primaryTenant.id);
+      if (activeTenant) {
+        setCurrentTenantId(activeTenant.id);
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load tenant data';

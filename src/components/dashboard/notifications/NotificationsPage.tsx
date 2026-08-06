@@ -267,10 +267,10 @@ export default function NotificationsPage() {
 
   return (
     <div className="xl:py-6">
-      <div className="max-w-7xl mx-auto px-2 sm:px-6 md:px-8">
+      <div className="max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-gray-900">Notifications</h1>
+            <h1 className="text-xl font-semibold text-gray-900">Notifications</h1>
             <p className="mt-1 text-sm text-gray-500">Manage your notifications and preferences</p>
           </div>
           <div className="mt-4 md:mt-0 flex flex-col sm:flex-row gap-3">

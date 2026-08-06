@@ -150,7 +150,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
         { name: 'Shift Attendance Notifier', href: '/dashboard/settings/shift-attendance-notifier', icon: NotepadText },
         { name: 'Notifications', href: '/dashboard/notifications', icon: Bell },
         { name: 'Biometric Device Manager', href: '/dashboard/settings/biometric-device-manager', icon: ScanFace },
-        // { name: 'Billing & Subscriptions', href: '/dashboard/billing', icon: CreditCard }
+        { name: 'Billing & Subscriptions', href: '/dashboard/billing', icon: CreditCard }
       ],
     },
   ];

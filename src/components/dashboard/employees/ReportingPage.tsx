@@ -407,8 +407,8 @@ export default function ReportingPage() {
       <div className="bg-white border-b border-gray-200 px-6 py-5 shadow-sm rounded-lg">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-              <Users className="h-7 w-7 text-indigo-600" />
+            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+              <Users className="h-6 w-6 text-indigo-600" />
               Employee Reporting Setup
             </h1>
             <p className="text-sm text-gray-500 mt-1">
@@ -467,7 +467,7 @@ export default function ReportingPage() {
           <div className="lg:col-span-8 bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden flex flex-col">
             <div className="p-6 border-b border-gray-100">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                   <span className="inline-flex items-center justify-center h-7 w-7 rounded-lg bg-indigo-50 text-indigo-600 font-semibold text-sm">1</span>
                   Select Employees
                 </h2>
@@ -733,7 +733,7 @@ export default function ReportingPage() {
           {/* RIGHT SIDE: REPORTING HEADS PANEL (col-span 5) */}
           <div className="lg:col-span-4 bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden flex flex-col">
             <div className="p-6 border-b border-gray-100">
-              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-4">
                 <span className="inline-flex items-center justify-center h-7 w-7 rounded-lg bg-indigo-50 text-indigo-600 font-semibold text-sm">2</span>
                 Choose Reporting Head
               </h2>

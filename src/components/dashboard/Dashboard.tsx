@@ -7,6 +7,8 @@ import DashboardSidebar from './DashboardSidebar';
 import StatisticsOverview from './StatisticsOverview';
 import ActivityFeed from './ActivityFeed';
 import DataTable from './DataTable';
+import LeaveTypesPage from './leave/LeaveTypesPage';
+import GlobalLoader from '../GlobalLoader';
 import UserProfile from './UserProfile';
 import { useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { useRoleAccess } from '../../hooks/useRoleAccess';
@@ -154,12 +156,7 @@ export default function Dashboard() {
 
   // ── Unified Full-Page Loader ───────────────────────────────────────────────
   if (loading || permsLoading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-        <p className="text-gray-500 text-sm font-medium animate-pulse">Loading Ace Payroll...</p>
-      </div>
-    );
+    return <GlobalLoader />;
   }
 
   // ── Route Authorization Guard ──────────────────────────────────────────────

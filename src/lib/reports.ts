@@ -2004,6 +2004,17 @@ export async function getMusterRollReport(startDate: string, endDate: string, de
     return { data: [], summary: {} };
   }
 
+  const normalizeDate = (dateStr: string) => {
+    if (dateStr.includes('/')) {
+      const [dd, mm, yyyy] = dateStr.split('/');
+      return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+    }
+    return dateStr;
+  };
+
+  const normalizedStart = normalizeDate(startDate);
+  const normalizedEnd = normalizeDate(endDate);
+
   // 1. Fetch Employees
   let selectClause = `
       id, 
@@ -2032,15 +2043,27 @@ export async function getMusterRollReport(startDate: string, endDate: string, de
   const { data: employees, error: empError } = await employeeQuery;
   if (empError) throw new Error(empError.message);
 
-  // 2. Fetch Attendance Logs
-  const { data: attendanceLogs, error: attError } = await supabase
-    .from('attendance_logs')
-    .select('*')
-    .eq('tenant_id', tenantId)
-    .gte('date', startDate)
-    .lte('date', endDate);
+  // 2. Fetch Attendance Logs (with pagination for large companies)
+  let attendanceLogs: any[] = [];
+  let from = 0;
+  const PAGE_SIZE = 1000;
+  
+  while (true) {
+    const { data: batch, error: attError } = await supabase
+      .from('attendance_logs')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .gte('date', normalizedStart)
+      .lte('date', normalizedEnd)
+      .range(from, from + PAGE_SIZE - 1);
 
-  if (attError) throw new Error(attError.message);
+    if (attError) throw new Error(attError.message);
+    if (!batch || batch.length === 0) break;
+    
+    attendanceLogs = attendanceLogs.concat(batch);
+    if (batch.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
 
   // 3. Fetch Holidays
   const { data: holidays, error: holError } = await supabase
@@ -2048,8 +2071,8 @@ export async function getMusterRollReport(startDate: string, endDate: string, de
     .select('*')
     .eq('tenant_id', tenantId)
     .eq('is_active', true)
-    .gte('date', startDate)
-    .lte('date', endDate);
+    .gte('date', normalizedStart)
+    .lte('date', normalizedEnd);
 
   if (holError) throw new Error(holError.message);
 
@@ -2078,7 +2101,7 @@ export async function getMusterRollReport(startDate: string, endDate: string, de
   if (allLeaveError) throw new Error(allLeaveError.message);
 
   const relevantLeaves = (allApprovedLeaves || []).filter(leave =>
-    leave.start_date <= endDate && leave.end_date >= startDate
+    leave.start_date <= normalizedEnd && leave.end_date >= normalizedStart
   );
 
   // Helper to check if a date is a holiday or weekly off
@@ -2111,8 +2134,8 @@ export async function getMusterRollReport(startDate: string, endDate: string, de
     const dob = emp.date_of_birth ? new Date(emp.date_of_birth) : null;
 
     // Iterate through days of the month
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const start = new Date(normalizedStart);
+    const end = new Date(normalizedEnd);
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const day = d.getDate();
       const yyyy = d.getFullYear();
@@ -2132,15 +2155,15 @@ export async function getMusterRollReport(startDate: string, endDate: string, de
         // Check Attendance Log
         const log = attendanceLogs?.find(l => l.employee_id === emp.id && l.date === dateStr);
         if (log) {
-          const logStatus = log.status;
-          if (logStatus === 'Present') status = 'P';
-          else if (logStatus === 'Half Day') status = 'HD';
-          else if (logStatus === 'Late') status = 'LT';
-          else if (logStatus === 'Permission') status = 'PR';
-          else if (logStatus === 'Early Exit') status = 'EE';
-          else if (logStatus === 'First Off') {
+          const logStatus = (log.status || '').trim().toLowerCase();
+          if (logStatus === 'present') status = 'P';
+          else if (logStatus === 'half day') status = 'HD';
+          else if (logStatus === 'late') status = 'LT';
+          else if (logStatus === 'permission') status = 'PR';
+          else if (logStatus === 'early exit') status = 'EE';
+          else if (logStatus === 'first off') {
             status = `${leaveCode}/AN`;
-          } else if (logStatus === 'Second Off') {
+          } else if (logStatus === 'second off') {
             status = `F/${leaveCode}`;
           }
         } else {
@@ -2165,9 +2188,9 @@ export async function getMusterRollReport(startDate: string, endDate: string, de
       fatherName: emp.father_name || '-',
       designation: emp.roles?.name || '-',
       dob: {
-        day: dob ? dob.getDate().toString() : '-',
-        month: dob ? (dob.getMonth() + 1).toString() : '-',
-        year: dob ? dob.getFullYear().toString() : '-'
+        day: dob ? String(dob.getDate()).padStart(2, '0') : '-',
+        month: dob ? String(dob.getMonth() + 1).padStart(2, '0') : '-',
+        year: dob ? String(dob.getFullYear()) : '-'
       },
       attendance: empAttendance
     };

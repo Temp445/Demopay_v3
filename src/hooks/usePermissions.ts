@@ -11,14 +11,18 @@ interface PermissionsState {
   hasAccess: (route: string) => boolean;
 }
 
+let cachedUserId: string | null = null;
+let cachedScreens: string[] = [];
+let cachedIsManager: boolean = false;
+
 export function usePermissions(): PermissionsState {
   const { user } = useAuth();
   const { getUserAccessibleScreens } = useUserAccessControlStore();
   const { isScreenEnabled } = useDomainConfigStore();
 
-  const [loading, setLoading] = useState(true);
-  const [accessibleScreens, setAccessibleScreens] = useState<string[]>([]);
-  const [isManager, setIsManager] = useState(false);
+  const [loading, setLoading] = useState(user ? (cachedUserId !== user.id) : false);
+  const [accessibleScreens, setAccessibleScreens] = useState<string[]>(cachedUserId === user?.id ? cachedScreens : []);
+  const [isManager, setIsManager] = useState(cachedUserId === user?.id ? cachedIsManager : false);
 
   useEffect(() => {
     const loadPermissions = async () => {
@@ -38,14 +42,14 @@ export function usePermissions(): PermissionsState {
           .filter((s: any) => s.is_enabled)
           .map((s: any) => s.screen_route);
 
-        if (roleData.data?.role === 'manager') {
-          setIsManager(true);
-          // Only these two explicitly allowed for managers
-          setAccessibleScreens(['/dashboard/global-tenant-management']);
-        } else {
-          setIsManager(false);
-          setAccessibleScreens(enabledRoutes);
-        }
+        const userIsManager = roleData.data?.role === 'manager';
+
+        cachedUserId = user.id;
+        cachedScreens = userIsManager ? ['/dashboard/global-tenant-management'] : enabledRoutes;
+        cachedIsManager = userIsManager;
+
+        setAccessibleScreens(cachedScreens);
+        setIsManager(userIsManager);
       } catch (error) {
         console.error('Failed to load user permissions:', error);
         setAccessibleScreens([]);
@@ -54,7 +58,11 @@ export function usePermissions(): PermissionsState {
       }
     };
 
-    loadPermissions();
+    if (user && cachedUserId !== user.id) {
+      loadPermissions();
+    } else {
+      setLoading(false);
+    }
 
     // Set up Realtime listener for instant permission updates
     if (!user) return;
@@ -102,17 +110,17 @@ export function usePermissions(): PermissionsState {
     if (accessibleScreens.length === 0) {
       return true;
     }
-    
+
     // Check for exact match
     if (accessibleScreens.includes(route)) {
       return isScreenEnabled(route);
     }
-    
+
     // Fallback for renamed routes (backward compatibility with DB)
     if (route === '/dashboard/attendance/device-employees') {
       return accessibleScreens.includes('/dashboard/attendance/device-employees') && isScreenEnabled(route);
     }
-    
+
     return false;
   };
 

@@ -1,6 +1,9 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../../../lib/supabase';
-import { ChevronDown, Search, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { ChevronDown, Search, ChevronLeft, ChevronRight, Download, FileText, FileSpreadsheet } from 'lucide-react';
+import * as XLSX from 'xlsx-js-style';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { validateAuth } from '../../../stores/utils/storeUtils';
 import { useRoleAccess } from '../../../hooks/useRoleAccess';
 
@@ -69,9 +72,9 @@ export default function AttendanceLogsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 15;
 
-  // Filter State
   const [search, setSearch] = useState('');
-  const [sortField, setSortField] = useState<'name' | 'date'>('date');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [sortField, setSortField] = useState<'employee_code' | 'name' | 'date'>('date');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [showLocation, setShowLocation] = useState(false);
   const [startDate, setStartDate] = useState(() => {
@@ -84,6 +87,7 @@ export default function AttendanceLogsPage() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false);
 
   // Helper to determine restrictions
   const showAdminView = canViewAllData && role !== 'Reporting Head';
@@ -121,7 +125,7 @@ export default function AttendanceLogsPage() {
     };
 
     fetchData();
-  }, [roleLoading, employeeId, isEmployee, isAdmin, isHR]);
+  }, [roleLoading, employeeId, isEmployee, isAdmin, isHR, startDate, endDate]);
 
   const fetchAllAttendanceLogs = async (auth: any) => {
     const PAGE_SIZE = import.meta.env.VITE_SUPABASE_MAX_ROWS || 1000;
@@ -133,7 +137,9 @@ export default function AttendanceLogsPage() {
       let query = supabase
         .from('attendance_logs')
         .select(`*, employee:employee_id (id, name, employee_code)`)
-        .eq('tenant_id', auth.tenantId);
+        .eq('tenant_id', auth.tenantId)
+        .gte('date', startDate)
+        .lte('date', endDate);
 
       if (shouldRestrictData && employeeId) {
         query = query.eq('employee_id', employeeId);
@@ -164,7 +170,9 @@ export default function AttendanceLogsPage() {
       let query = supabase
         .from('shift_assignments')
         .select('id, employee_id, schedule_date')
-        .eq('tenant_id', auth.tenantId);
+        .eq('tenant_id', auth.tenantId)
+        .gte('schedule_date', startDate)
+        .lte('schedule_date', endDate);
 
       if (shouldRestrictData && employeeId) {
         query = query.eq('employee_id', employeeId);
@@ -308,8 +316,9 @@ export default function AttendanceLogsPage() {
       const logDate = new Date(log.date);
       const isAfterStart = startDate ? logDate >= new Date(startDate) : true;
       const isBeforeEnd = endDate ? logDate <= new Date(endDate) : true;
+      const matchesStatus = statusFilter === 'All' || log.status === statusFilter;
 
-      return matchesSearch && isAfterStart && isBeforeEnd;
+      return matchesSearch && isAfterStart && isBeforeEnd && matchesStatus;
     });
 
     filtered.sort((a, b) => {
@@ -317,14 +326,19 @@ export default function AttendanceLogsPage() {
         return sortOrder === 'asc' 
           ? new Date(a.date).getTime() - new Date(b.date).getTime() 
           : new Date(b.date).getTime() - new Date(a.date).getTime();
+      } else if (sortField === 'name') {
+        return sortOrder === 'asc' 
+          ? (a.employee?.name || '').localeCompare(b.employee?.name || '') 
+          : (b.employee?.name || '').localeCompare(a.employee?.name || '');
+      } else {
+        return sortOrder === 'asc' 
+          ? (a.employee?.employee_code || '').localeCompare(b.employee?.employee_code || '') 
+          : (b.employee?.employee_code || '').localeCompare(a.employee?.employee_code || '');
       }
-      return sortOrder === 'asc' 
-        ? (a.employee?.name || '').localeCompare(b.employee?.name || '') 
-        : (b.employee?.name || '').localeCompare(a.employee?.name || '');
     });
 
     return filtered;
-  }, [logs, employees, holidays, patterns, shiftAssignments, search, sortField, sortOrder, startDate, endDate]);
+  }, [logs, employees, holidays, patterns, shiftAssignments, search, statusFilter, sortField, sortOrder, startDate, endDate]);
 
   const totalPages = Math.ceil(processedLogs.length / itemsPerPage);
   const paginatedLogs = useMemo(() => {
@@ -334,7 +348,7 @@ export default function AttendanceLogsPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, sortField, sortOrder, startDate, endDate]); 
+  }, [search, statusFilter, sortField, sortOrder, startDate, endDate]); 
 
   const handleExport = () => {
     if (processedLogs.length === 0) {
@@ -362,6 +376,77 @@ export default function AttendanceLogsPage() {
     a.download = `attendance_logs${fileNameSuffix}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
+  };
+
+  const handleExportExcel = () => {
+    if (processedLogs.length === 0) {
+      alert("No attendance records found for the current filters.");
+      return;
+    }
+
+    const headers = ['Date', 'Employee Code', 'Employee Name', 'Clock In', 'Clock Out', 'Total Hours', 'Status'];
+    const rows = processedLogs.map(log => [
+      log.date, 
+      log.employee.employee_code, 
+      log.employee.name, 
+      log.clock_in ? new Date(log.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A',
+      log.clock_out ? new Date(log.clock_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A',
+      calculateTotalHours(log.clock_in, log.clock_out),
+      log.status
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance Logs');
+    
+    const colWidths = headers.map((h, i) => {
+      const maxContentLen = Math.max(...rows.map(r => r[i]?.toString().length || 0), h.length);
+      return { wch: maxContentLen + 2 };
+    });
+    worksheet['!cols'] = colWidths;
+
+    const fileNameSuffix = (startDate && endDate) ? `_${startDate}_to_${endDate}` : '';
+    XLSX.writeFile(workbook, `attendance_logs${fileNameSuffix}.xlsx`);
+    setIsExportOpen(false);
+  };
+
+  const handleExportPDF = () => {
+    if (processedLogs.length === 0) {
+      alert("No attendance records found for the current filters.");
+      return;
+    }
+
+    const doc = new jsPDF('landscape');
+    
+    doc.setFontSize(16);
+    doc.text('Attendance Logs', 14, 15);
+    
+    doc.setFontSize(10);
+    const dateRange = (startDate && endDate) ? `${startDate} to ${endDate}` : 'All Dates';
+    doc.text(`Period: ${dateRange}`, 14, 22);
+    
+    const headers = [['Date', 'Emp Code', 'Employee Name', 'Clock In', 'Clock Out', 'Total Hours', 'Status']];
+    const data = processedLogs.map(log => [
+      log.date, 
+      log.employee.employee_code, 
+      log.employee.name, 
+      log.clock_in ? new Date(log.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A',
+      log.clock_out ? new Date(log.clock_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A',
+      calculateTotalHours(log.clock_in, log.clock_out),
+      log.status
+    ]);
+
+    autoTable(doc, {
+      head: headers,
+      body: data,
+      startY: 28,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [79, 70, 229] },
+    });
+
+    const fileNameSuffix = (startDate && endDate) ? `_${startDate}_to_${endDate}` : '';
+    doc.save(`attendance_logs${fileNameSuffix}.pdf`);
+    setIsExportOpen(false);
   };
 
   // 2. Updated Color Styles for All Statuses
@@ -397,22 +482,53 @@ export default function AttendanceLogsPage() {
         <div className="bg-white rounded-2xl shadow-sm border p-4 sm:p-6 mb-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">Attendance Logs</h1>
+              <h1 className="text-xl font-bold text-gray-900">Attendance Logs</h1>
               <p className="text-sm text-gray-500 mt-1">Manage and review employee attendance records</p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 relative">
               <button 
-                onClick={handleExport}
+                onClick={() => setIsExportOpen(!isExportOpen)}
                 className="flex justify-center items-center gap-2 border px-4 py-2 border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
               >
                 <Download className="w-4 h-4" />
-                <span className="hidden sm:inline">Export CSV</span>
+                <span className="hidden sm:inline">Export</span>
+                <ChevronDown className="w-4 h-4" />
               </button>
+
+              {isExportOpen && (
+                <div className="absolute top-full right-0 mt-1 w-48 bg-white rounded-xl shadow-lg border border-gray-100 z-50 py-1 overflow-hidden">
+                  <button 
+                    onClick={handleExportPDF}
+                    className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition"
+                  >
+                    <FileText className="w-4 h-4 text-red-500" />
+                    Export as PDF
+                  </button>
+                  <button 
+                    onClick={handleExportExcel}
+                    className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-green-600" />
+                    Export as Excel
+                  </button>
+                  <div className="h-px bg-gray-100 my-1 mx-2"></div>
+                  <button 
+                    onClick={() => {
+                      handleExport();
+                      setIsExportOpen(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition"
+                  >
+                    <Download className="w-4 h-4 text-indigo-600" />
+                    Export as CSV
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-4 items-end">
-            <div className="md:col-span-3">
+            <div className="md:col-span-4">
               <label className="text-xs font-bold text-gray-500 uppercase">Search</label>
               <div className="relative mt-1">
                 <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
@@ -447,21 +563,28 @@ export default function AttendanceLogsPage() {
             </div>
             
             <div className="md:col-span-2">
-              <label className="text-xs font-bold text-gray-500 uppercase">Sort by</label>
-              <select value={sortField} onChange={(e) => setSortField(e.target.value as any)} className="w-full mt-1 p-2 text-sm border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500">
-                <option value="date">Date</option>
-                <option value="name">Employee</option>
+              <label className="text-xs font-bold text-gray-500 uppercase">Status</label>
+              <select 
+                value={statusFilter} 
+                onChange={(e) => setStatusFilter(e.target.value)} 
+                className="w-full mt-1 p-2 text-sm border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="All">All Statuses</option>
+                <option value="Present">Present</option>
+                <option value="Absent">Absent</option>
+                <option value="Late">Late</option>
+                <option value="Half Day">Half Day</option>
+                <option value="Permission">Permission</option>
+                <option value="Early Exit">Early Exit</option>
+                <option value="First Off">First Off</option>
+                <option value="Second Off">Second Off</option>
               </select>
             </div>
             
-            <div className="md:col-span-3 flex gap-2 h-[38px]">
-              <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value as any)} className="flex-1 p-2 text-sm border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500">
-                <option value="desc">Newest First</option>
-                <option value="asc">Oldest First</option>
-              </select>
+            <div className="md:col-span-2 flex justify-end items-end h-[38px]">
               <button 
                 onClick={() => setShowLocation(!showLocation)}
-                className="flex-1 flex justify-center items-center border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition"
+                className="px-4 w-full flex justify-center items-center border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition h-full whitespace-nowrap"
                 title="Toggle Location Details"
               >
                 {showLocation ? 'Less Details' : 'More Details'}
@@ -566,9 +689,54 @@ export default function AttendanceLogsPage() {
             <table className="w-full text-left whitespace-nowrap">
               <thead className="bg-gray-50/80 border-b">
                 <tr>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Employee Code</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Employee</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Date</th>
+                  <th 
+                    className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                    onClick={() => {
+                      if (sortField === 'employee_code') {
+                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                      } else {
+                        setSortField('employee_code');
+                        setSortOrder('asc');
+                      }
+                    }}
+                  >
+                    Employee Code
+                    {sortField === 'employee_code' && (
+                      <span className="ml-1 inline-block">{sortOrder === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </th>
+                  <th 
+                    className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                    onClick={() => {
+                      if (sortField === 'name') {
+                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                      } else {
+                        setSortField('name');
+                        setSortOrder('asc');
+                      }
+                    }}
+                  >
+                    Employee Name
+                    {sortField === 'name' && (
+                      <span className="ml-1 inline-block">{sortOrder === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </th>
+                  <th 
+                    className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                    onClick={() => {
+                      if (sortField === 'date') {
+                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                      } else {
+                        setSortField('date');
+                        setSortOrder('desc');
+                      }
+                    }}
+                  >
+                    Date
+                    {sortField === 'date' && (
+                      <span className="ml-1 inline-block">{sortOrder === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Clock In/Out</th>
                   {showLocation && <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Location</th>}
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Total Hours</th>

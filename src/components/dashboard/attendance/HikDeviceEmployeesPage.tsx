@@ -19,8 +19,24 @@ export default function HikDeviceEmployeesPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // ─── Manual Sync State ───
-  const [manualStartDate, setManualStartDate] = useState('');
-  const [manualEndDate, setManualEndDate] = useState('');
+  const getInitialStartDate = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}T00:00`;
+  };
+
+  const getInitialEndDate = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}T23:59`;
+  };
+
+  const [manualStartDate, setManualStartDate] = useState(getInitialStartDate());
+  const [manualEndDate, setManualEndDate] = useState(getInitialEndDate());
   const [isManualSyncing, setIsManualSyncing] = useState(false);
   const [manualSyncMessage, setManualSyncMessage] = useState<string | null>(null);
 
@@ -119,30 +135,7 @@ export default function HikDeviceEmployeesPage() {
 
   return (
     <div className="space-y-6 max-w-[1400px] mx-auto w-full pb-12">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Device Employee Management</h1>
-          <p className="text-sm text-slate-500 mt-1">Manage which employees are synced to physical biometric devices.</p>
-        </div>
-        
-        {devices.length > 1 && (
-          <div className="w-full sm:w-auto">
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Select Device</label>
-            <select
-              title="Select Device"
-              value={selectedDeviceId || ''}
-              onChange={(e) => setSelectedDeviceId(e.target.value)}
-              className="w-full sm:w-64 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-slate-700"
-            >
-              {devices.map(d => (
-                <option key={d.id} value={d.id}>{d.device_name} {d.is_enabled ? '' : '(Disabled)'}</option>
-              ))}
-            </select>
-          </div>
-        )}
-      </div>
-
-      {/* --- MANUAL SYNC COMPONENT --- */}
+       {/* --- MANUAL SYNC COMPONENT --- */}
       <ManualSyncPanel 
         startDate={manualStartDate}
         setStartDate={setManualStartDate}
@@ -153,6 +146,29 @@ export default function HikDeviceEmployeesPage() {
         syncMessage={manualSyncMessage}
         enabledDevices={enabledDevices}
       />
+      
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Device Employee Management</h1>
+          <p className="text-sm text-slate-500 mt-1">Manage which employees are synced to physical biometric devices.</p>
+        </div>
+        
+        {devices.length > 1 && (
+          <div className="w-full sm:w-auto">
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Select Device</label>
+            <select
+              title="Select Device"
+              value={selectedDeviceId || ''}
+              onChange={(e) => setSelectedDeviceId(e.target.value)}
+              className="w-full text-sm sm:w-64 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-slate-700"
+            >
+              {devices.map(d => (
+                <option key={d.id} value={d.id}>{d.device_name} {d.is_enabled ? '' : '(Disabled)'}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
 
       {/* --- UPLOAD PANEL --- */}
       {selectedDeviceId && selectedDevice ? (

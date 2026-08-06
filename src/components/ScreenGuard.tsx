@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { usePermissions } from '../hooks/usePermissions';
 import { useDomainConfigStore } from '../stores/domainConfigStore';
+import GlobalLoader from './GlobalLoader';
 
 export default function ScreenGuard({ children }: { children: React.ReactNode }) {
   const { hasAccess, loading: permissionsLoading } = usePermissions();
@@ -26,12 +27,7 @@ export default function ScreenGuard({ children }: { children: React.ReactNode })
   }, [isLoading]);
 
   if (isLoading && !loadingTimeout) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-        <p className="text-gray-500 text-sm font-medium animate-pulse">Loading Screen...</p>
-      </div>
-    );
+    return <GlobalLoader />;
   }
 
   // Bypass checks for the base dashboard route itself

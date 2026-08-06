@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import GlobalLoader from './GlobalLoader';
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -22,12 +23,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   }, [loading]);
 
   if (loading && !loadingTimeout) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-        <p className="text-gray-500 text-sm font-medium animate-pulse">Loading Ace Payroll...</p>
-      </div>
-    );
+    return <GlobalLoader />;
   }
 
   // If loading timed out or there's no user, redirect to login

@@ -34,7 +34,8 @@ export default function ManualSyncPanel({
 
   useEffect(() => {
     setSelectedIds(new Set(enabledDevices.map(d => d.id)));
-  }, [enabledDevices]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(enabledDevices.map(d => d.id))]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -46,6 +47,34 @@ export default function ManualSyncPanel({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Compute maximum allowed end date based on start date (allow up to 23:59 on the 7th calendar day inclusive)
+  const maxEndDate = React.useMemo(() => {
+    if (!startDate) return undefined;
+    const date = new Date(startDate);
+    if (isNaN(date.getTime())) return undefined;
+    // Add 6 days to the start date to get exactly 7 calendar days inclusive
+    date.setDate(date.getDate() + 6);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}T23:59`;
+  }, [startDate]);
+
+  // Ensure end date is always within the allowed maxEndDate
+  useEffect(() => {
+    if (startDate && endDate && maxEndDate) {
+      const start = new Date(startDate).getTime();
+      const end = new Date(endDate).getTime();
+      const max = new Date(maxEndDate).getTime();
+      
+      if (end > max) {
+        setEndDate(maxEndDate);
+      } else if (end < start) {
+        setEndDate(startDate);
+      }
+    }
+  }, [startDate, endDate, setEndDate, maxEndDate]);
 
   const handleToggleAll = () => {
     if (selectedIds.size === enabledDevices.length) {
@@ -157,10 +186,15 @@ export default function ManualSyncPanel({
 
         {/* End Date */}
         <div>
-          <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">End Time</label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">End Time</label>
+            <span className="text-[10px] text-slate-400 font-semibold">(Max 7 days)</span>
+          </div>
           <input 
             type="datetime-local" 
             value={endDate} 
+            min={startDate}
+            max={maxEndDate}
             onChange={(e) => setEndDate(e.target.value)} 
             disabled={isSyncing}
             className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 text-sm font-medium text-slate-800 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm" 
@@ -172,7 +206,7 @@ export default function ManualSyncPanel({
           <button 
             onClick={() => handleManualSync(Array.from(selectedIds))} 
             disabled={isSyncing || selectedIds.size === 0}
-            className="w-full flex items-center justify-center space-x-2 bg-indigo-600 text-white py-2.5 px-4 rounded-lg hover:bg-indigo-700 font-semibold shadow-sm transition-all disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed active:scale-[0.98]"
+            className="w-full text-sm flex items-center justify-center space-x-2 bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 font-semibold shadow-sm transition-all disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed active:scale-[0.98]"
           >
             {isSyncing ? (
               <span className="flex items-center gap-2">

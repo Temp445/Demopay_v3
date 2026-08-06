@@ -9,41 +9,49 @@ interface DomainConfig {
 
 interface DomainConfigState {
   config: DomainConfig | null;
+  allowToLandingPage: boolean;
   loading: boolean;
   initialized: boolean;
-  fetchConfig: (domain: string) => Promise<void>;
+  fetchConfig: (domain: string, fallbackDomain?: string) => Promise<void>;
   isScreenEnabled: (route: string) => boolean;
   isFeatureEnabled: (feature: string) => boolean;
 }
 
 export const useDomainConfigStore = create<DomainConfigState>((set, get) => ({
   config: null,
+  allowToLandingPage: true,
   loading: false,
   initialized: false,
-  fetchConfig: async (domain: string) => {
+  fetchConfig: async (domain: string, fallbackDomain?: string) => {
     // Avoid fetching if already initialized
     if (get().initialized && !get().loading) return;
 
     set({ loading: true });
 
     try {
+      const domainsToCheck = fallbackDomain ? [domain, fallbackDomain] : [domain];
+
       const { data, error } = await supabase
         .from('domain_configurations')
-        .select('config')
-        .eq('domain_name', domain)
+        .select('config, allow_to_landing_page')
+        .in('domain_name', domainsToCheck)
         .eq('is_active', true)
-        .single();
+        .limit(1)
+        .maybeSingle();
 
       if (error) {
-        if (error.code !== 'PGRST116') { // PGRST116 is "No rows found"
-          console.error('Error fetching domain configuration:', error);
-        }
+        console.error('Error fetching domain configuration:', error);
         // If not found or error, we'll use a permissive default
         set({ config: null, loading: false, initialized: true });
         return;
       }
 
-      set({ config: data.config as DomainConfig, loading: false, initialized: true });
+      set({ 
+        config: (data?.config as DomainConfig) || null,
+        allowToLandingPage: data?.allow_to_landing_page ?? true,
+        loading: false, 
+        initialized: true 
+      });
     } catch (err) {
       console.error('Failed to fetch domain configuration:', err);
       set({ config: null, loading: false, initialized: true });
@@ -75,9 +83,9 @@ export const useDomainConfigStore = create<DomainConfigState>((set, get) => ({
       }
     }
 
-    // 3. DENY by default when a config EXISTS but doesn't mention this route.
-    //    This prevents unlisted routes from sneaking through.
-    return false;
+    // 3. ALLOW by default when a config EXISTS but doesn't mention this route.
+    //    This ensures standard features aren't broken if not explicitly configured.
+    return true;
   },
   
   isFeatureEnabled: (feature: string) => {

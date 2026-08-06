@@ -904,11 +904,11 @@ export default function ShiftAttendanceReportSender() {
             <div className="p-2 bg-indigo-600 rounded-lg shadow-md">
               <NotepadText className="h-5 w-5 text-white shrink-0" />
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight">
+            <h1 className="text-xl font-bold text-gray-900 tracking-tight">
               Shift Attendance Notifier Settings
             </h1>
           </div>
-          <p className="text-xs sm:text-sm text-gray-500 font-medium max-w-3xl leading-relaxed">
+          <p className="text-xs sm:text-sm text-gray-400 font-medium max-w-3xl leading-relaxed">
             Send employee Clock-In attendance status reports based on the shift and a configurable delay after the shift start time. Once configured, the system will automatically send these reports to the specified recipients at the scheduled interval.
           </p>
         </div>

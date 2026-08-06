@@ -170,7 +170,7 @@ export default function AttendanceValidationSettings() {
   return (
     <div className="bg-white rounded-lg shadow-md overflow-hidden">
       <div className="p-4 sm:p-6 border-b border-gray-200">
-        <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Attendance Settings</h2>
+        <h2 className="text-xl sm:text-xl font-bold text-gray-900">Attendance Settings</h2>
         <p className="text-sm text-gray-600 mt-1">
           Configure attendance validation rules and notifications for your organization
         </p>

@@ -92,8 +92,8 @@ export default function UserAccessControlPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Shield className="h-7 w-7 text-indigo-600" />
+          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Shield className="h-6 w-6 text-indigo-600" />
             Screen Access Control
           </h1>
           <p className="mt-1 text-sm text-gray-500">

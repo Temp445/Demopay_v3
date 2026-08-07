@@ -34,97 +34,110 @@ interface SubInfo {
   planName?: string;
 }
 
+// ── Session cache helpers ─────────────────────────────────────────────────────
+const SUB_CACHE_KEY = 'ace_sub_cache';
+
+function readSubCache(tenantId: string): SubInfo | null {
+  try {
+    const raw = sessionStorage.getItem(SUB_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Only use cache if it belongs to the same tenant
+    if (parsed.tenantId !== tenantId) return null;
+    return parsed.info as SubInfo;
+  } catch {
+    return null;
+  }
+}
+
+function writeSubCache(tenantId: string, info: SubInfo) {
+  try {
+    sessionStorage.setItem(SUB_CACHE_KEY, JSON.stringify({ tenantId, info }));
+  } catch { /* ignore */ }
+}
+
+function clearSubCache() {
+  try { sessionStorage.removeItem(SUB_CACHE_KEY); } catch { /* ignore */ }
+}
+
 // ── Trial Expired Wall ────────────────────────────────────────────────────────
 function TrialExpiredWall({ info, onUpgrade }: { info: SubInfo; onUpgrade: () => void }) {
-  const daysLeft = info.daysUntilDataDelete ?? 3;
-  const isUrgent = daysLeft <= 1;
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, []);
+
+  const expiredDate = info.expiredAt
+    ? new Date(info.expiredAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    : '—';
 
   return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-      <div className="relative z-10 max-w-lg w-full">
-        {/* Card */}
-        <div className="bg-white border border-slate-200 rounded-3xl p-10 shadow-2xl text-center">
+    <div id="trial-expired-wall" className="fixed inset-0 z-[9999] flex items-center justify-center p-4 backdrop-blur bg-[#10182894]">
+      <div className="w-full max-w-md bg-white border border-indigo-100 rounded-2xl  p-8 relative">
+        
+        {/* Icon */}
+        <div className="h-10 w-10 rounded-xl border border-orange-200 bg-orange-50 flex items-center justify-center mb-5">
+          <svg className="h-5 w-5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </div>
 
-          {/* Icon */}
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-6 bg-red-50 ring-8 ring-red-50/50">
-            <Clock className="h-10 w-10 text-red-500" />
+        {/* Badge */}
+        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-orange-50 border border-orange-100 mb-4">
+          <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+          <span className="text-sm font-semibold text-orange-600">Access restricted</span>
+        </div>
+
+        {/* Heading & Description */}
+        <h1 className="text-xl font-bold text-slate-900 mb-2">
+          Your {info.planName || 'Professional'} plan has expired
+        </h1>
+        <p className="text-sm text-slate-500 leading-relaxed mb-6">
+          This workspace's subscription lapsed and features are temporarily locked. All payroll records, employee data, and history remain intact — renewing restores access immediately.
+        </p>
+
+        {/* Details List */}
+        <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 mb-6">
+          <div className="flex justify-between items-center p-3.5">
+            <span className="text-xs font-medium text-slate-500">Plan</span>
+            <span className="text-xs font-bold text-slate-900">{info.planName || 'Professional'}</span>
           </div>
+          <div className="flex justify-between items-center p-3.5">
+            <span className="text-xs font-medium text-slate-500">Expired on</span>
+            <span className="text-xs font-bold text-slate-900">{expiredDate}</span>
+          </div>
+        </div>
 
-          {/* Heading */}
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight mb-2">
-            Your {info.planName || 'Free Trial'} Has Ended
-          </h1>
-          <p className="text-slate-500 text-sm font-medium mb-6 leading-relaxed">
-            Your {info.planName || '7-day Elite Trial'} expired on <span className="text-slate-900 font-bold">
-              {info.expiredAt ? new Date(info.expiredAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-            </span>. Upgrade to continue using Ace Payroll.
-          </p>
-
-          {/* Data deletion warning (Only for Free Trial) */}
-          {info.planName === 'Free Trial' ? (
-            <div className="bg-red-50 border border-red-100 p-5 rounded-2xl mb-8 text-left relative overflow-hidden">
-              <div className="absolute -right-4 -top-4 w-24 h-24 bg-red-100 rounded-full blur-2xl opacity-50"></div>
-              <div className="flex items-start gap-4 relative z-10">
-                <AlertTriangle className="h-6 w-6 flex-shrink-0 mt-0.5 text-red-600" />
-                <div>
-                  <p className="text-sm font-black uppercase tracking-wide mb-1 text-red-700">
-                    {daysLeft <= 0 ? 'Trial & Grace Period Expired' : `Trial Expired — Data Deletion in ${daysLeft} Day${daysLeft !== 1 ? 's' : ''}`}
-                  </p>
-                  <p className="text-red-900 text-sm leading-relaxed mb-4 font-medium">
-                    {daysLeft <= 0
-                      ? 'Your trial limit and grace period have both expired. Your operational data has been removed from the workspace and cannot be retrieved.'
-                      : `Your trial has ended. Your workspace will be completely reset if you don't upgrade within ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.`
-                    }
-                  </p>
-                  <div className="bg-white/80 p-3 rounded-xl border border-red-200/60 flex gap-2.5 items-start shadow-sm">
-                    <ShieldAlert className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs font-bold text-red-800 leading-relaxed">
-                      {daysLeft <= 0
-                        ? 'You can no longer retrieve the deleted data, but you can still upgrade to any of our paid plans to continue using the system with a fresh setup.'
-                        : 'CRITICAL WARNING: Once your data is deleted, it is permanently erased from our servers and cannot be retrieved.'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-amber-50 border border-amber-100 p-5 rounded-2xl mb-8 text-left relative overflow-hidden">
-              <div className="absolute -right-4 -top-4 w-24 h-24 bg-amber-100 rounded-full blur-2xl opacity-50"></div>
-              <div className="flex items-start gap-4 relative z-10">
-                <Clock className="h-6 w-6 flex-shrink-0 mt-0.5 text-amber-600" />
-                <div>
-                  <p className="text-sm font-black uppercase tracking-wide mb-1 text-amber-700">
-                    Plan Access Restricted
-                  </p>
-                  <p className="text-amber-900 text-sm leading-relaxed font-medium">
-                    Your {info.planName} has expired. All your data is safely preserved, but you need to renew your subscription to regain full access to the platform.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Upgrade CTA */}
+        {/* Actions */}
+        <div className="space-y-2.5">
           <button
             onClick={onUpgrade}
-            className="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-black py-4 rounded-2xl transition-all shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-3 group mb-4"
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors"
           >
-            <Zap className="h-5 w-5" />
-            Upgrade Plan Now
-            <ArrowRight className="h-5 w-5 group-hover:translate-x-1 transition-transform" />
+            Renew subscription <ArrowRight className="h-4 w-4" />
           </button>
+          
+          <button
+            className="w-full py-2.5 rounded-lg bg-white  text-slate-700 text-sm font-medium"
+          >
+            Contact your workspace admin
+          </button>
+        </div>
 
-          <p className="text-slate-500 text-sm font-medium">
-            Contact us at{' '}
-            <a href="mailto:sales@acesoft.in" className="text-indigo-600 hover:text-indigo-700 transition-colors">
-              sales@acesoft.in
-            </a>
-          </p>
+        {/* Footer Links */}
+        <div className="flex items-right justify-end mt-6 pt-4 border-t border-slate-100">
+          <a href="mailto:sales@acesoft.in" className="text-xs text-slate-600 hover:text-slate-600 transition-colors">
+            Contact sales at <span className="text-indigo-600">sales@acesoft.in</span>
+          </a>
         </div>
       </div>
     </div>
   );
 }
+
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
@@ -140,6 +153,96 @@ export default function Dashboard() {
   const showSidebar = !hideSidebarPaths.includes(location.pathname);
   const showEmployeeDashboard = isEmployee || role === 'Reporting Head';
 
+  // Initialise from cache if available — avoids loading state on refresh
+  const [subInfo, setSubInfo] = useState<SubInfo>(() => {
+    return { status: 'loading' };
+  });
+
+  // Use tenantId from TenantContext so this runs in PARALLEL with useRoleAccess,
+  // not sequentially after it. This cuts load time significantly.
+  const tenantIdForSub = currentTenant?.id ?? null;
+
+  useEffect(() => {
+    // Wait for tenant to be resolved
+    if (tenantLoading || !tenantIdForSub) {
+      setSubInfo({ status: 'loading' });
+      return;
+    }
+
+    // --- Apply cache immediately to avoid loading flicker ---
+    const cached = readSubCache(tenantIdForSub);
+    if (cached) {
+      setSubInfo(cached); // Show cached status instantly (no loading state)
+    } else {
+      setSubInfo({ status: 'loading' }); // First ever load: must wait
+    }
+
+    // Always re-verify in background regardless of cache
+    async function checkSubscription() {
+      try {
+        const { data, error } = await supabase
+          .from('subscriptions')
+          .select('id, status, expires_at, plan_name')
+          .eq('tenant_id', tenantIdForSub)
+          .order('created_at', { ascending: false });
+          
+        if (error) throw error;
+        
+        let freshInfo: SubInfo;
+
+        if (!data || data.length === 0) {
+          freshInfo = { status: 'none' };
+        } else {
+          const now = new Date();
+          const active = data.find(s => {
+            const isStatusActive = s.status === 'active';
+            const isNotExpired = new Date(s.expires_at) > now;
+            return isStatusActive && isNotExpired;
+          });
+
+          if (active) {
+            freshInfo = { status: 'active', planName: active.plan_name };
+          } else {
+            const latest = data[0];
+            const expiredAtDate = new Date(latest.expires_at);
+            const diffTime = Math.abs(now.getTime() - expiredAtDate.getTime());
+            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            freshInfo = { 
+              status: 'trial_expired', 
+              expiredAt: latest.expires_at,
+              planName: latest.plan_name,
+              daysSinceExpiry: diffDays,
+              daysUntilDataDelete: Math.max(0, 3 - diffDays)
+            };
+          }
+        }
+
+        // Write to cache and update state
+        writeSubCache(tenantIdForSub, freshInfo);
+        setSubInfo(freshInfo);
+      } catch (err) {
+        console.error('Failed to fetch subscription', err);
+        if (!cached) {
+          setSubInfo({ status: 'active' });
+        }
+      }
+    }
+    
+    checkSubscription();
+
+    // Listen for successful payments to instantly unlock the dashboard
+    const handleSubscriptionUpdate = () => {
+      clearSubCache();
+      checkSubscription();
+    };
+    window.addEventListener('subscription_updated', handleSubscriptionUpdate);
+
+    return () => {
+      window.removeEventListener('subscription_updated', handleSubscriptionUpdate);
+    };
+  // Run as soon as tenant is available (parallel with role/perms loading)
+  }, [tenantLoading, tenantIdForSub]);
+
   // Sync the current page context into the help store for contextual article loading
   useEffect(() => {
     setCurrentPageContext(location.pathname);
@@ -154,13 +257,44 @@ export default function Dashboard() {
 
   const isOverviewPage = location.pathname === '/dashboard' || location.pathname === '/dashboard/' || location.pathname === '/dashboard/overview' || location.pathname === '/dashboard/overview/';
 
-  // ── Unified Full-Page Loader ───────────────────────────────────────────────
-  if (loading || permsLoading) {
-    return <GlobalLoader />;
-  }
+  // ── Block if Expired ───────────────────────────────────────────────────────
+  const isBillingPage = location.pathname === '/dashboard/billing' || location.pathname === '/dashboard/billing/';
+  const isExpiredBlocked = subInfo.status === 'trial_expired' && !isBillingPage;
 
-  // ── Route Authorization Guard ──────────────────────────────────────────────
-  if (!isOverviewPage && !permsLoading) {
+  // ── Anti-Tamper Protection ──────────────────────────────────────────────────
+  // NOTE: We delay the start of the interval by 800ms to give React time to
+  // commit the wall element to the DOM before we start checking for it.
+  useEffect(() => {
+    if (!isExpiredBlocked) return;
+
+    let checkInterval: ReturnType<typeof setInterval> | null = null;
+
+    const startDelay = setTimeout(() => {
+      checkInterval = setInterval(() => {
+        const wall = document.getElementById('trial-expired-wall');
+        if (
+          !wall ||
+          window.getComputedStyle(wall).display === 'none' ||
+          window.getComputedStyle(wall).visibility === 'hidden' ||
+          window.getComputedStyle(wall).opacity === '0'
+        ) {
+          // User attempted to bypass the wall by deleting/hiding the DOM node
+          window.location.replace('/dashboard/billing');
+        }
+      }, 500);
+    }, 800); // Wait for React to paint the wall before we start checking
+
+    return () => {
+      clearTimeout(startDelay);
+      if (checkInterval) clearInterval(checkInterval);
+    };
+  }, [isExpiredBlocked]);
+
+  // ── Unified loading flag ──────────────────────────────────────────────────
+  const isAppLoading = loading || permsLoading || tenantLoading || subInfo.status === 'loading';
+
+  // ── Route Authorization Guard (only when not loading) ─────────────────────
+  if (!isAppLoading && !isOverviewPage) {
     const path = location.pathname.endsWith('/') && location.pathname.length > 1
       ? location.pathname.slice(0, -1)
       : location.pathname;
@@ -176,23 +310,37 @@ export default function Dashboard() {
   }
 
   // ── Manager redirect ────────────────────────────────────────────────────────
-  if (isManager && isOverviewPage) {
+  if (!isAppLoading && isManager && isOverviewPage) {
     return <Navigate to="/dashboard/global-tenant-management" replace />;
   }
 
   // ── Active subscription — render normally ───────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-indigo-50">
+
+      {/* ── Full-Page Loading Overlay (React-controlled, no flash) ── */}
+      {isAppLoading && (
+        <div className="fixed inset-0 z-[99999] bg-gray-50 flex flex-col items-center justify-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4" />
+          <p className="text-gray-500 text-sm font-medium animate-pulse">Loading Ace Payroll...</p>
+        </div>
+      )}
+
       {showSidebar && (
         <DashboardHeader onMenuClick={() => setSidebarOpen(true)} />
       )}
       {showSidebar && (
-        <DashboardSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+        <DashboardSidebar 
+          isOpen={sidebarOpen} 
+          onClose={() => setSidebarOpen(false)} 
+          isLocked={subInfo.status === 'trial_expired'}
+        />
       )}
 
       <div className={showSidebar ? 'lg:pl-64 pt-14' : 'pt-14'}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {isOverviewPage ? (
+          {/* Don't render heavy content while loading — prevents cascade DB calls */}
+          {!isAppLoading && (isOverviewPage ? (
             <div className="grid grid-cols-1 gap-8">
               <StatisticsOverview />
               {!showEmployeeDashboard && (
@@ -208,13 +356,21 @@ export default function Dashboard() {
             </div>
           ) : (
             <Outlet />
-          )}
+          ))}
         </div>
       </div>
 
       {/* ── Help System ── */}
       <FloatingHelpButton />
       <HelpSidebar />
+      
+      {/* ── Expiry Overlay ── */}
+      {isExpiredBlocked && (
+        <TrialExpiredWall 
+          info={subInfo} 
+          onUpgrade={() => navigate('/dashboard/billing')} 
+        />
+      )}
     </div>
   );
 }

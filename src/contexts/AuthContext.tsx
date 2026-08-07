@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, AuthError } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { useUserProfileStore } from '../stores/userProfileStore';
+import { clearRoleCache } from '../lib/roleBasedAccess';
 
 interface AuthContextType {
   user: User | null;
@@ -242,6 +243,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     try {
       clearError();
+      // Clear all session caches so re-login always loads fresh data
+      try { sessionStorage.removeItem('ace_sub_cache'); } catch { /* ignore */ }
+      clearRoleCache();
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
     } catch (error) {

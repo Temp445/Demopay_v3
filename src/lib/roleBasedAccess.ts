@@ -84,6 +84,22 @@ export async function getCurrentEmployeeId(userEmail: string, tenantId: string):
   }
 }
 
+// ── Module-level memory cache (lives for the entire browser session) ─────────
+let _roleCache: {
+  userId: string;
+  data: {
+    employeeId: string | null;
+    role: UserRole;
+    access: RoleAccess;
+    tenantId: string | null;
+    userEmail: string | null;
+  };
+} | null = null;
+
+export function clearRoleCache() {
+  _roleCache = null;
+}
+
 export async function getUserEmployeeData(userId: string): Promise<{
   employeeId: string | null;
   role: UserRole;
@@ -91,71 +107,77 @@ export async function getUserEmployeeData(userId: string): Promise<{
   tenantId: string | null;
   userEmail: string | null;
 }> {
+  // Return cached result instantly on re-renders / navigations
+  if (_roleCache && _roleCache.userId === userId) {
+    return _roleCache.data;
+  }
+
+  const fallback = {
+    employeeId: null,
+    role: 'Employee' as UserRole,
+    access: {
+      canViewAllEmployees: false,
+      canViewAllAttendance: false,
+      canViewAllReports: false,
+      canManageRequests: false,
+      canProcessPayroll: false,
+      restrictedToOwnData: true,
+    },
+    tenantId: null,
+    userEmail: null,
+  };
+
   try {
-    const tenantId = await getTenantId();
+    // Fetch tenant + profile in PARALLEL (was 2 sequential calls before)
+    const [tenantId, profileResult] = await Promise.all([
+      getTenantId(),
+      supabase
+        .from('profiles')
+        .select('email, user_role')
+        .eq('id', userId)
+        .maybeSingle(),
+    ]);
 
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('email, user_role')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (profileError || !profile) {
-      return {
-        employeeId: null,
-        role: 'Employee',
-        access: {
-          canViewAllEmployees: false,
-          canViewAllAttendance: false,
-          canViewAllReports: false,
-          canManageRequests: false,
-          canProcessPayroll: false,
-          restrictedToOwnData: true,
-        },
-        tenantId,
-        userEmail: null,
-      };
+    if (profileResult.error || !profileResult.data) {
+      return { ...fallback, tenantId };
     }
 
+    const profile = profileResult.data;
     const rawRole = (profile.user_role || '').toLowerCase();
-    const role = (rawRole === 'admin' || rawRole === 'administrator')
-      ? 'Admin' as UserRole
-      : (rawRole === 'hr team' || rawRole === 'hr')
-        ? 'HR Team' as UserRole
-        : rawRole === 'reporting head'
-          ? 'Reporting Head' as UserRole
-          : 'Employee';
+    const role: UserRole =
+      rawRole === 'admin' || rawRole === 'administrator' ? 'Admin'
+      : rawRole === 'hr team' || rawRole === 'hr' ? 'HR Team'
+      : rawRole === 'reporting head' ? 'Reporting Head'
+      : 'Employee';
 
-    const access = await getRoleAccess(userId);
+    // Derive access from the already-known role (no extra DB call)
+    const access: RoleAccess = role === 'Admin' || role === 'HR Team' || role === 'Reporting Head'
+      ? { canViewAllEmployees: true, canViewAllAttendance: true, canViewAllReports: true,
+          canManageRequests: true, canProcessPayroll: true, restrictedToOwnData: false }
+      : { canViewAllEmployees: false, canViewAllAttendance: false, canViewAllReports: false,
+          canManageRequests: false, canProcessPayroll: false, restrictedToOwnData: true };
 
+    // Fetch employeeId only if we have the required data (runs in parallel with nothing else to wait for)
     let employeeId: string | null = null;
     if (profile.email && tenantId) {
-      employeeId = await getCurrentEmployeeId(profile.email, tenantId);
+      const empResult = await supabase
+        .from('employees')
+        .select('id')
+        .ilike('email', profile.email)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+      employeeId = empResult.data?.id ?? null;
     }
 
-    return {
-      employeeId,
-      role,
-      access,
-      tenantId,
-      userEmail: profile.email,
-    };
+    const result = { employeeId, role, access, tenantId, userEmail: profile.email };
+
+    // Cache result for this session
+    _roleCache = { userId, data: result };
+
+    return result;
   } catch (error) {
     console.error('Failed to get user employee data:', error);
-    return {
-      employeeId: null,
-      role: 'Employee',
-      access: {
-        canViewAllEmployees: false,
-        canViewAllAttendance: false,
-        canViewAllReports: false,
-        canManageRequests: false,
-        canProcessPayroll: false,
-        restrictedToOwnData: true,
-      },
-      tenantId: null,
-      userEmail: null,
-    };
+    return fallback;
   }
 }
 

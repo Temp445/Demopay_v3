@@ -72,13 +72,14 @@ interface PreCheckoutModalProps {
   initialInfo?: CheckoutInfo;
   hasActivePaidPlan: boolean;
   isGracePeriodExpired: boolean;
+  isProcessing?: boolean;
   onConfirm: (info: CheckoutInfo, dataHandling: DataHandling) => void;
   onClose: () => void;
 }
 
-const PreCheckoutModal = ({ tier, isAnnual, initialInfo, hasActivePaidPlan, isGracePeriodExpired, onConfirm, onClose }: PreCheckoutModalProps) => {
+const PreCheckoutModal = ({ tier, isAnnual, initialInfo, hasActivePaidPlan, isGracePeriodExpired, isProcessing = false, onConfirm, onClose }: PreCheckoutModalProps) => {
   const [info, setInfo] = useState<CheckoutInfo>(initialInfo || { name: '', email: '', phone: '', company: '', gst: '' });
-  
+
   // If grace period is expired, we MUST start fresh (data is gone)
   // If has paid plan, we default to continue
   const initialStep = (hasActivePaidPlan || isGracePeriodExpired) ? 'details' : 'data-choice';
@@ -87,6 +88,10 @@ const PreCheckoutModal = ({ tier, isAnnual, initialInfo, hasActivePaidPlan, isGr
   const [step, setStep] = useState<'data-choice' | 'details' | 'confirm-fresh'>(initialStep);
   const [dataHandling, setDataHandling] = useState<DataHandling | null>(initialDataHandling);
   const price = isAnnual ? tier.annualPrice : tier.monthlyPrice;
+  const months = isAnnual ? 12 : 1;
+  const subtotal = price * months;
+  const gstAmount = Math.round(subtotal * 0.18);
+  const total = subtotal + gstAmount;
 
   const handleDataChoice = (choice: DataHandling) => {
     setDataHandling(choice);
@@ -99,11 +104,15 @@ const PreCheckoutModal = ({ tier, isAnnual, initialInfo, hasActivePaidPlan, isGr
       toast.error('Please enter your name and email.');
       return;
     }
-    if (!info.gst || info.gst.trim().length < 5) {
-      toast.error('A valid GST Number is required to proceed with payment.');
+    if (!info.phone || info.phone.replace(/\D/g, '').length < 10) {
+      toast.error('Please enter a valid mobile number.');
       return;
     }
-    
+    if (!info.gst || info.gst.trim().length !== 15) {
+      toast.error('Enter a valid 15-character GSTIN.');
+      return;
+    }
+
     if (dataHandling === 'fresh' && !isGracePeriodExpired) {
       setStep('confirm-fresh');
     } else {
@@ -112,230 +121,271 @@ const PreCheckoutModal = ({ tier, isAnnual, initialInfo, hasActivePaidPlan, isGr
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#0F172A]/80 backdrop-blur-md p-4">
-      <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg relative overflow-hidden border border-white/20" style={{ animation: 'fadeZoom 0.25s ease-out' }}>
-        <style>{`@keyframes fadeZoom { from { opacity:0; transform:scale(0.95) } to { opacity:1; transform:scale(1) } }`}</style>
-        <button
-          onClick={onClose}
-          className="absolute top-5 right-5 z-20 p-2 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
-        >
-          <X className="h-5 w-5" />
-        </button>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 md:p-6 overflow-y-auto">
+      <div
+        className="flex flex-col md:flex-row w-full max-w-[850px] bg-white rounded-2xl overflow-hidden shadow-2xl relative my-auto"
+        style={{ animation: 'fadeZoom 0.2s ease-out' }}
+      >
+        <style>{`@keyframes fadeZoom { from { opacity:0; transform:scale(0.96) translateY(8px) } to { opacity:1; transform:scale(1) translateY(0) } }`}</style>
 
-        {/* Header */}
-        <div className="bg-gradient-to-br from-indigo-600 via-indigo-700 to-indigo-800 px-10 py-10 text-white relative overflow-hidden">
-          <div className="absolute top-0 right-0 opacity-10">
-            <Zap className="h-48 w-48 -mr-12 -mt-12" />
-          </div>
-          <div className="relative z-10">
-            <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/20 rounded-full backdrop-blur-md mb-3 border border-white/10">
-              <ShieldCheck className="h-3 w-3" />
-              <span className="text-[10px] font-black uppercase tracking-widest">Secure Checkout</span>
-            </div>
-            <h3 className="text-3xl font-black tracking-tighter mb-3">{tier.name} Plan</h3>
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold">₹{price.toLocaleString('en-IN')}</span>
-              <span className="text-indigo-200/70 text-sm uppercase tracking-widest">
-                / Month ({isAnnual ? 'Billed Yearly' : 'Billed Monthly'})
-              </span>
-            </div>
+        {/* ── Left Panel ─ Order Summary ── */}
+        <div className="relative bg-indigo-700 text-white md:w-[42%] flex flex-col overflow-hidden">
 
-            {/* Step Indicator */}
-            <div className="flex items-center gap-3 mt-5">
-              {!hasActivePaidPlan && !isGracePeriodExpired && (
-                <>
-                  <div className={`flex items-center gap-1.5 text-xs font-black transition-all ${ step === 'data-choice' ? 'text-white' : 'text-indigo-300' }`}>
-                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${ step === 'data-choice' ? 'bg-white text-indigo-700' : 'bg-white/30 text-white' }`}>1</span>
-                    Data Setup
-                  </div>
-                  <div className="flex-1 h-px bg-white/20 rounded" />
-                </>
-              )}
-              <div className={`flex items-center gap-1.5 text-xs font-black transition-all ${ step === 'details' ? 'text-white' : 'text-indigo-300' }`}>
-                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${ step === 'details' ? 'bg-white text-indigo-700' : 'bg-white/30 text-white' }`}>{(hasActivePaidPlan || isGracePeriodExpired) ? '1' : '2'}</span>
-                Billing Details
+          {/* Mobile Close Button */}
+          <button
+            onClick={onClose}
+            className="md:hidden absolute top-5 right-5 h-8 w-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center text-white transition-colors z-10"
+          >
+            <X className="h-4 w-4" />
+          </button>
+
+          {/* Content */}
+          <div className="relative z-10 flex flex-col h-full p-8 pt-10">
+
+            {/* Header */}
+            <div className="mb-8">
+              <span className="inline-block text-sm  font-bold  text-indigo-200 mb-5"> Secure Checkout</span>
+
+              {/* Plan card */}
+              <div className="flex items-center gap-4 p-4 rounded-xl bg-white/10 border border-white/20 mb-6">
+                <div className="h-11 w-11 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
+                  <ShieldCheck className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <p className="font-extrabold text-white text-base leading-none">{tier.name} Plan</p>
+                  <p className="text-xs text-indigo-200 mt-1">{isAnnual ? 'Annual subscription' : 'Monthly subscription'}</p>
+                </div>
               </div>
-              {(dataHandling === 'fresh' && !isGracePeriodExpired) && (
-                <>
-                  <div className="flex-1 h-px bg-white/20 rounded" />
-                  <div className={`flex items-center gap-1.5 text-xs font-black transition-all ${ step === 'confirm-fresh' ? 'text-white' : 'text-indigo-300' }`}>
-                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${ step === 'confirm-fresh' ? 'bg-white text-indigo-700' : 'bg-white/30 text-white' }`}>3</span>
-                    Confirm
-                  </div>
-                </>
-              )}
+
+              {/* Price hero */}
+              <div className="py-5 border-y border-white/20">
+                <p className="text-[10px] text-indigo-200 uppercase tracking-widest font-bold mb-2">Monthly rate</p>
+                <div className="flex items-end gap-1.5">
+                  <span className="text-white/70 text-xl font-semibold mb-1">₹</span>
+                  <span className="text-[2rem] font- leading-none text-white tracking-tight">{price.toLocaleString('en-IN')}</span>
+                  <span className="text-indigo-200 text-sm ">/month</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Breakdown receipt */}
+            <div className="space-y-3 mt-auto">
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-indigo-200">{months} {months === 1 ? 'month' : 'months'} × ₹{price.toLocaleString('en-IN')}</span>
+                <span className="text-sm font-semibold text-white">₹{subtotal.toLocaleString('en-IN')}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-indigo-200">GST (18%)</span>
+                <span className="text-sm font-semibold text-white">₹{gstAmount.toLocaleString('en-IN')}</span>
+              </div>
+
+              {/* Total */}
+              <div className="flex justify-between items-center pt-4 mt-2 border-dashed border-t border-white/20">
+                <span className="font-bold text-white text-base">Total due today</span>
+                <span className="text-2xl font-black text-white">₹{total.toLocaleString('en-IN')}</span>
+              </div>
+
             </div>
           </div>
         </div>
 
-        {/* ─── Step 1: Data Choice ─── */}
-        {step === 'data-choice' && (
-          <div className="p-8 space-y-4">
-            <div className="text-center mb-6">
-              <p className="text-sm font-semibold text-slate-500">How would you like to handle your trial data when you upgrade?</p>
-            </div>
+        {/* ── Right Panel ─ Steps ── */}
+        <div className="bg-white text-slate-700 p-8 md:p-10  flex flex-col justify-center min-h-[500px] relative">
 
-            {/* Option A: Continue */}
-            <button
-              onClick={() => handleDataChoice('continue')}
-              className="w-full text-left p-5 rounded-2xl border-2 border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/50 transition-all group flex items-start gap-4"
-            >
-              <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-indigo-100 group-hover:bg-indigo-200 flex items-center justify-center transition-colors">
-                <Database className="h-5 w-5 text-indigo-600" />
-              </div>
-              <div>
-                <p className="font-black text-slate-800 text-sm mb-1 group-hover:text-indigo-700 transition-colors">Continue with Existing Data</p>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  All current data remains unchanged. Continue working with your existing setup without any data loss.
-                </p>
-              </div>
-              <ArrowRight className="h-5 w-5 text-slate-300 group-hover:text-indigo-500 ml-auto mt-1 flex-shrink-0 transition-all group-hover:translate-x-1" />
-            </button>
+          <button
+            onClick={onClose}
+            className="hidden absolute top-6 right-6 h-8 w-8 rounded-full border border-slate-200 md:flex items-center justify-center text-indigo-400 hover:text-indigo-600 hover:border-indigo-300 transition-colors bg-white z-10 shadow-sm"
+          >
+            <X className="h-4 w-4" />
+          </button>
 
-            {/* Option B: Start Fresh */}
-            <button
-              onClick={() => handleDataChoice('fresh')}
-              className="w-full text-left p-5 rounded-2xl border-2 border-slate-200 hover:border-amber-500 hover:bg-amber-50/50 transition-all group flex items-start gap-4"
-            >
-              <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-100 group-hover:bg-amber-200 flex items-center justify-center transition-colors">
-                <Sparkles className="h-5 w-5 text-amber-600" />
-              </div>
-              <div>
-                <p className="font-black text-slate-800 text-sm mb-1 group-hover:text-amber-700 transition-colors">Start Fresh (New Setup)</p>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  All existing data will be removed. The system will reset, allowing you to begin with a clean setup.
-                </p>
-                <div className="flex items-center gap-1 mt-2">
-                  <AlertTriangle className="h-3 w-3 text-amber-500" />
-                  <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wide">This action is irreversible</span>
-                </div>
-              </div>
-              <ArrowRight className="h-5 w-5 text-slate-300 group-hover:text-amber-500 ml-auto mt-1 flex-shrink-0 transition-all group-hover:translate-x-1" />
-            </button>
-          </div>
-        )}
-
-        {/* ─── Step 2: Billing Details ─── */}
-        {step === 'details' && (
-          <form onSubmit={handleSubmit} className="p-8 space-y-6">
-            {/* Selected mode banner */}
-            {(!hasActivePaidPlan && !isGracePeriodExpired) && (
-              <div className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold ${ dataHandling === 'fresh' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-indigo-50 text-indigo-700 border border-indigo-200' }`}>
-                { dataHandling === 'fresh'
-                  ? <><AlertTriangle className="h-4 w-4 flex-shrink-0" /> Trial data will be cleared after payment</>  
-                  : <><Database className="h-4 w-4 flex-shrink-0" /> Your existing data will be preserved</> 
-                }
-                <button type="button" onClick={() => setStep('data-choice')} className="ml-auto text-xs underline opacity-70 hover:opacity-100">Change</button>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Full Name</label>
-                <div className="relative">
-                  <input required readOnly type="text" value={info.name}
-                    className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 cursor-not-allowed focus:outline-none"
-                  />
-                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-emerald-500"><Check className="h-4 w-4" /></div>
-                </div>
+          {/* Step 1: Data Choice */}
+          {step === 'data-choice' && (
+            <div className="space-y-5 max-w-sm mx-auto w-full pt-4">
+              <div className="mb-6">
+                <h4 className="text-lg font-bold text-slate-900 mb-2">Data Setup</h4>
+                <p className="text-sm text-slate-500">How would you like to handle your existing trial data?</p>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
-                <div className="relative">
-                  <input required readOnly type="email" value={info.email}
-                    className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 cursor-not-allowed focus:outline-none"
-                  />
-                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-emerald-500"><Check className="h-4 w-4" /></div>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Phone Number</label>
-                <input readOnly type="tel" value={info.phone || 'Not provided'}
-                  className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 cursor-not-allowed focus:outline-none"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Organization</label>
-                <input readOnly type="text" value={info.company || 'Not provided'}
-                  className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 cursor-not-allowed focus:outline-none"
-                />
-              </div>
-
-              <div className="space-y-1.5 sm:col-span-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Company GST Number (Required)</label>
-                <input
-                  required type="text" placeholder="Enter GSTIN"
-                  value={info.gst}
-                  onChange={(e) => setInfo({ ...info, gst: e.target.value.toUpperCase() })}
-                  className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition-all"
-                />
-                <p className="text-[10px] text-slate-400 font-medium ml-1">GSTIN is required for tax compliance and invoicing.</p>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className="w-full bg-[#0F172A] text-white font-black py-5 rounded-[1.5rem] hover:bg-slate-800 transition-all shadow-xl hover:shadow-indigo-200/50 flex items-center justify-center gap-3 group"
-            >
-              <span>Proceed to Payment</span>
-              <ArrowRight className="h-5 w-5 group-hover:translate-x-1 transition-transform" />
-            </button>
-          </form>
-        )}
-        {/* ─── Step 3: Irreversible Warning (Start Fresh Only) ─── */}
-        {step === 'confirm-fresh' && (
-          <div className="p-8 space-y-6">
-            <div className="flex flex-col items-center text-center">
-              <div className="h-20 w-20 bg-red-50 rounded-full flex items-center justify-center ring-8 ring-red-100 mb-6">
-                <AlertTriangle className="h-10 w-10 text-red-500" />
-              </div>
-              <h4 className="text-2xl font-black text-slate-800 tracking-tight mb-2">Final Confirmation</h4>
-              <p className="text-sm text-slate-500 font-medium leading-relaxed mb-6">
-                You have selected <span className="text-red-600 font-black uppercase">Start Fresh</span>. 
-                This will permanently delete all your existing operational data.
-              </p>
-            </div>
-
-            <div className="bg-red-50 border border-red-100 rounded-2xl p-5 space-y-3">
-              <div className="flex items-start gap-3">
-                <div className="mt-1 h-2 w-2 rounded-full bg-red-500 flex-shrink-0" />
-                <p className="text-xs font-bold text-red-700 leading-tight">All employee records will be wiped.</p>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="mt-1 h-2 w-2 rounded-full bg-red-500 flex-shrink-0" />
-                <p className="text-xs font-bold text-red-700 leading-tight">Attendance logs and payroll history will be lost.</p>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="mt-1 h-2 w-2 rounded-full bg-red-500 flex-shrink-0" />
-                <p className="text-xs font-bold text-red-700 leading-tight decoration-2">This action is irreversible. Once you proceed, all your data will be lost forever.</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
               <button
-                type="button"
-                onClick={() => setStep('details')}
-                className="w-full bg-slate-100 text-slate-600 font-black py-4 rounded-xl hover:bg-slate-200 transition-all text-sm uppercase tracking-widest"
+                onClick={() => handleDataChoice('continue')}
+                className="w-full text-left p-4 rounded-xl border border-slate-200 bg-white hover:border-emerald-400 hover:shadow-md transition-all flex items-start gap-4 group"
               >
-                Back
+                <div className="h-10 w-10 rounded-full bg-emerald-50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Database className="h-4 w-4 text-emerald-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-slate-800 text-sm mb-1 group-hover:text-emerald-700 transition-colors">Keep Existing Data</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">Continue with all your data intact. No data loss.</p>
+                </div>
               </button>
+
               <button
-                type="button"
-                onClick={() => onConfirm(info, dataHandling!)}
-                className="w-full bg-red-600 text-white font-black py-4 rounded-xl hover:bg-red-700 transition-all shadow-lg shadow-red-600/30 text-sm uppercase tracking-widest"
+                onClick={() => handleDataChoice('fresh')}
+                className="w-full text-left p-4 rounded-xl border border-slate-200 bg-white hover:border-amber-400 hover:shadow-md transition-all flex items-start gap-4 group"
               >
-                I Understand
+                <div className="h-10 w-10 rounded-full bg-amber-50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Sparkles className="h-4 w-4 text-amber-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-slate-800 text-sm mb-1 group-hover:text-amber-700 transition-colors">Start Fresh</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">Reset workspace and begin clean.</p>
+                  <div className="flex items-center gap-1 mt-2">
+                    <AlertTriangle className="h-3 w-3 text-amber-500 flex-shrink-0" />
+                    <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wide">Irreversible action</span>
+                  </div>
+                </div>
               </button>
             </div>
-          </div>
-        )}
+          )}
+
+          {/* Step 2: Billing Details */}
+          {step === 'details' && (
+            <form onSubmit={handleSubmit} className="space-y-5 max-w-md mx-auto w-full pt-2">
+              <div className="flex items-center justify-between mb-6">
+                <h4 className="text-lg font-bold text-slate-900">Billing details</h4>
+                {(!hasActivePaidPlan && !isGracePeriodExpired) && (
+                  <button type="button" onClick={() => setStep('data-choice')} className="text-[11px] font-bold text-[#5045e5] hover:text-indigo-700 underline underline-offset-2 pr-8">← BACK</button>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-900 uppercase tracking-widest mb-1.5">Full Name</label>
+                  <div className="relative">
+                    <input readOnly type="text" value={info.name}
+                      className="w-full px-3 py-2 bg-white border-b border-slate-400 rounded-lg text-sm text-slate-700 font-semibold focus:outline-none cursor-default shadow-sm"
+                    />
+                    {/* <Check className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-emerald-500" /> */}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-900 uppercase tracking-widest mb-1.5">Organization</label>
+                  <input readOnly type="text" value={info.company || 'Not provided'}
+                    className="w-full px-3 py-2 bg-slate-50 border-b border-slate-400 rounded-lg text-sm text-slate-700 font-semibold focus:outline-none cursor-default"
+                  />
+                </div>
+
+
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-900 uppercase tracking-widest mb-1.5">
+                      Phone <span className="text-red-500 normal-case font-semibold">(required)</span>
+                    </label>
+                    <input required type="tel" value={info.phone}
+                      onChange={(e) => setInfo({ ...info, phone: e.target.value })}
+                      placeholder="Mobile number"
+                      className="w-full px-3 py-2 bg-white border-b border-slate-400 rounded-lg font-semibold text-sm text-slate-900 focus:outline-none focus:border-[#5045e5]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-900 uppercase tracking-widest mb-1.5">Email Address</label>
+                    <div className="relative">
+                      <input readOnly type="email" value={info.email}
+                        className="w-full px-3 py-2 bg-white border-b border-slate-400 rounded-lg text-sm text-slate-700 font-semibold focus:outline-none cursor-default shadow-sm"
+                      />
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* GST — editable */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-900 uppercase tracking-widest mb-1.5">
+                    Company GST Number <span className="text-red-500 normal-case font-semibold">(required)</span>
+                  </label>
+                  <input
+                    required type="text" placeholder="15-character GSTIN"
+                    value={info.gst}
+                    onChange={(e) => setInfo({ ...info, gst: e.target.value.toUpperCase() })}
+                    className={`w-full px-4 py-3 bg-white border rounded-lg text-sm text-slate-900 font-semibold placeholder:font-normal placeholder:text-slate-300 focus:outline-none shadow-sm transition-colors ${info.gst && info.gst.length !== 15
+                      ? 'border-red-300 focus:border-red-500 ring-1 ring-red-100'
+                      : 'border-slate-200 focus:border-[#5045e5] focus:ring-1 focus:ring-indigo-100'
+                      }`}
+                  />
+                  {info.gst && info.gst.length !== 15 && (
+                    <p className="flex items-center gap-1 mt-2 text-xs font-medium text-red-500">
+                      <AlertTriangle className="h-3.5 w-3.5" /> Enter a valid 15-character GSTIN.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4">
+                <button
+                  type="submit"
+                  disabled={isProcessing}
+                  className={`w-full font-bold py-3.5 rounded-lg transition-all flex items-center justify-center gap-2 shadow-md text-sm ${isProcessing
+                      ? 'bg-indigo-400 cursor-not-allowed text-white shadow-none'
+                      : 'bg-[#5045e5] hover:bg-indigo-600 text-white shadow-indigo-200'
+                    }`}
+                >
+                  {isProcessing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Initializing Payment...
+                    </>
+                  ) : (
+                    <>
+                      Proceed to payment
+                      <ArrowRight className="h-4 w-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Step 3: Confirm Fresh */}
+          {step === 'confirm-fresh' && (
+            <div className="space-y-6 max-w-md mx-auto w-full pt-4">
+              <div className="text-center">
+                <div className="h-16 w-16 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-5">
+                  <AlertTriangle className="h-8 w-8 text-red-500" />
+                </div>
+                <h4 className="text-2xl font-bold text-slate-900 mb-3">Start Fresh?</h4>
+                <p className="text-sm text-slate-500 leading-relaxed">
+                  This will permanently erase all your existing data. This action <span className="text-red-600 font-bold">cannot be undone.</span>
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setStep('details')}
+                  className="py-3.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors font-bold text-sm shadow-sm"
+                >
+                  Go Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onConfirm(info, dataHandling!)}
+                  disabled={isProcessing}
+                  className={`py-3.5 rounded-lg transition-colors font-bold text-sm shadow-md flex items-center justify-center gap-2 ${isProcessing
+                      ? 'bg-red-400 cursor-not-allowed text-white shadow-none'
+                      : 'bg-red-600 hover:bg-red-700 text-white shadow-red-100'
+                    }`}
+                >
+                  {isProcessing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    'I Understand, Proceed'
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 };
+
 
 // ── Success Modal ──────────────────────────────────────────────────────────────
 const SuccessModal = ({ plan, isFresh, isGraceExpired, onClose }: { plan: string; isFresh: boolean; isGraceExpired: boolean; onClose: () => void }) => (
@@ -354,7 +404,7 @@ const SuccessModal = ({ plan, isFresh, isGraceExpired, onClose }: { plan: string
         Welcome to <span className="text-indigo-600 font-bold">Ace Payroll</span>
       </p>
       <p className="text-sm text-slate-400 mb-6">
-        Your <strong className="text-slate-600">{plan} Plan</strong> is now active. 
+        Your <strong className="text-slate-600">{plan} Plan</strong> is now active.
       </p>
 
       {(isFresh && !isGraceExpired) && (
@@ -365,7 +415,7 @@ const SuccessModal = ({ plan, isFresh, isGraceExpired, onClose }: { plan: string
           </p>
         </div>
       )}
-     
+
       <button
         onClick={onClose}
         className="w-full bg-[#0F172A] text-white font-bold py-3.5 rounded-xl hover:bg-slate-800 transition-all"
@@ -384,6 +434,7 @@ const Pricing = () => {
   const [initialCheckoutInfo, setInitialCheckoutInfo] = useState<CheckoutInfo | undefined>();
   const [successPlan, setSuccessPlan] = useState<string | null>(null);
   const [isFreshStart, setIsFreshStart] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -415,7 +466,8 @@ const Pricing = () => {
       const { data: subs } = await supabase
         .from('subscriptions')
         .select('*')
-        .eq('tenant_id', tenantId);
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false });
 
       if (!subs || subs.length === 0) {
         setCurrentPlan(null);
@@ -472,7 +524,7 @@ const Pricing = () => {
       window.location.href = '#contact';
       return;
     }
-    
+
     // CAPTURE SNAPSHOT: Store the grace period state before checkout begins.
     // This prevents race conditions if the sub state updates during payment verification.
     setCheckoutWasGraceExpired(isGracePeriodExpired);
@@ -501,13 +553,13 @@ const Pricing = () => {
       return;
     }
     */
-    
+
     try {
       setProcessingTier(tier.name);
-      
+
       // Check if user is logged in
       const { data: { user }, error: authError } = await supabase.auth.getUser();
-      
+
       if (authError || !user || !tenantId) {
         navigate('/register', { state: { selectedPlan: tier.name, isAnnual } });
         return;
@@ -531,7 +583,7 @@ const Pricing = () => {
 
       // If logged in, proceed to checkout (Upgrade/Switch is allowed)
       setCheckoutTier(tier);
-      
+
     } catch (error) {
       console.error('Error checking subscription:', error);
       toast.error('Could not verify account status. Please try again.');
@@ -544,9 +596,8 @@ const Pricing = () => {
   const handleCheckoutConfirm = async (info: CheckoutInfo, dataHandling: DataHandling) => {
     if (!checkoutTier) return;
     const tier = checkoutTier;
-    setCheckoutTier(null);
-
-    // Confirmation already handled by PreCheckoutModal custom UI
+    // Do NOT close modal yet — keep it visible with a loading state
+    setCheckoutLoading(true);
 
     const keyId = import.meta.env.VITE_RAZORPAY_KEY_ID;
     if (!keyId) {
@@ -557,18 +608,21 @@ const Pricing = () => {
     try {
       setProcessingTier(tier.name);
 
+
       // 1. Sync GST number to company settings if provided
       if (info.gst) {
         await supabase
           .from('company_settings')
-          .upsert({ 
-            tenant_id: tenantId, 
+          .upsert({
+            tenant_id: tenantId,
             gst_number: info.gst,
             updated_at: new Date().toISOString()
           }, { onConflict: 'tenant_id' });
       }
 
-      const amount = isAnnual ? tier.annualPrice * 12 : tier.monthlyPrice;
+      const basePrice = isAnnual ? tier.annualPrice * 12 : tier.monthlyPrice;
+      const gstAmount = Math.round(basePrice * 0.18);
+      const amount = basePrice + gstAmount;
 
       // Create order via Edge Function
       const { data: orderData, error } = await supabase.functions.invoke('razorpay', {
@@ -603,16 +657,25 @@ const Pricing = () => {
         prefill: { name: info.name, email: info.email, contact: info.phone },
         notes: { plan: tier.name, company: info.company, billing: isAnnual ? 'annual' : 'monthly' },
         theme: { color: '#4f46e5' },
-        modal: { backdropclose: false, escape: false, animation: true },
+        modal: {
+          backdropclose: false,
+          escape: false,
+          animation: true,
+          ondismiss: () => {
+            // User closed Razorpay without paying
+            setCheckoutLoading(false);
+          }
+        },
         handler: async (response: any) => {
           try {
             const { data: verifyData, error: verifyError } = await supabase.functions.invoke('razorpay', {
-              body: { 
-                action: 'verify_payment', 
+              body: {
+                action: 'verify_payment',
                 ...response,
                 email: info.email,
                 name: info.name,
                 company: info.company,
+                mobile_number: info.phone,
                 plan: tier.name,
                 billing: isAnnual ? 'annual' : 'monthly',
                 amount_paise: amount * 100,
@@ -650,6 +713,9 @@ const Pricing = () => {
               setIsFreshStart(true);
             }
 
+            // Close the checkout modal now that payment succeeded
+            setCheckoutTier(null);
+            setCheckoutLoading(false);
             setSuccessPlan(tier.name);
             // Dispatch event to refresh sub data across the app
             window.dispatchEvent(new CustomEvent('subscription_updated'));
@@ -667,13 +733,19 @@ const Pricing = () => {
       const rzp = new window.Razorpay(options);
       rzp.on('payment.failed', (res: any) => {
         toast.error(res.error?.description || 'Payment failed. Please try again.');
+        setCheckoutLoading(false);
       });
+      // We do NOT setCheckoutTier(null) here anymore.
+      // This keeps our modal open in the background, providing the backdrop blur effect
+      // while Razorpay sits on top.
       rzp.open();
 
 
     } catch (err: any) {
       console.error('[Pricing] Error:', err);
       toast.error(err.message || 'Payment initialization failed. Please try again.');
+      // On error, keep modal open so user can retry
+      setCheckoutLoading(false);
     } finally {
       setProcessingTier(null);
     }
@@ -689,8 +761,9 @@ const Pricing = () => {
           initialInfo={initialCheckoutInfo}
           hasActivePaidPlan={currentPlan !== null && currentPlan !== 'Elite Trial'}
           isGracePeriodExpired={isGracePeriodExpired}
+          isProcessing={checkoutLoading}
           onConfirm={handleCheckoutConfirm}
-          onClose={() => setCheckoutTier(null)}
+          onClose={() => { if (!checkoutLoading) { setCheckoutTier(null); } }}
         />
       )}
 
@@ -703,12 +776,14 @@ const Pricing = () => {
 
           {/* Header */}
           <div className="text-center max-w-3xl mx-auto mb-16">
+            {/* 
             <h2 className="text-2xl font-black tracking-widest uppercase text-indigo-700 mb-4">
               PRICING Plans
             </h2>
             <p className="text-xl text-[#425466] font-medium leading-relaxed mb-10">
               Choose a plan that fits your business needs. No hidden charges per-employee. Unlock the full power of Ace Payroll.
-            </p>
+            </p> 
+            */}
             {/* Billing Toggle */}
             <div className="flex items-center justify-center gap-4">
               <span className={`text-sm font-bold ${!isAnnual ? 'text-[#1F2A44]' : 'text-gray-500'}`}>Monthly</span>
@@ -729,11 +804,10 @@ const Pricing = () => {
             {tiers.map((tier) => (
               <div
                 key={tier.name}
-                className={`relative flex flex-col rounded-3xl p-10 transition-all duration-300 ${
-                  tier.highlighted
-                    ? 'bg-white border-2 border-[#0F172A] shadow-[0_20px_50px_rgba(15,23,42,0.1)] lg:scale-105 z-10'
-                    : 'bg-white border border-gray-200 hover:border-gray-300 hover:shadow-xl hover:-translate-y-1'
-                }`}
+                className={`relative flex flex-col rounded-3xl p-10 transition-all duration-300 ${tier.highlighted
+                  ? 'bg-white border-2 border-[#0F172A] shadow-[0_20px_50px_rgba(15,23,42,0.1)] lg:scale-105 z-10'
+                  : 'bg-white border border-gray-200 hover:border-gray-300 hover:shadow-xl hover:-translate-y-1'
+                  }`}
               >
                 <div className="flex-1">
                   <div className="flex items-center justify-between mb-6">
@@ -773,13 +847,12 @@ const Pricing = () => {
                   <button
                     onClick={() => handleGetStarted(tier)}
                     disabled={processingTier === tier.name}
-                    className={`flex items-center justify-center w-full py-4 px-6 rounded-xl font-black text-sm uppercase tracking-widest transition-all duration-300 gap-2 ${
-                      tier.name === currentPlan
-                        ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-600/30'
-                        : tier.highlighted
+                    className={`flex items-center justify-center w-full py-4 px-6 rounded-xl font-black text-sm uppercase tracking-widest transition-all duration-300 gap-2 ${tier.name === currentPlan
+                      ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-600/30'
+                      : tier.highlighted
                         ? 'bg-[#0F172A] text-white hover:bg-slate-800 shadow-xl'
                         : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-600/30'
-                    }`}
+                      }`}
                   >
                     {processingTier === tier.name ? (
                       <><Loader2 className="h-4 w-4 animate-spin" /> Processing...</>
@@ -791,9 +864,9 @@ const Pricing = () => {
                       (() => {
                         const currentIndex = tiers.findIndex(t => t.name === currentPlan);
                         const cardIndex = tiers.findIndex(t => t.name === tier.name);
-                        return cardIndex > currentIndex 
+                        return cardIndex > currentIndex
                           ? <>Upgrade Plan <ArrowRight className="h-4 w-4" /></>
-                          : <>Switch Plan <ArrowRight className="h-4 w-4" /></>;
+                          : <>Downgrade Plan <ArrowRight className="h-4 w-4" /></>;
                       })()
                     ) : (
                       <>Get Started <ArrowRight className="h-4 w-4" /></>

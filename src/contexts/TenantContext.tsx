@@ -102,7 +102,9 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     loadTenantData();
-  }, [user]);
+  // Use user?.id instead of user to avoid reloading on auth token refresh
+  // (Supabase creates a new user object on tab-restore but id stays the same)
+  }, [user?.id]);
 
   const switchTenant = async (tenantId: string) => {
     if (!user) {

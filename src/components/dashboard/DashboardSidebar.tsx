@@ -9,6 +9,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 interface DashboardSidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  isLocked?: boolean;
 }
 
 interface NavigationItem {
@@ -27,7 +28,7 @@ interface NavigationGroup {
 type NavigationEntry = NavigationItem | NavigationGroup;
 
 
-export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarProps) {
+export default function DashboardSidebar({ isOpen, onClose, isLocked = false }: DashboardSidebarProps) {
   const location = useLocation();
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
@@ -339,7 +340,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
             {permissionsLoading ? (
               <SidebarSkeleton />
             ) : (
-              <nav className="mt-5 px-2 space-y-1">
+              <nav className={`mt-5 px-2 space-y-1 ${isLocked ? 'opacity-50 pointer-events-none select-none' : ''}`}>
                 {filteredNavigation.map((item) => renderNavigationItem(item, true))}
               </nav>
             )}
@@ -355,7 +356,7 @@ export default function DashboardSidebar({ isOpen, onClose }: DashboardSidebarPr
             {permissionsLoading ? (
               <SidebarSkeleton />
             ) : (
-              <nav className="mt-5 flex-1 px-2 space-y-1">
+              <nav className={`mt-5 flex-1 px-2 space-y-1 ${isLocked ? 'opacity-50 pointer-events-none select-none' : ''}`}>
                 {filteredNavigation.map((item) => renderNavigationItem(item, false))}
               </nav>
             )}

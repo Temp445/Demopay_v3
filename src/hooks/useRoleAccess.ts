@@ -69,7 +69,9 @@ export function useRoleAccess(): RoleAccessState {
     };
 
     loadRoleAccess();
-  }, [user]);
+  // Use user?.id instead of user to avoid re-triggering on token refresh
+  // (Supabase creates a new user object on tab-restore but id stays the same)
+  }, [user?.id]);
 
   return state;
 }

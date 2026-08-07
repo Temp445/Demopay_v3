@@ -95,7 +95,8 @@ export function usePermissions(): PermissionsState {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, getUserAccessibleScreens]);
+  // Use user?.id to avoid re-running on token refresh (tab switch/restore)
+  }, [user?.id]);
 
   const hasAccess = (route: string): boolean => {
     if (loading) {

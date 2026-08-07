@@ -82,7 +82,7 @@ serve(async (req) => {
     // ── VERIFY PAYMENT ────────────────────────────────────────────────────────
     if (action === 'verify_payment') {
       const { razorpay_order_id, razorpay_payment_id, razorpay_signature,
-              email, name, company, plan, billing, amount_paise, tenant_id,
+              email, name, company, mobile_number, plan, billing, amount_paise, tenant_id,
               data_handling } = body
 
       if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
@@ -170,11 +170,12 @@ serve(async (req) => {
           .eq('tenant_id', tenant_id)
           .maybeSingle()
 
-        await db.from('subscriptions').insert({
+        const { error: insertError } = await db.from('subscriptions').insert({
           tenant_id,
           email: email.toLowerCase().trim(),
           name: name || null,
           company: company || null,
+          mobile_number: mobile_number || null,
           plan_name: plan || 'Unknown',
           billing_cycle: billing || 'monthly',
           amount_paid: (amount_paise || 0) / 100.0, // Store in Rupees (decimal)
@@ -186,6 +187,11 @@ serve(async (req) => {
           gst_number: settings?.gst_number || null,
           invoice_number: invoiceNumber
         })
+
+        if (insertError) {
+          console.error('[razorpay] Subscription insert error:', insertError)
+          return respond({ error: `Failed to save subscription: ${insertError.message}` }, 500)
+        }
 
         // ── Start Fresh: wipe all operational data for this tenant ────────────
         if (data_handling === 'fresh') {

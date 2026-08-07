@@ -93,23 +93,29 @@ function TrialExpiredWall({ info, onUpgrade }: { info: SubInfo; onUpgrade: () =>
 
         {/* Heading & Description */}
         <h1 className="text-xl font-bold text-slate-900 mb-2">
-          Your {info.planName || 'Professional'} plan has expired
+          {info.status === 'none' 
+            ? 'Active Subscription Required' 
+            : `Your ${info.planName || 'Professional'} plan has expired`}
         </h1>
         <p className="text-sm text-slate-500 leading-relaxed mb-6">
-          This workspace's subscription lapsed and features are temporarily locked. All payroll records, employee data, and history remain intact — renewing restores access immediately.
+          {info.status === 'none'
+            ? 'This workspace requires an active subscription. Features are temporarily locked until a subscription is purchased. Renewing restores access immediately.'
+            : 'This workspace\'s subscription lapsed and features are temporarily locked. All payroll records, employee data, and history remain intact — renewing restores access immediately.'}
         </p>
 
         {/* Details List */}
-        <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 mb-6">
-          <div className="flex justify-between items-center p-3.5">
-            <span className="text-xs font-medium text-slate-500">Plan</span>
-            <span className="text-xs font-bold text-slate-900">{info.planName || 'Professional'}</span>
+        {info.status !== 'none' && (
+          <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 mb-6">
+            <div className="flex justify-between items-center p-3.5">
+              <span className="text-xs font-medium text-slate-500">Plan</span>
+              <span className="text-xs font-bold text-slate-900">{info.planName || 'Professional'}</span>
+            </div>
+            <div className="flex justify-between items-center p-3.5">
+              <span className="text-xs font-medium text-slate-500">Expired on</span>
+              <span className="text-xs font-bold text-slate-900">{expiredDate}</span>
+            </div>
           </div>
-          <div className="flex justify-between items-center p-3.5">
-            <span className="text-xs font-medium text-slate-500">Expired on</span>
-            <span className="text-xs font-bold text-slate-900">{expiredDate}</span>
-          </div>
-        </div>
+        )}
 
         {/* Actions */}
         <div className="space-y-2.5">
@@ -257,9 +263,12 @@ export default function Dashboard() {
 
   const isOverviewPage = location.pathname === '/dashboard' || location.pathname === '/dashboard/' || location.pathname === '/dashboard/overview' || location.pathname === '/dashboard/overview/';
 
-  // ── Block if Expired ───────────────────────────────────────────────────────
+  // ── Block if Expired or No Active Subscription ───────────────────────────────────────────────────────
   const isBillingPage = location.pathname === '/dashboard/billing' || location.pathname === '/dashboard/billing/';
-  const isExpiredBlocked = subInfo.status === 'trial_expired' && !isBillingPage;
+  const isSubscriptionRequired = currentTenant?.subscription_enabled === true;
+  const isExpiredBlocked = isSubscriptionRequired && 
+    (subInfo.status === 'none' || subInfo.status === 'trial_expired') && 
+    !isBillingPage;
 
   // ── Anti-Tamper Protection ──────────────────────────────────────────────────
   // NOTE: We delay the start of the interval by 800ms to give React time to

@@ -6,6 +6,7 @@ export interface Tenant {
   subdomain: string;
   status: 'Active' | 'Suspended' | 'Inactive';
   settings: Record<string, any>;
+  subscription_enabled?: boolean;
   created_at?: string;
   updated_at?: string;
 }

@@ -17,11 +17,13 @@ interface DomainConfig {
   config: { screens: Record<string, boolean>; features?: Record<string, boolean> };
   is_active: boolean;
   allow_to_landing_page: boolean;
+  subscription_enabled?: boolean;
 }
 
 interface Tenant {
   id: string;
   name: string;
+  subscription_enabled?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -48,21 +50,23 @@ export default function DomainConfigManagerPage() {
   const [domainSearchQuery, setDomainSearchQuery] = useState('');
   const [selectedDomainName, setSelectedDomainName] = useState<string | null>(null);
 
-  const [newDomain, setNewDomain] = useState('');
-  const [addingDomain, setAddingDomain] = useState(false);
+  // Create Domain State
+  const [createDomainName, setCreateDomainName] = useState('');
+  const [createDomainSubscription, setCreateDomainSubscription] = useState(false);
+  const [creatingDomain, setCreatingDomain] = useState(false);
 
-  const [selectedTenantsForNewDomain, setSelectedTenantsForNewDomain] = useState<string[]>([]);
-  const [isTenantMultiSelectOpen, setIsTenantMultiSelectOpen] = useState(false);
-  
+  // Link Tenant State
+  const [linkDomainName, setLinkDomainName] = useState('');
+  const [linkTenantId, setLinkTenantId] = useState('');
+  const [linkAllowToLandingPage, setLinkAllowToLandingPage] = useState(true);
+  const [linkTenantSubscription, setLinkTenantSubscription] = useState(false);
+  const [linkDomainScreens, setLinkDomainScreens] = useState<Record<string, boolean>>({});
+  const [linkingTenant, setLinkingTenant] = useState(false);
+
   // Manage Domains Modal States
-  const [editingDomainId, setEditingDomainId] = useState<string | null>(null);
-  const [editingDomainName, setEditingDomainName] = useState('');
-  const [linkingTenantId, setLinkingTenantId] = useState('');
-  const [editFormIsActive, setEditFormIsActive] = useState(false);
-  const [editFormAllowToLandingPage, setEditFormAllowToLandingPage] = useState(true);
-
-  const [newDomainScreens, setNewDomainScreens] = useState<Record<string, boolean>>({});
-  const [newAllowToLandingPage, setNewAllowToLandingPage] = useState(true);
+  const [editingDomainGroup, setEditingDomainGroup] = useState<string | null>(null);
+  const [editGroupSubscription, setEditGroupSubscription] = useState(false);
+  const [editGroupTenants, setEditGroupTenants] = useState<{ id: string; tenant_id: string; is_active: boolean; allow_to_landing_page: boolean; tenant_subscription: boolean; }[]>([]);
 
   // ─── Data Fetching ────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -92,7 +96,7 @@ export default function DomainConfigManagerPage() {
 
     const { data: tenantsData, error: tenantsError } = await supabase
       .from('tenants')
-      .select('id, name')
+      .select('*')
       .order('name', { ascending: true });
 
     if (!tenantsError && tenantsData) {
@@ -114,6 +118,7 @@ export default function DomainConfigManagerPage() {
         config: d.config,
         is_active: d.is_active,
         allow_to_landing_page: d.allow_to_landing_page,
+        subscription_enabled: d.subscription_enabled,
       })));
     }
     
@@ -130,96 +135,128 @@ export default function DomainConfigManagerPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  const groupedDomains = useMemo(() => {
+    const map = new Map<string, DomainConfig[]>();
+    domains.forEach(d => {
+      if (!map.has(d.domain_name)) map.set(d.domain_name, []);
+      map.get(d.domain_name)!.push(d);
+    });
+    return Array.from(map.entries()).map(([domain_name, configs]) => ({
+      domain_name,
+      configs,
+      is_active: configs.some(c => c.is_active),
+      subscription_enabled: configs.some(c => c.subscription_enabled)
+    }));
+  }, [domains]);
+
   // ─── Actions ──────────────────────────────────────────────────────────────
-  const handleAddDomain = async () => {
-    if (selectedTenantsForNewDomain.length === 0) { toast.error('Please select at least one tenant.'); return; }
-    const trimmed = newDomain.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
+  const handleCreateDomain = async () => {
+    const trimmed = createDomainName.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
     if (!trimmed) { toast.error('Please enter a valid domain name.'); return; }
     
-    const alreadyLinked = selectedTenantsForNewDomain.find(tenantId => 
-      domains.some(d => d.domain_name === trimmed && d.tenant_id === tenantId)
-    );
-    
-    if (alreadyLinked) {
-      const tenantName = allTenants.find(t => t.id === alreadyLinked)?.name || 'a selected tenant';
-      toast.error(`This domain is already linked to ${tenantName}.`);
+    if (domains.some(d => d.domain_name === trimmed)) {
+      toast.error('This domain already exists.');
       return;
     }
 
-    setAddingDomain(true);
-    let successCount = 0;
-    
-    for (const tenantId of selectedTenantsForNewDomain) {
-      const { data, error } = await supabase
-        .from('domain_configurations')
-        .insert({ 
-          domain_name: trimmed, 
-          config: { screens: newDomainScreens, features: { live_tracking: true, face_enrollment: true } }, 
-          is_active: true, 
-          tenant_id: tenantId,
-          allow_to_landing_page: newAllowToLandingPage
-        })
-        .select()
-        .single();
-        
-      if (error) {
-        toast.error(`Failed to add domain for a tenant: ${error.message || 'Unknown error'}`);
-      } else {
-        setDomains(prev => [...prev, { id: data.id, domain_name: data.domain_name, tenant_id: data.tenant_id, config: data.config, is_active: data.is_active, allow_to_landing_page: data.allow_to_landing_page }]);
-        successCount++;
-      }
+    setCreatingDomain(true);
+    const { data, error } = await supabase
+      .from('domain_configurations')
+      .insert({ 
+        domain_name: trimmed, 
+        config: { screens: {}, features: { live_tracking: true, face_enrollment: true } }, 
+        is_active: true, 
+        tenant_id: null,
+        allow_to_landing_page: true,
+        subscription_enabled: createDomainSubscription
+      })
+      .select()
+      .single();
+      
+    if (error) {
+      toast.error(`Failed to create domain: ${error.message || 'Unknown error'}`);
+    } else {
+      setDomains(prev => [...prev, { id: data.id, domain_name: data.domain_name, tenant_id: data.tenant_id, config: data.config, is_active: data.is_active, allow_to_landing_page: data.allow_to_landing_page, subscription_enabled: data.subscription_enabled }]);
+      toast.success(`Domain "${trimmed}" created successfully.`);
+      setCreateDomainName('');
+      setCreateDomainSubscription(false);
     }
-    
-    if (successCount > 0) {
-      toast.success(`Domain "${trimmed}" linked to ${successCount} tenant(s).`);
-      setNewDomain('');
-      setSelectedTenantsForNewDomain([]);
-      setIsTenantMultiSelectOpen(false);
-      if (!selectedTenantId) {
-        setSelectedTenantId(selectedTenantsForNewDomain[0]);
-      }
-    }
-    
-    setAddingDomain(false);
+    setCreatingDomain(false);
   };
 
-  const handleSaveDomainEdits = async () => {
-    if (!editingDomainId) return;
-    const trimmed = editingDomainName.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
-    if (!trimmed) {
-      toast.error('Domain name cannot be empty');
-      return;
-    }
-    if (!linkingTenantId) {
-      toast.error('Tenant must be selected');
+  const handleLinkTenant = async () => {
+    if (!linkDomainName) { toast.error('Please select a domain.'); return; }
+    if (!linkTenantId) { toast.error('Please select a tenant.'); return; }
+    
+    if (domains.some(d => d.domain_name === linkDomainName && d.tenant_id === linkTenantId)) {
+      toast.error('This tenant is already linked to this domain.');
       return;
     }
 
-    if (domains.some(d => d.id !== editingDomainId && d.domain_name === trimmed && d.tenant_id === linkingTenantId)) {
-      toast.error('This domain name is already linked to this tenant.');
-      return;
-    }
+    // Find the domain group to get its subscription status
+    const group = groupedDomains.find(g => g.domain_name === linkDomainName);
+    if (!group) return;
 
-    const { error } = await supabase.from('domain_configurations').update({
-      domain_name: trimmed,
-      tenant_id: linkingTenantId,
-      is_active: editFormIsActive,
-      allow_to_landing_page: editFormAllowToLandingPage
-    }).eq('id', editingDomainId);
-
+    setLinkingTenant(true);
+    
+    const { data, error } = await supabase
+      .from('domain_configurations')
+      .insert({ 
+        domain_name: linkDomainName, 
+        config: { screens: linkDomainScreens, features: { live_tracking: true, face_enrollment: true } }, 
+        is_active: true, 
+        tenant_id: linkTenantId,
+        allow_to_landing_page: linkAllowToLandingPage,
+        subscription_enabled: group.subscription_enabled
+      })
+      .select()
+      .single();
+      
     if (error) {
-      toast.error(`Failed to update domain: ${error.message || 'Unknown error'}`);
+      toast.error(`Failed to link tenant: ${error.message || 'Unknown error'}`);
     } else {
-      setDomains(prev => prev.map(d => d.id === editingDomainId ? { 
-        ...d, 
-        domain_name: trimmed, 
-        tenant_id: linkingTenantId,
-        is_active: editFormIsActive,
-        allow_to_landing_page: editFormAllowToLandingPage
-      } : d));
-      toast.success('Domain updated successfully');
-      setEditingDomainId(null);
+      setDomains(prev => [...prev, { id: data.id, domain_name: data.domain_name, tenant_id: data.tenant_id, config: data.config, is_active: data.is_active, allow_to_landing_page: data.allow_to_landing_page, subscription_enabled: data.subscription_enabled }]);
+      
+      if (linkTenantSubscription && group.subscription_enabled) {
+         await supabase.from('tenants').update({ subscription_enabled: true }).eq('id', linkTenantId);
+         setAllTenants(prev => prev.map(t => t.id === linkTenantId ? { ...t, subscription_enabled: true } : t));
+      }
+
+      toast.success(`Tenant successfully linked to "${linkDomainName}".`);
+      setLinkDomainName('');
+      setLinkTenantId('');
     }
+    setLinkingTenant(false);
+  };
+
+  const handleSaveDomainGroupEdits = async () => {
+    if (!editingDomainGroup) return;
+
+    let hasError = false;
+    for (const tenantConfig of editGroupTenants) {
+      const { error: configError } = await supabase.from('domain_configurations').update({
+        is_active: tenantConfig.is_active,
+        allow_to_landing_page: tenantConfig.allow_to_landing_page,
+        subscription_enabled: editGroupSubscription
+      }).eq('id', tenantConfig.id);
+
+      if (configError) hasError = true;
+
+      const { error: tenantError } = await supabase.from('tenants').update({
+        subscription_enabled: editGroupSubscription ? tenantConfig.tenant_subscription : false
+      }).eq('id', tenantConfig.tenant_id);
+
+      if (tenantError) hasError = true;
+    }
+
+    if (hasError) {
+      toast.error('Some updates failed. Reloading data...');
+    } else {
+      toast.success('Domain settings updated successfully');
+    }
+    
+    setEditingDomainGroup(null);
+    fetchData(); // Reload all data to ensure sync
   };
 
 
@@ -341,143 +378,172 @@ export default function DomainConfigManagerPage() {
         </div>
         
         <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-6">
-          {/* Add Form */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-            <h4 className="text-[13px] font-extrabold text-slate-800 mb-4 flex items-center gap-2">
-              <Plus className="w-4 h-4 text-indigo-600" />
-              Add New Domain
-            </h4>
-            <div className="flex flex-col sm:flex-row gap-4 items-end">
-              <div className="flex-1 space-y-1.5 w-full">
-                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Select Tenant</label>
-                <div className="relative">
-                  <div
-                    onClick={() => !addingDomain && setIsTenantMultiSelectOpen(!isTenantMultiSelectOpen)}
-                    className={`w-full flex items-center justify-between pl-3 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[13px] font-semibold text-slate-800 cursor-pointer transition-all ${addingDomain ? 'opacity-50 cursor-not-allowed' : 'hover:bg-white focus:ring-2 focus:ring-indigo-500'}`}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Form 1: Register New Domain */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+              <h4 className="text-[13px] font-extrabold text-slate-800 mb-4 flex items-center gap-2">
+                <Globe className="w-4 h-4 text-indigo-600" />
+                Register New Domain
+              </h4>
+              
+              <div className="space-y-4 flex-1">
+                <div className="space-y-1.5 w-full">
+                  <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Domain Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. client1.acepayroll.in"
+                    value={createDomainName}
+                    onChange={e => setCreateDomainName(e.target.value)}
+                    disabled={creatingDomain}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[13px] font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all"
+                  />
+                </div>
+                
+                <label className="flex items-center justify-between cursor-pointer p-3 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
+                  <div>
+                    <span className="text-[13px] font-bold text-slate-800 block">Subscription Management</span>
+                    <span className="text-[11px] text-slate-500">Enable subscriptions for this domain</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCreateDomainSubscription(!createDomainSubscription)}
+                    className={`w-9 h-5 rounded-full relative transition-colors duration-200 focus:outline-none flex-shrink-0 ${createDomainSubscription ? 'bg-emerald-500' : 'bg-slate-300'}`}
                   >
-                    <span className="truncate">
-                      {selectedTenantsForNewDomain.length === 0 
-                        ? 'Select tenant(s)...' 
-                        : `${selectedTenantsForNewDomain.length} tenant(s) selected`}
-                    </span>
-                    <ChevronDown className={`w-4 h-4 text-slate-400 absolute right-3 transition-transform ${isTenantMultiSelectOpen ? 'rotate-180' : ''}`} />
-                  </div>
-                  
-                  {isTenantMultiSelectOpen && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 max-h-60 overflow-y-auto">
-                      <div className="p-1">
-                        {allTenants.map(t => {
-                          const isAlreadyLinked = domains.some(d => d.tenant_id === t.id && d.domain_name === newDomain.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0]);
-                          const isSelected = selectedTenantsForNewDomain.includes(t.id);
-                          
-                          return (
-                            <label
-                              key={t.id}
-                              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-semibold cursor-pointer transition-colors ${
-                                isAlreadyLinked && newDomain.trim() !== '' 
-                                  ? 'opacity-50 cursor-not-allowed text-slate-400' 
-                                  : 'hover:bg-slate-50 text-slate-700'
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                disabled={isAlreadyLinked && newDomain.trim() !== ''}
-                                checked={isSelected}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedTenantsForNewDomain(prev => [...prev, t.id]);
-                                  } else {
-                                    setSelectedTenantsForNewDomain(prev => prev.filter(id => id !== t.id));
-                                  }
-                                }}
-                                className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-                              />
-                              <span className="truncate flex-1">{t.name}</span>
-                              {isAlreadyLinked && newDomain.trim() !== '' && (
-                                <span className="text-[10px] text-amber-500 flex-shrink-0">Already linked</span>
-                              )}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    <span className={`absolute top-[2px] left-[2px] bg-white w-[16px] h-[16px] rounded-full transition-transform duration-200 shadow-sm ${createDomainSubscription ? 'translate-x-4' : 'translate-x-0'}`} />
+                  </button>
+                </label>
               </div>
-              <div className="flex-1 space-y-1.5 w-full">
-                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Domain Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. client1.acepayroll.in"
-                  value={newDomain}
-                  onChange={e => setNewDomain(e.target.value)}
-                  disabled={addingDomain}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[13px] font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all"
-                />
-              </div>
-            </div>
 
-            <div className="mt-4 space-y-1.5 w-full">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Initial Screen Access</label>
-                  <div className="flex items-center gap-1.5 text-[10px] font-bold">
-                    <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">Total: {allScreens.length}</span>
-                    <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-200">Selected: {allScreens.filter(s => newDomainScreens[s.route] !== false).length}</span>
-                    <span className="bg-slate-50 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">Unselected: {allScreens.filter(s => newDomainScreens[s.route] === false).length}</span>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => {
-                    const allTrue: Record<string, boolean> = {};
-                    allScreens.forEach(s => allTrue[s.route] = true);
-                    setNewDomainScreens(allTrue);
-                  }}
-                  className="text-[10px] text-indigo-600 font-bold hover:underline"
-                >
-                  Select All
-                </button>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 border border-slate-200 rounded-lg p-3 bg-slate-50 max-h-80 overflow-y-auto">
-                 {allScreens.map(s => (
-                   <label key={s.route} className="flex items-center gap-2 text-[12px] font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 p-1.5 rounded transition-colors">
-                      <input 
-                        type="checkbox" 
-                        checked={newDomainScreens[s.route] !== false} 
-                        onChange={(e) => setNewDomainScreens(prev => ({...prev, [s.route]: e.target.checked}))} 
-                        className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 border-slate-300 flex-shrink-0" 
-                      />
-                      <span className="truncate">{s.label} <span className="text-[10px] text-slate-400 ml-1">({s.group})</span></span>
-                   </label>
-                 ))}
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-col sm:flex-row gap-4">
-              <label className="flex flex-1 items-center justify-between cursor-pointer p-3 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
-                <div>
-                  <span className="text-[13px] font-bold text-slate-800 block">Allow to Landing Page</span>
-                  <span className="text-[11px] text-slate-500">Initial page is Landing Page (if disabled, goes to Login)</span>
-                </div>
+              <div className="mt-5 flex items-center justify-end w-full">
                 <button
-                  type="button"
-                  onClick={() => setNewAllowToLandingPage(!newAllowToLandingPage)}
-                  className={`w-9 h-5 rounded-full relative transition-colors duration-200 focus:outline-none flex-shrink-0 ${newAllowToLandingPage ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                  onClick={handleCreateDomain}
+                  disabled={creatingDomain || !createDomainName.trim()}
+                  className="flex items-center justify-center gap-1.5 px-6 py-2 bg-indigo-600 text-white rounded-lg text-[13px] font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-sm w-full sm:w-auto"
                 >
-                  <span className={`absolute top-[2px] left-[2px] bg-white w-[16px] h-[16px] rounded-full transition-transform duration-200 shadow-sm ${newAllowToLandingPage ? 'translate-x-4' : 'translate-x-0'}`} />
+                  {creatingDomain ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  Register Domain
                 </button>
-              </label>
+              </div>
             </div>
 
-            <div className="mt-5 flex items-center justify-end w-full">
-              <button
-                onClick={handleAddDomain}
-                disabled={addingDomain || !newDomain.trim() || selectedTenantsForNewDomain.length === 0}
-                className="flex items-center justify-center gap-1.5 px-6 py-2 bg-indigo-600 text-white rounded-lg text-[13px] font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-sm w-full sm:w-auto"
-              >
-                {addingDomain ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                Add Domain
-              </button>
+            {/* Form 2: Link Tenant */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+              <h4 className="text-[13px] font-extrabold text-slate-800 mb-4 flex items-center gap-2">
+                <Link className="w-4 h-4 text-indigo-600" />
+                Link Tenant to Domain
+              </h4>
+              
+              <div className="space-y-4 flex-1">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="flex-1 space-y-1.5 w-full">
+                    <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Select Domain</label>
+                    <select
+                      value={linkDomainName}
+                      onChange={e => {
+                         setLinkDomainName(e.target.value);
+                         const group = groupedDomains.find(g => g.domain_name === e.target.value);
+                         if (group && !group.subscription_enabled) setLinkTenantSubscription(false);
+                      }}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[13px] font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="" disabled>Select domain...</option>
+                      {groupedDomains.map(g => (
+                        <option key={g.domain_name} value={g.domain_name}>{g.domain_name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex-1 space-y-1.5 w-full">
+                    <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Select Tenant</label>
+                    <select
+                      value={linkTenantId}
+                      onChange={e => setLinkTenantId(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[13px] font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="" disabled>Select tenant...</option>
+                      {allTenants.map(t => {
+                         const isAlreadyLinked = linkDomainName && domains.some(d => d.domain_name === linkDomainName && d.tenant_id === t.id);
+                         return (
+                           <option key={t.id} value={t.id} disabled={!!isAlreadyLinked}>
+                             {t.name} {isAlreadyLinked ? '(Already linked)' : ''}
+                           </option>
+                         );
+                      })}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mt-2 space-y-1.5 w-full">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Initial Screen Access</label>
+                    <button 
+                      onClick={() => {
+                        const allTrue = {};
+                        allScreens.forEach(s => allTrue[s.route] = true);
+                        setLinkDomainScreens(allTrue);
+                      }}
+                      className="text-[10px] text-indigo-600 font-bold hover:underline"
+                    >
+                      Select All
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border border-slate-200 rounded-lg p-2 bg-slate-50 max-h-32 overflow-y-auto">
+                     {allScreens.map(s => (
+                       <label key={s.route} className="flex items-center gap-2 text-[12px] font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 p-1.5 rounded transition-colors">
+                          <input 
+                            type="checkbox" 
+                            checked={linkDomainScreens[s.route] !== false} 
+                            onChange={(e) => setLinkDomainScreens(prev => ({...prev, [s.route]: e.target.checked}))} 
+                            className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 border-slate-300 flex-shrink-0" 
+                          />
+                          <span className="truncate">{s.label}</span>
+                       </label>
+                     ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <label className="flex flex-1 items-center justify-between cursor-pointer p-3 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
+                    <div>
+                      <span className="text-[13px] font-bold text-slate-800 block">Landing Page</span>
+                      <span className="text-[11px] text-slate-500">Initial page is Landing Page</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setLinkAllowToLandingPage(!linkAllowToLandingPage)}
+                      className={`w-9 h-5 rounded-full relative transition-colors duration-200 focus:outline-none flex-shrink-0 ${linkAllowToLandingPage ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                    >
+                      <span className={`absolute top-[2px] left-[2px] bg-white w-[16px] h-[16px] rounded-full transition-transform duration-200 shadow-sm ${linkAllowToLandingPage ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </button>
+                  </label>
+
+                  <label className={`flex flex-1 items-center justify-between cursor-pointer p-3 border border-slate-200 rounded-lg transition-colors ${linkDomainName && groupedDomains.find(g => g.domain_name === linkDomainName)?.subscription_enabled ? 'bg-slate-50 hover:bg-slate-100' : 'bg-slate-100/50 opacity-60'}`}>
+                    <div>
+                      <span className="text-[13px] font-bold text-slate-800 block">Tenant Subscription</span>
+                      <span className="text-[11px] text-slate-500">Enable for selected tenant</span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!linkDomainName || !groupedDomains.find(g => g.domain_name === linkDomainName)?.subscription_enabled}
+                      onClick={() => setLinkTenantSubscription(!linkTenantSubscription)}
+                      className={`w-9 h-5 rounded-full relative transition-colors duration-200 focus:outline-none flex-shrink-0 ${linkTenantSubscription ? 'bg-emerald-500' : 'bg-slate-300'} ${!linkDomainName || !groupedDomains.find(g => g.domain_name === linkDomainName)?.subscription_enabled ? 'cursor-not-allowed' : ''}`}
+                    >
+                      <span className={`absolute top-[2px] left-[2px] bg-white w-[16px] h-[16px] rounded-full transition-transform duration-200 shadow-sm ${linkTenantSubscription ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </button>
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-5 flex items-center justify-end w-full">
+                <button
+                  onClick={handleLinkTenant}
+                  disabled={linkingTenant || !linkDomainName || !linkTenantId}
+                  className="flex items-center justify-center gap-1.5 px-6 py-2 bg-indigo-600 text-white rounded-lg text-[13px] font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-sm w-full sm:w-auto"
+                >
+                  {linkingTenant ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link className="w-4 h-4" />}
+                  Link Tenant
+                </button>
+              </div>
             </div>
           </div>
 
@@ -505,44 +571,50 @@ export default function DomainConfigManagerPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {domains.map(domain => {
-                      const tenant = allTenants.find(t => t.id === domain.tenant_id);
+                    {groupedDomains.map(group => {
                       return (
-                        <tr key={domain.id} className="hover:bg-slate-50/50 transition-colors">
+                        <tr key={group.domain_name} className="hover:bg-slate-50/50 transition-colors">
                           <td className="px-4 py-3 min-w-[200px]">
                             <div className="flex items-center gap-2">
-                              <Globe className={`w-4 h-4 ${domain.is_active ? 'text-indigo-500' : 'text-slate-400'}`} />
-                              <span className={`text-[13px] font-bold ${domain.is_active ? 'text-slate-800' : 'text-slate-400'}`}>{domain.domain_name}</span>
+                              <Globe className={`w-4 h-4 ${group.is_active ? 'text-indigo-500' : 'text-slate-400'}`} />
+                              <span className={`text-[13px] font-bold ${group.is_active ? 'text-slate-800' : 'text-slate-400'}`}>{group.domain_name}</span>
                             </div>
                           </td>
                               <td className="px-4 py-3 min-w-[200px]">
-                                <span className="text-[12px] font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded-md line-clamp-1" title={tenant?.name}>
-                                  {tenant?.name || 'Unknown Tenant'}
+                                <span className="text-[12px] font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded-md line-clamp-1" title={`${group.configs.length} Tenant(s)`}>
+                                  {group.configs.length} Tenant(s)
                                 </span>
                               </td>
                               <td className="px-4 py-3">
-                                <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${domain.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                                  <div className={`w-1.5 h-1.5 rounded-full ${domain.is_active ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                                  {domain.is_active ? 'Active' : 'Disabled'}
+                                <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${group.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                  <div className={`w-1.5 h-1.5 rounded-full ${group.is_active ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                                  {group.is_active ? 'Active' : 'Disabled'}
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-right">
                                 <div className="flex items-center justify-end gap-1">
                                   <button
                                     onClick={() => {
-                                      setEditingDomainId(domain.id!);
-                                      setEditingDomainName(domain.domain_name);
-                                      setLinkingTenantId(domain.tenant_id!);
-                                      setEditFormIsActive(domain.is_active);
-                                      setEditFormAllowToLandingPage(domain.allow_to_landing_page);
+                                      setEditingDomainGroup(group.domain_name);
+                                      setEditGroupSubscription(!!group.subscription_enabled);
+                                      setEditGroupTenants(group.configs.map(c => {
+                                        const t = allTenants.find(t => t.id === c.tenant_id);
+                                        return {
+                                          id: c.id!,
+                                          tenant_id: c.tenant_id!,
+                                          is_active: c.is_active,
+                                          allow_to_landing_page: c.allow_to_landing_page,
+                                          tenant_subscription: !!t?.subscription_enabled
+                                        };
+                                      }));
                                     }}
-                                    title="Edit Domain"
+                                    title="Edit Domain Settings"
                                     className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
                                   >
                                     <Edit2 className="w-3.5 h-3.5" />
                                   </button>
                                   <button
-                                    onClick={() => handleDeleteDomain(domain.id!, domain.domain_name)}
+                                    onClick={() => handleDeleteDomain(group.configs[0].id!, group.domain_name)}
                                     title="Delete Domain"
                                     className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
                                   >
@@ -825,84 +897,120 @@ export default function DomainConfigManagerPage() {
       )}
 
       {/* ── Edit Domain Modal ── */}
-      {editingDomainId && (
+      {editingDomainGroup && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
               <h3 className="text-[14px] font-bold text-slate-800 flex items-center gap-2">
-                <Edit2 className="w-4 h-4 text-indigo-600" />
-                Edit Domain Details
+                <Globe className="w-4 h-4 text-indigo-600" />
+                Domain Settings: {editingDomainGroup}
               </h3>
-              <button onClick={() => setEditingDomainId(null)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+              <button onClick={() => setEditingDomainGroup(null)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
             </div>
             
-            <div className="p-6 space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Domain Name</label>
-                <input
-                  type="text"
-                  value={editingDomainName}
-                  onChange={e => setEditingDomainName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[13px] font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
+            <div className="p-6 overflow-y-auto space-y-6">
               
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Linked Tenant</label>
-                <select
-                  value={linkingTenantId}
-                  onChange={e => setLinkingTenantId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[13px] font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="" disabled>Select tenant</option>
-                  {allTenants.map(t => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
+              {/* Domain Level Settings */}
+              <div className="space-y-4">
+                <h4 className="text-[12px] font-extrabold text-slate-800 uppercase tracking-widest border-b border-slate-100 pb-2">Global Settings</h4>
+                
+                <label className="flex items-center justify-between cursor-pointer p-3 border border-slate-200 rounded-lg bg-indigo-50/50 hover:bg-indigo-50 transition-colors">
+                  <div>
+                    <span className="text-[13px] font-bold text-slate-800 block">Subscription Management</span>
+                    <span className="text-[11px] text-slate-500">Enable subscriptions for ALL tenants under this domain</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextVal = !editGroupSubscription;
+                      setEditGroupSubscription(nextVal);
+                      if (!nextVal) {
+                        setEditGroupTenants(prev => prev.map(t => ({ ...t, tenant_subscription: false })));
+                      }
+                    }}
+                    className={`w-9 h-5 rounded-full relative transition-colors duration-200 focus:outline-none flex-shrink-0 ${editGroupSubscription ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                  >
+                    <span className={`absolute top-[2px] left-[2px] bg-white w-[16px] h-[16px] rounded-full transition-transform duration-200 shadow-sm ${editGroupSubscription ? 'translate-x-4' : 'translate-x-0'}`} />
+                  </button>
+                </label>
               </div>
 
-              <div className="space-y-1.5 pt-2">
-                <label className="flex items-center justify-between cursor-pointer p-3 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
-                  <div>
-                    <span className="text-[13px] font-bold text-slate-800 block">Domain Status</span>
-                    <span className="text-[11px] text-slate-500">Allow access to this domain</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setEditFormIsActive(!editFormIsActive)}
-                    className={`w-9 h-5 rounded-full relative transition-colors duration-200 focus:outline-none flex-shrink-0 ${editFormIsActive ? 'bg-emerald-500' : 'bg-slate-300'}`}
-                  >
-                    <span className={`absolute top-[2px] left-[2px] bg-white w-[16px] h-[16px] rounded-full transition-transform duration-200 shadow-sm ${editFormIsActive ? 'translate-x-4' : 'translate-x-0'}`} />
-                  </button>
-                </label>
+              {/* Linked Tenants */}
+              <div className="space-y-4">
+                <h4 className="text-[12px] font-extrabold text-slate-800 uppercase tracking-widest border-b border-slate-100 pb-2">Linked Tenants ({editGroupTenants.length})</h4>
+                
+                <div className="space-y-3">
+                  {editGroupTenants.map((tConfig, index) => {
+                    const tenant = allTenants.find(t => t.id === tConfig.tenant_id);
+                    return (
+                      <div key={tConfig.id} className="border border-slate-200 rounded-xl p-4 bg-white shadow-sm flex flex-col gap-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[13px] font-bold text-slate-800">{tenant?.name || 'Unknown Tenant'}</span>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <label className="flex items-center justify-between cursor-pointer p-2 border border-slate-100 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
+                            <span className="text-[11px] font-bold text-slate-700">Domain Status</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newArr = [...editGroupTenants];
+                                newArr[index].is_active = !newArr[index].is_active;
+                                setEditGroupTenants(newArr);
+                              }}
+                              className={`w-8 h-4 rounded-full relative transition-colors duration-200 focus:outline-none flex-shrink-0 ${tConfig.is_active ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                            >
+                              <span className={`absolute top-[2px] left-[2px] bg-white w-[12px] h-[12px] rounded-full transition-transform duration-200 shadow-sm ${tConfig.is_active ? 'translate-x-4' : 'translate-x-0'}`} />
+                            </button>
+                          </label>
 
-                <label className="flex items-center justify-between cursor-pointer p-3 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
-                  <div>
-                    <span className="text-[13px] font-bold text-slate-800 block">Allow to Landing Page</span>
-                    <span className="text-[11px] text-slate-500">Initial page is Landing Page (if disabled, goes to Login)</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setEditFormAllowToLandingPage(!editFormAllowToLandingPage)}
-                    className={`w-9 h-5 rounded-full relative transition-colors duration-200 focus:outline-none flex-shrink-0 ${editFormAllowToLandingPage ? 'bg-emerald-500' : 'bg-slate-300'}`}
-                  >
-                    <span className={`absolute top-[2px] left-[2px] bg-white w-[16px] h-[16px] rounded-full transition-transform duration-200 shadow-sm ${editFormAllowToLandingPage ? 'translate-x-4' : 'translate-x-0'}`} />
-                  </button>
-                </label>
+                          <label className="flex items-center justify-between cursor-pointer p-2 border border-slate-100 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
+                            <span className="text-[11px] font-bold text-slate-700">Landing Page</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newArr = [...editGroupTenants];
+                                newArr[index].allow_to_landing_page = !newArr[index].allow_to_landing_page;
+                                setEditGroupTenants(newArr);
+                              }}
+                              className={`w-8 h-4 rounded-full relative transition-colors duration-200 focus:outline-none flex-shrink-0 ${tConfig.allow_to_landing_page ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                            >
+                              <span className={`absolute top-[2px] left-[2px] bg-white w-[12px] h-[12px] rounded-full transition-transform duration-200 shadow-sm ${tConfig.allow_to_landing_page ? 'translate-x-4' : 'translate-x-0'}`} />
+                            </button>
+                          </label>
+
+                          <label className={`flex items-center justify-between cursor-pointer p-2 border border-slate-100 rounded-lg transition-colors ${editGroupSubscription ? 'bg-slate-50 hover:bg-slate-100' : 'bg-slate-100/50 opacity-60'}`}>
+                            <span className="text-[11px] font-bold text-slate-700">Subscription</span>
+                            <button
+                              type="button"
+                              disabled={!editGroupSubscription}
+                              onClick={() => {
+                                const newArr = [...editGroupTenants];
+                                newArr[index].tenant_subscription = !newArr[index].tenant_subscription;
+                                setEditGroupTenants(newArr);
+                              }}
+                              className={`w-8 h-4 rounded-full relative transition-colors duration-200 focus:outline-none flex-shrink-0 ${tConfig.tenant_subscription && editGroupSubscription ? 'bg-emerald-500' : 'bg-slate-300'} ${!editGroupSubscription ? 'cursor-not-allowed' : ''}`}
+                            >
+                              <span className={`absolute top-[2px] left-[2px] bg-white w-[12px] h-[12px] rounded-full transition-transform duration-200 shadow-sm ${tConfig.tenant_subscription && editGroupSubscription ? 'translate-x-4' : 'translate-x-0'}`} />
+                            </button>
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
             <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-3">
               <button
-                onClick={() => setEditingDomainId(null)}
+                onClick={() => setEditingDomainGroup(null)}
                 className="px-4 py-2 text-[13px] font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-200 rounded-lg transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={handleSaveDomainEdits}
+                onClick={handleSaveDomainGroupEdits}
                 className="px-6 py-2 bg-indigo-600 text-white rounded-lg text-[13px] font-bold hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2"
               >
                 <Check className="w-4 h-4" />

@@ -524,6 +524,11 @@ export default function BillingPage() {
   const isExpired = !currentSub && history.length > 0;
   const hasNoSub = history.length === 0;
   const daysRemaining = currentSub ? Math.max(0, Math.ceil((new Date(currentSub.expires_at).getTime() - Date.now()) / 86400000)) : 0;
+  
+  const isTrial = displaySub?.plan_name === 'Elite Trial';
+  const diffDays = displaySub ? Math.floor(Math.abs(Date.now() - new Date(displaySub.expires_at).getTime()) / 86400000) : 0;
+  const daysUntilDataDelete = Math.max(0, 3 - diffDays);
+
   const totalSpend = history.filter(s => s.plan_name !== 'Elite Trial').reduce((acc, s) => acc + s.amount_paid, 0);
 
   const filteredHistory = history.filter(item => {
@@ -581,31 +586,53 @@ export default function BillingPage() {
 
       {/* Expired Banner */}
       {isExpired && (
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-4 bg-red-50 border border-red-200 rounded-2xl">
-          <div className="flex items-start gap-3 flex-1">
-            <div className="h-9 w-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
-              <AlertTriangle className="h-4 w-4 text-red-600" />
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-4 bg-red-50 border border-red-200 rounded-2xl shadow-sm">
+            <div className="flex items-start gap-3 flex-1">
+              <div className="h-9 w-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
+                <AlertTriangle className="h-4 w-4 text-red-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-red-800">Your subscription has expired</p>
+                <p className="text-xs text-red-600 mt-0.5">
+                  Expired on {formatDate(displaySub?.expires_at)}. Renew now to restore full access to all payroll features.
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-bold text-red-800">Your subscription has expired</p>
-              <p className="text-xs text-red-600 mt-0.5">
-                Expired on {formatDate(displaySub?.expires_at)}. Renew now to restore full access to all payroll features.
-              </p>
-            </div>
+            <button
+              onClick={() => setShowPricing(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 shadow-sm shadow-red-600/20"
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Renew Now
+            </button>
           </div>
-          <button
-            onClick={() => setShowPricing(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0"
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Renew Now
-          </button>
+
+          {isTrial && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-3 shadow-sm">
+              <ShieldAlert className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-bold text-red-800">Pending Data Deletion</h4>
+                <p className="text-xs text-red-600 mt-1 leading-relaxed">
+                  {daysUntilDataDelete > 0 
+                    ? `Your workspace data will be permanently deleted in ${daysUntilDataDelete} day${daysUntilDataDelete === 1 ? '' : 's'}. Subscribe now to retain your data.`
+                    : 'Your workspace data is scheduled for permanent deletion today. Subscribe immediately to retain your data.'}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Subscription Card + Quick Actions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2">
-          <div className={`relative overflow-hidden rounded-2xl p-7 text-white ${isExpired ? 'bg-gradient-to-br from-slate-600 via-slate-700 to-slate-800' : 'bg-yellow-600'}`}>
+          <div className={`relative overflow-hidden rounded-2xl p-7 text-white ${
+            isExpired 
+              ? 'bg-gradient-to-br from-slate-600 via-slate-700 to-slate-800' 
+              : (displaySub?.plan_name?.toLowerCase().includes('trial') || displaySub?.amount_paid === 0)
+                ? 'bg-gradient-to-br from-blue-700 to-indigo-600'
+                : 'bg-gradient-to-br from-yellow-600 to-orange-600'
+          }`}>
             <div className="absolute -top-10 -right-10 h-40 w-40 rounded-full bg-white/20 blur-2xl" />
             {/* <div className="absolute -bottom-8 -left-8 h-32 w-32 rounded-full bg-white/20 blur-xl" /> */}
             <div className="relative">

@@ -32,8 +32,11 @@ export const useDomainConfigStore = create<DomainConfigState>((set, get) => ({
       const domainsToCheck = fallbackDomain ? [domain, fallbackDomain] : [domain];
 
       const { data, error } = await supabase
-        .from('domain_configurations')
-        .select('config, allow_to_landing_page')
+        .from('domains_management')
+        .select(`
+          allow_to_landing_page,
+          domain_configurations ( config, tenant_id )
+        `)
         .in('domain_name', domainsToCheck)
         .eq('is_active', true)
         .limit(1)
@@ -46,8 +49,14 @@ export const useDomainConfigStore = create<DomainConfigState>((set, get) => ({
         return;
       }
 
+      let configToUse = null;
+      if (data?.domain_configurations && Array.isArray(data.domain_configurations)) {
+        const masterConfig = data.domain_configurations.find((c: any) => c.tenant_id === null);
+        configToUse = masterConfig ? masterConfig.config : data.domain_configurations[0]?.config;
+      }
+
       set({ 
-        config: (data?.config as DomainConfig) || null,
+        config: (configToUse as DomainConfig) || null,
         allowToLandingPage: data?.allow_to_landing_page ?? true,
         loading: false, 
         initialized: true 

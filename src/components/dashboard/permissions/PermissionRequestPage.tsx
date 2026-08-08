@@ -230,7 +230,7 @@ export default function PermissionRequestPage() {
     }
 
     let finalEmployeeId = selectedEmployeeId;
-    if (requestTarget === 'own' && !editingPermission) {
+    if (!showEmployeeSelector && !editingPermission) {
       finalEmployeeId = currentEmployeeId || '';
     }
 

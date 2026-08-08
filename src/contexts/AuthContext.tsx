@@ -67,8 +67,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               .maybeSingle();
 
             if (employeeData && ['Relieved', 'Suspended', 'Terminated'].includes(employeeData.status)) {
-              await supabase.auth.signOut();
+              // Clear state first to prevent component tree errors, then sign out silently
+              setUser(null);
+              setTenantId(null);
+              useUserProfileStore.getState().clearUserProfile();
               setError(`Your account is currently inactive (Status: ${employeeData.status}). Please contact your administrator for access.`);
+              supabase.auth.signOut(); // fire-and-forget, don't await
+              return;
+            }
+          }
+
+          // Check if this tenant is active under its domain
+          const isActive = await checkTenantDomainActive(tenant_id);
+          if (!isActive) {
+            // Clear state first to prevent component tree errors, then sign out silently
+            setUser(null);
+            setTenantId(null);
+            useUserProfileStore.getState().clearUserProfile();
+            setError('Invalid login credentials');
+            supabase.auth.signOut(); // fire-and-forget, don't await
+            return;
+          }
+
+          // Check tenant status and subscription
+          const { data: tenant } = await supabase
+            .from('tenants')
+            .select('status')
+            .eq('id', tenant_id)
+            .maybeSingle();
+
+          if (tenant) {
+            if (tenant.status !== 'Active') {
+              setUser(null);
+              setTenantId(null);
+              useUserProfileStore.getState().clearUserProfile();
+              setError(`Your organization's account is currently ${tenant.status}. Please contact support.`);
+              supabase.auth.signOut();
               return;
             }
           }
@@ -110,6 +144,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       console.error('Failed to load profile:', err);
       useUserProfileStore.getState().setUserProfile(userId, tenantId, null);
+    }
+  };
+
+  /**
+   * Returns false if the tenant has an entry in domain_configurations where is_active = false.
+   * Returns true if no domain config exists (no restriction) or if is_active = true.
+   */
+  const checkTenantDomainActive = async (tenantId: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase
+        .from('domain_configurations')
+        .select('is_active')
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error checking domain config:', error);
+        return true; // Fail open — don't block on query errors
+      }
+
+      // If a record exists and is_active is explicitly false, block access
+      if (data && data.is_active === false) {
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      console.error('Failed to check domain config:', err);
+      return true; // Fail open
     }
   };
 
@@ -200,6 +263,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (data?.session?.user) {
         const tenant_id = await loadUserTenantId(data.session.user.id);
         
+        // Check domain config: is tenant active?
+        if (tenant_id) {
+          const isActive = await checkTenantDomainActive(tenant_id);
+          if (!isActive) {
+            await supabase.auth.signOut();
+            throw new Error('Invalid login credentials');
+          }
+
+          const { data: tenant } = await supabase
+            .from('tenants')
+            .select('status')
+            .eq('id', tenant_id)
+            .maybeSingle();
+
+          if (tenant) {
+            if (tenant.status !== 'Active') {
+              await supabase.auth.signOut();
+              throw new Error(`Your organization's account is currently ${tenant.status}. Please contact support.`);
+            }
+          }
+        }
+
         let query = supabase.from('employees').select('status').eq('email', email);
         if (tenant_id) {
           query = query.eq('tenant_id', tenant_id);
@@ -230,6 +315,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             name: fullName,
             company_name: organizationName,
             mobile_number: mobileNumber,
+            hostname: window.location.host,
           },
         }
       });

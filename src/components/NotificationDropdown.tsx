@@ -414,13 +414,13 @@ export default function NotificationDropdown() {
     <div className="relative" ref={dropdownRef}>
       <button
         type="button"
-        className="relative flex-shrink-0 p-1 text-gray-100 rounded-full hover:text-gray-200"
+        className="relative flex-shrink-0 p-1.5 text-indigo-100 hover:text-white transition-colors focus:outline-none"
         onClick={() => setIsOpen(!isOpen)}
       >
         <span className="sr-only">View notifications</span>
-        <Bell className="h-6 w-6 mt-1" aria-hidden="true" />
+        <Bell className="h-[22px] w-[22px]" aria-hidden="true" />
         {unreadCount > 0 && (
-          <span className="absolute top-0 right-0 block h-4 w-4 rounded-full bg-red-500 text-xs text-white text-center leading-4">
+          <span className="absolute top-0 right-0 flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] font-bold text-white shadow-sm ring-2 ring-[#6366F1]">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}

@@ -39,7 +39,7 @@ export default function ScreenGuard({ children }: { children: React.ReactNode })
   if (!hasAccess(location.pathname)) {
     // If they don't have access, redirect them to a safe default page (overview or dashboard)
     // Wait, since we are returning a Navigate, we should replace to avoid broken history
-    return <Navigate to="/dashboard/overview" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
 
   return <>{children}</>;

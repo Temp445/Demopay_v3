@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Menu, LogOut, User as UserIcon, KeyRound, Eye, EyeOff, AlertCircle, Download, Calendar, Zap, ShieldCheck, Clock, CreditCard, BadgeCheck, ShieldAlert } from 'lucide-react';
+import { Menu, LogOut, User as UserIcon, KeyRound, Eye, EyeOff, AlertCircle, Download, Calendar, Zap, ShieldCheck, Clock, CreditCard, BadgeCheck, ShieldAlert, X, ExternalLink } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRoleAccess } from '../../hooks/useRoleAccess';
 import { useTenant } from '../../contexts/TenantContext';
@@ -19,85 +19,100 @@ interface SubscriptionData {
   plan_name: string;
   created_at: string;
   expires_at: string;
+  amount?: number;
 }
 
 // ── Subscription Details Modal ────────────────────────────────────────────────
 function SubscriptionDetailsModal({ sub, onClose, onUpgrade }: { sub: SubscriptionData; onClose: () => void; onUpgrade: () => void }) {
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-IN', {
+    return new Date(dateStr).toLocaleDateString('en-GB', {
       day: 'numeric',
-      month: 'long',
+      month: 'short',
       year: 'numeric'
     });
   };
 
   const isEnterprise = sub.plan_name.toLowerCase().includes('enterprise');
+  const isTrial = sub.plan_name.toLowerCase().includes('trial');
+
+  const now = new Date().getTime();
+  const created = new Date(sub.created_at).getTime();
+  const end = new Date(sub.expires_at).getTime();
+  
+  const daysRemaining = Math.max(0, Math.ceil((end - now) / (1000 * 60 * 60 * 24)));
+  const totalDays = Math.max(1, Math.ceil((end - created) / (1000 * 60 * 60 * 24)));
+  const progressPercent = Math.max(0, Math.min(100, ((totalDays - daysRemaining) / totalDays) * 100));
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#0F172A]/80 backdrop-blur-md p-4">
-      <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md relative overflow-hidden animate-in fade-in zoom-in-95 duration-300 border border-white/20">
-        <div className="bg-indigo-600 px-8 py-10 text-white relative overflow-hidden">
-          <div className="absolute top-0 right-0 p-4 opacity-10">
-            <Zap className="h-40 w-40 -mr-10 -mt-10" />
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+      <div className="bg-white border border-indigo-500 rounded-2xl shadow-xl w-full max-w-[400px] relative overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        
+        {/* Close button top right */}
+        <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors p-1">
+          <X className="h-4 w-4" />
+        </button>
+
+        <div className="p-7">
+          {/* Header */}
+          <div className="mb-7">
+            <h3 className="text-lg font-bold text-slate-900 mb-0.5">Your subscription</h3>
+            <p className="text-[13px] text-slate-500">Manage your Ace Payroll access</p>
           </div>
-          
-          <div className="relative z-10 flex flex-col">
-          
-            <h3 className="text-3xl">Plan Details</h3>
-          </div>
-        </div>
 
-        {/* Content */}
-        <div className="p-8 space-y-5">
-          <div className="grid grid-cols-1 gap-4">
-            <div className="flex items-center gap-5 p-4 bg-slate-50 rounded-2xl border border-slate-100 transition-all hover:border-indigo-100 group">
-              <div className="h-12 w-12 rounded-xl bg-white flex items-center justify-center text-indigo-600 shadow-sm group-hover:scale-110 transition-transform">
-                <Zap className="h-6 w-6" />
-              </div>
-              <div>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Current Plan</p>
-                <p className="text-lg font-black text-slate-800 tracking-tight">{sub.plan_name}</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                <div className="flex items-center gap-2 text-emerald-600 mb-2">
-                  <Calendar className="h-4 w-4" />
-                  <span className="text-[10px] font-black uppercase tracking-widest">Started</span>
-                </div>
-                <p className="text-sm font-bold text-slate-800">{formatDate(sub.created_at)}</p>
-              </div>
-
-              <div className="flex flex-col p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                <div className="flex items-center gap-2 text-amber-600 mb-2">
-                  <Clock className="h-4 w-4" />
-                  <span className="text-[10px] font-black uppercase tracking-widest">Renewal</span>
-                </div>
-                <p className="text-sm font-bold text-slate-800">{formatDate(sub.expires_at)}</p>
+          {/* Current Plan */}
+          <div className="mb-6">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Current Plan</p>
+            <div className="flex items-center justify-between">
+              <p className="text-base font-bold text-slate-900">{sub.plan_name}</p>
+              <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-600 px-2.5 py-0.5 rounded-full border border-emerald-100">
+                 <div className="h-1.5 w-1.5 rounded-full bg-emerald-500"></div>
+                 <span className="text-[11px] font-semibold tracking-wide">Active</span>
               </div>
             </div>
           </div>
 
-          <div className="pt-4 space-y-3">
+          {/* Trial Progress */}
+          {isTrial && (
+            <div className="mb-7">
+              <div className="flex items-center justify-between mb-2.5">
+                <span className="text-[12px] font-medium text-slate-500">Trial progress</span>
+                <span className="text-[12px] font-medium text-slate-700">{daysRemaining} days remaining</span>
+              </div>
+              <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                 <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${progressPercent}%` }}></div>
+              </div>
+            </div>
+          )}
+
+          {/* Table */}
+          <div className="border border-slate-200 rounded-lg overflow-hidden mb-6">
+            <div className="flex items-center justify-between p-3.5 border-b border-slate-100 bg-white">
+              <span className="text-[13px] text-slate-500">Started</span>
+              <span className="text-[13px] text-slate-900 font-semibold">{formatDate(sub.created_at)}</span>
+            </div>
+            <div className="flex items-center justify-between p-3.5 bg-white">
+              <span className="text-[13px] text-slate-500">Renews on</span>
+              <span className="text-[13px] text-slate-900 font-semibold">{formatDate(sub.expires_at)}</span>
+            </div>
+          </div>
+
+          {/* Buttons */}
+          <div className="space-y-3">
             {!isEnterprise && (
               <button
                 onClick={onUpgrade}
-                className="w-full bg-gradient-to-r from-indigo-600 to-indigo-800 text-white font-black py-4 rounded-2xl  transition-all shadow-xl shadow-indigo-200/50 flex items-center justify-center gap-3 hover:-translate-y-0.5 active:translate-y-0"
+                className="w-full bg-[#0F172A] text-white text-[13px] font-medium py-3 rounded-lg hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
               >
-                <Zap className="h-5 w-5" />
-                View Details
+                View plan details
+                <ExternalLink className="h-3.5 w-3.5" />
               </button>
             )}
             <button
               onClick={onClose}
-              className="w-full bg-slate-100 text-slate-600 font-black py-4 rounded-2xl hover:bg-slate-200 transition-all border border-slate-200"
+              className="w-full bg-white text-slate-700 text-[13px] font-medium py-3 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm"
             >
               Close
             </button>
-            <p className="text-center text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-6">
-              Secured by Ace Payroll
-            </p>
           </div>
         </div>
       </div>
@@ -254,6 +269,47 @@ export default function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
 
   const displayName = profile?.full_name || user?.email?.split('@')[0] || 'User';
 
+  let daysRemaining: number | null = null;
+  if (subInfo?.expires_at) {
+    const end = new Date(subInfo.expires_at).getTime();
+    const now = new Date().getTime();
+    daysRemaining = Math.max(0, Math.ceil((end - now) / (1000 * 60 * 60 * 24)));
+  }
+
+  const isTrial = subInfo?.plan_name?.toLowerCase().includes('trial');
+  let subStatusBadge = null;
+  const isSubscriptionRequired = currentTenant?.subscription_enabled !== false;
+
+  if (isAdmin && isSubscriptionRequired) {
+    if (hasExpired) {
+      subStatusBadge = (
+        <button onClick={() => navigate('/dashboard/billing')} className="group flex items-center gap-1.5 px-3 py-1 md:py-1.5 bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white rounded-full border border-red-400/50 shadow-sm transition-all cursor-pointer">
+          <AlertCircle className="h-3.5 w-3.5 group-hover:animate-pulse" />
+          <span className="hidden sm:inline text-[10px] md:text-xs font-bold tracking-wide uppercase">Plan Expired</span>
+          <span className="sm:hidden text-[10px] font-bold tracking-wide uppercase">Expired</span>
+        </button>
+      );
+    } else if (subInfo && daysRemaining !== null) {
+      if (isTrial) {
+        subStatusBadge = (
+          <button onClick={() => navigate('/dashboard/billing')} className="group flex items-center gap-1.5 px-3 py-1 md:py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-full border border-white/20 shadow-sm transition-all cursor-pointer backdrop-blur-sm">
+            {/* <Zap className="h-3.5 w-3.5 text-amber-300 group-hover:scale-110 transition-transform" /> */}
+            <span className="hidden sm:inline text-[10px] md:text-xs font-semibold tracking-wide">Trial: <span className="font-bold text-amber-400">{daysRemaining} Days Left</span></span>
+            <span className="sm:hidden text-[10px] font-bold tracking-wide">{daysRemaining}d Left</span>
+          </button>
+        );
+      } else if (daysRemaining <= 10) {
+        subStatusBadge = (
+          <button onClick={() => navigate('/dashboard/billing')} className="group flex items-center gap-1.5 px-3 py-1 md:py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-full border border-amber-400/50 shadow-sm transition-all cursor-pointer">
+            <Clock className="h-3.5 w-3.5 text-white/90 group-hover:scale-110 transition-transform" />
+            <span className="hidden sm:inline text-[10px] md:text-xs font-semibold tracking-wide">Expires in <span className="font-bold">{daysRemaining} Days</span></span>
+            <span className="sm:hidden text-[10px] font-bold tracking-wide">{daysRemaining}d Left</span>
+          </button>
+        );
+      }
+    }
+  }
+
   return (
     <>
       <header className="bg-[#6366F1] fixed inset-x-0 top-0 z-20">
@@ -289,8 +345,10 @@ export default function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
               <span className="text-white font-semibold text-lg">{companyName}</span>
             </div>
 
-            <div className="flex items-center space-x-1 sm:space-x-2 md:space-x-5 pr-1 sm:pr-2 flex-shrink-0">
+            <div className="flex items-center space-x-1 sm:space-x-2 md:space-x-5 flex-shrink-0">
               
+              {subStatusBadge}
+
               <div className="relative group">
                 <a
                   href="/ace-payroll.apk"
@@ -299,7 +357,7 @@ export default function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
                   title="Download Mobile App"
                 >
                    <div className="p-1.5 bg-indigo-50 rounded-full text-indigo-500 absolute ">
-                      <Download className="h-3.5 w-3.5" strokeWidth={3} />
+                      <Download className="h-3 w-3" strokeWidth={3} />
                     </div>
                 </a>
 
@@ -315,7 +373,7 @@ export default function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
                 </div>
               </div>
 
-              <div className="flex items-center space-x-2 md:space-x-5 border-l border-white/10 pl-2 md:pl-5">
+              <div className="flex items-center">
                 <TenantSwitcher />
                 <NotificationDropdown />
               </div>
@@ -324,18 +382,20 @@ export default function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
               <div className="relative" ref={dropdownRef}>
                 <button
                   onClick={() => setDropdownOpen((v) => !v)}
-                  className="flex items-center space-x-2 text-indigo-100 md:px-2 border-l border-indigo-500/50 md:ml-2 focus:outline-none"
+                  className="flex items-center space-x-2 text-indigo-100 border border-white/20 bg-white/10 hover:bg-white/20 transition-colors rounded-full pl-0.5 pr-1 md:pr-3 py-1 focus:outline-none"
                 >
-                  <div className="flex flex-col items-end">
-                    <span className="hidden md:block text-sm font-medium text-white leading-none">
+                  <div className="h-6 w-6 rounded-full bg-white flex items-center justify-center shadow-sm shrink-0 ml-1">
+                    <span className="text-indigo-600 font-bold text-xs md:text-sm">
+                      {displayName?.charAt(0)?.toUpperCase() || 'U'}
+                    </span>
+                  </div>
+                  <div className="hidden flex-col items-start md:flex">
+                    <span className="text-xs md:text-sm font-semibold text-white leading-none">
                       {displayName?.split(' ')[0] || ''}
                     </span>
                     {profile?.position && (
-                      <span className="text-xs text-indigo-200 mt-1">{profile.position}</span>
+                      <span className="text-[9px] md:text-[10px] text-indigo-200 mt-0.5 leading-none">{profile.position}</span>
                     )}
-                  </div>
-                  <div className="h-8 w-8 rounded-full bg-indigo-500 flex items-center justify-center border border-indigo-400">
-                    <UserIcon className="h-4 w-4 text-white" />
                   </div>
                 </button>
 
@@ -348,7 +408,7 @@ export default function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
                     </div>
 
                     {/* Subscription Link (Admin Only, non-AMC tenants only) */}
-                    {/* {isAdmin && (
+                    {isAdmin && isSubscriptionRequired && (
                       isSubscribed ? (
                         <button
                           onClick={() => {
@@ -383,7 +443,7 @@ export default function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
                           Upgrade Plan
                         </button>
                       )
-                    )} */}
+                    )}
 
                     {/* Change Password */}
                     <button

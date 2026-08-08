@@ -59,7 +59,6 @@ export default function DashboardSidebar({ isOpen, onClose, isLocked = false }: 
 
   const navigation: NavigationEntry[] = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Tenant Screen Access', href: '/dashboard/global-tenant-management', icon: LayoutDashboard },
     { name: 'Employees', href: '/dashboard/employees', icon: Users },
     {
       name: 'Attendance',
@@ -71,7 +70,6 @@ export default function DashboardSidebar({ isOpen, onClose, isLocked = false }: 
         { name: 'Clock In/Out', href: '/dashboard/clockin-clockout', icon: Clock },
         { name: 'Time Stamp Mgmt', href: '/dashboard/time-stamp-management', icon: Edit },
         { name: 'Attendance Log', href: '/dashboard/attendance-logs', icon: FileClock },
-
         { name: 'Leave', href: '/dashboard/leave', icon: Calendar },
         { name: 'Leave Settings', href: '/dashboard/leave/settings', icon: Settings },
         { name: 'Attendance Settings', href: '/dashboard/settings/attendance-settings', icon: Clock },
@@ -174,7 +172,7 @@ export default function DashboardSidebar({ isOpen, onClose, isLocked = false }: 
           // Billing is admin-only and guarded by BillingPage itself;
           // bypass hasAccess so it isn't dropped when not in application_screens.
           if (subItem.href === '/dashboard/billing') {
-            return isAdmin;
+            return isAdmin && currentTenant?.subscription_enabled !== false;
           }
           return hasAccess(subItem.href);
         });
@@ -188,7 +186,7 @@ export default function DashboardSidebar({ isOpen, onClose, isLocked = false }: 
           ...item,
           subItems: item.subItems.filter(subItem => {
             if (subItem.href === '/dashboard/billing') {
-              return isAdmin;
+              return isAdmin && currentTenant?.subscription_enabled !== false;
             }
             return hasAccess(subItem.href);
           })

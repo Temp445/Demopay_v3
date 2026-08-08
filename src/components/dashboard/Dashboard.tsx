@@ -95,13 +95,29 @@ function TrialExpiredWall({ info, onUpgrade }: { info: SubInfo; onUpgrade: () =>
         <h1 className="text-xl font-bold text-slate-900 mb-2">
           {info.status === 'none' 
             ? 'Active Subscription Required' 
-            : `Your ${info.planName || 'Professional'} plan has expired`}
+            : `Your ${info.planName || 'Elite Trial'} plan has expired`}
         </h1>
-        <p className="text-sm text-slate-500 leading-relaxed mb-6">
-          {info.status === 'none'
-            ? 'This workspace requires an active subscription. Features are temporarily locked until a subscription is purchased. Renewing restores access immediately.'
-            : 'This workspace\'s subscription lapsed and features are temporarily locked. All payroll records, employee data, and history remain intact — renewing restores access immediately.'}
-        </p>
+        <div className="space-y-4 mb-6">
+          <p className="text-sm text-slate-500 leading-relaxed">
+            {info.status === 'none'
+              ? 'This workspace requires an active subscription. Features are temporarily locked until a subscription is purchased. Renewing restores access immediately.'
+              : 'This workspace\'s subscription lapsed and features are temporarily locked. Renewing restores access immediately.'}
+          </p>
+          
+          {info.status === 'trial_expired' && info.daysUntilDataDelete !== undefined && (
+            <div className="p-3 bg-red-50 border border-red-100 rounded-lg flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-semibold text-red-800">Pending Data Deletion</h4>
+                <p className="text-xs text-red-600 mt-1">
+                  {info.daysUntilDataDelete > 0 
+                    ? `Your workspace data will be permanently deleted in ${info.daysUntilDataDelete} day${info.daysUntilDataDelete === 1 ? '' : 's'}. Subscribe now to retain your data.`
+                    : 'Your workspace data is scheduled for permanent deletion today. Subscribe immediately to retain your data.'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Details List */}
         {info.status !== 'none' && (
@@ -261,7 +277,7 @@ export default function Dashboard() {
     }
   }, [location.pathname]);
 
-  const isOverviewPage = location.pathname === '/dashboard' || location.pathname === '/dashboard/' || location.pathname === '/dashboard/overview' || location.pathname === '/dashboard/overview/';
+  const isOverviewPage = location.pathname === '/dashboard' || location.pathname === '/dashboard/';
 
   // ── Block if Expired or No Active Subscription ───────────────────────────────────────────────────────
   const isBillingPage = location.pathname === '/dashboard/billing' || location.pathname === '/dashboard/billing/';
@@ -310,7 +326,7 @@ export default function Dashboard() {
 
     let hasRouteAccess = hasAccess(path);
     if (path === '/dashboard/billing') {
-      hasRouteAccess = isAdmin;
+      hasRouteAccess = isAdmin && currentTenant?.subscription_enabled !== false;
     }
 
     if (!hasRouteAccess) {
@@ -342,7 +358,7 @@ export default function Dashboard() {
         <DashboardSidebar 
           isOpen={sidebarOpen} 
           onClose={() => setSidebarOpen(false)} 
-          isLocked={subInfo.status === 'trial_expired'}
+          isLocked={isSubscriptionRequired && subInfo.status === 'trial_expired'}
         />
       )}
 
